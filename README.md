@@ -13,3 +13,6 @@ specs of VISA and Mastercard are only based-on ISO8583 and there is no way to ge
 access to these spec. documents.
 `jPOS` have in their source code a raw documentation about the VISA & Mastercard transaction messages but
 they are missing the small details.
+
+I noticed that jPOS is also lacking off one very important thing, which are MerchantCategoryCodes.
+Unfortunatetly the MCCs are locked behind paywalls for companies. Hopefully the InternetArchive could a have list.
