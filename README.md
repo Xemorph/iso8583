@@ -14,5 +14,6 @@ access to these spec. documents.
 `jPOS` have in their source code a raw documentation about the VISA & Mastercard transaction messages but
 they are missing the small details.
 
-I noticed that jPOS is also lacking off one very important thing, which are MerchantCategoryCodes.
-Unfortunatetly the MCCs are locked behind paywalls for companies. Hopefully the InternetArchive could a have list.
+I noticed that `jPOS` is also lacking off one very important thing, which is MerchantCategoryCodes.
+In the internet you can find various tools which allows you to search for MCCs but I found this
+[paper](https://www.citibank.com/tts/solutions/commercial-cards/assets/docs/govt/Merchant-Category-Codes.pdf) from the `citi bank`
