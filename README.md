@@ -17,3 +17,19 @@ they are missing the small details.
 I noticed that `jPOS` is also lacking off one very important thing, which is MerchantCategoryCodes.
 In the internet you can find various tools which allows you to search for MCCs but I found this
 [paper](https://www.citibank.com/tts/solutions/commercial-cards/assets/docs/govt/Merchant-Category-Codes.pdf) from the `citi bank`
+
+---
+
+### Abstraction
+```
++ISOMessage // Root
+|-- ISOComponent // Leaf
+|-- ISOComponent
+|-+ ISOMessage // Nested
+| |-- ISOComponent
+| |-- ISOComponent
+| |-- ISOComponent
+|-- ISOComponent
+
+etc.
+```
