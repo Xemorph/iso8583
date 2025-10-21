@@ -1,0 +1,62 @@
+definitions:
+  mti:
+    type: scalar
+    format: numeric
+    length: 4
+    description: "Message Type Indicator"
+  bmap:
+    type: scalar
+    format: BITMAP
+    length: 16
+    description: "Bitmap"
+  amount:
+    type: scalar
+    format: NUMERIC
+    length: 12
+  conversion_rate:
+    - tag: "00"
+      format: nop
+      length: 0
+      description: ""
+    - tag: "01"
+      format: numeric
+      length: 1
+      description: "Decimal Indicator"
+    - tag: "02"
+      format: numeric
+      length: 7
+      description: "Conversion Rate"
+  amount_fee:
+    - tag: "00"
+      format: nop
+      length: 0
+      description: ""
+    - tag: "01"
+      format: char
+      length: 1
+      description: "Debit/credit Indicator"
+    - tag: "02"
+      format: numeric
+      length: 8
+      description: "Amount"
+  timestamp:
+    - format: NUMERIC
+      length: 2
+      description: "Month"
+      tag: "01"
+    - format: NUMERIC
+      length: 2
+      description: "Day"
+      tag: "02"
+    - format: NUMERIC
+      length: 2
+      description: "Hour"
+      tag: "03"
+    - format: NUMERIC
+      length: 2
+      description: "Minute"
+      tag: "04"
+    - format: NUMERIC
+      length: 2
+      description: "Second"
+      tag: "05"

@@ -1,0 +1,54 @@
+!include_files
+- schemes/definitions.yaml
+
+spec: "ISO-8583 Mini Spec"
+fields:
+  "000": !include mti
+  "001": !include bmap
+  "002":
+    !merge
+    - type: scalar
+    - !template LL(CHAR, 19)
+    - description: "Primary Account Number"
+  "003":
+    type: scalar
+    format: NUMERIC
+    length: 6
+    description: "Abwicklungskennzeichen"
+  "004": 
+    !merge
+    - !include amount
+    - description: "Amount, Transaction"
+  "005": 
+    !merge
+    - !include amount
+    - description: "Amount, Settlement"
+  "006": 
+    !merge
+    - !include amount
+    - description: "Amount, Cardholder Billing"
+  "007":
+    type: nested
+    binary_length: 10
+    description: "Transmission Date and Time"
+    children: !include timestamp
+  "008":
+    type: nested
+    binary_length: 8
+    description: "Conversion Rate"
+    children: !include conversion_rate
+  "009":
+    type: nested
+    binary_length: 8
+    description: "Conversion Rate, Settlement"
+    children: !include conversion_rate
+  "010":
+    type: nested
+    binary_length: 8
+    description: "Conversion Rate, Cardholder Billing"
+    children: !include conversion_rate
+  "039":
+    type: scalar
+    format: numeric
+    length: 2
+    description: "Response Code"
