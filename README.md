@@ -34,7 +34,12 @@ In the internet you can find various tools which allows you to search for MCCs b
 etc.
 ```
 
+---
+
 ### DSL
-A yaml-based DSL for ISO-8583 transactions with extended functionality, for an example see `iso8583_mini.yml`. This isn't to complex but it is lacking of better functionality and diversity. But hey, it works and somehow it is a little bit cool.
+A yaml-based DSL for ISO-8583 transactions with extended functionality, for an example see `iso8583_mini.yml`. This isn't too complex but it is lacking of better functionality and diversity. But hey, it works and somehow it is a little bit cool. And yes, the inspiration came from the `jPOS` project but they are using XML syntax and also real `Java` class names with classpaths and I found it to ugly.
 
 The parsing is mostly done by `yaml-cpp` but those extra keywords like `!include_files`, `!include`, `!merge` and `!template` are self interpreted by a custom wrapper class in C++17.
+
+**A short notice:** <br/>
+`include` is actually obsolete because it is doing the same as yaml anchors! So, it makes sense to use the anchor syntax instead of this weird keyword.

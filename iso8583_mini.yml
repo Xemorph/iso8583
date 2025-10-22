@@ -1,5 +1,7 @@
 !include_files
-- schemes/definitions.yaml
+- schemes/base.yml
+- schemes/ksb.yml
+
 
 spec: "ISO-8583 Mini Spec"
 fields:
@@ -29,22 +31,26 @@ fields:
     - description: "Amount, Cardholder Billing"
   "007":
     type: nested
-    binary_length: 10
+    format: binary
+    length: 10
     description: "Transmission Date and Time"
     children: !include timestamp
   "008":
     type: nested
-    binary_length: 8
+    format: binary
+    length: 8
     description: "Conversion Rate"
     children: !include conversion_rate
   "009":
     type: nested
-    binary_length: 8
+    format: binary
+    length: 8
     description: "Conversion Rate, Settlement"
     children: !include conversion_rate
   "010":
     type: nested
-    binary_length: 8
+    format: binary
+    length: 8
     description: "Conversion Rate, Cardholder Billing"
     children: !include conversion_rate
   "039":
@@ -52,3 +58,9 @@ fields:
     format: numeric
     length: 2
     description: "Response Code"
+  "062":
+    !merge
+    - type: nested
+    - !template LLL(BINARY, 200)
+    - description: "Additional Privat Use Data"
+    - children: !include bmp_62

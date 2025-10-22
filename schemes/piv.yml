@@ -1,0 +1,22 @@
+definitions:
+  bmp_62:
+    - type: scalar
+      format: nop
+      length: 0
+      description: ""
+    - type: scalar
+      format: char
+      length: 1
+      description: "Flag"
+    - type: scalar
+      format: char
+      length: 12
+      description: "Reference Key"
+    - type: scalar
+      format: char
+      length: 15
+      description: "Transaction Reference Number"
+    - type: scalar
+      format: char
+      length: 1
+      description: "Transaction Category"
