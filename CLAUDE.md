@@ -45,21 +45,21 @@ vcpkg x-update-baseline
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Standardanwender                                            │
-│   ISOMessage.hh   – ISOMessage, Feldtypen, Header-Klassen   │
-│   ISOSpec.hh      – SpecDecoder::loadFromYaml()             │
+│   ISOMessage.hh   – ISOMessage, Feldtypen, Header-Klassen  │
+│   ISOSpec.hh      – SpecDecoder::loadFromYaml()            │
 ├─────────────────────────────────────────────────────────────┤
-│ Erfahrene Anwender (eigener Parser)                         │
-│   ISOParser.hh    – nur ISOParserPtrBase (abstrakt)         │
-│   _codec.hh       – Enums, Tabellen, Deklarationen          │
+│ Erfahrene Anwender (eigener Parser)                        │
+│   ISOParser.hh    – nur ISOParserPtrBase (abstrakt)        │
+│   _codec.hh       – Enums, Tabellen, Deklarationen         │
 ├─────────────────────────────────────────────────────────────┤
-│ Intern – NICHT öffentliche API                              │
-│   src/_parser.hh      – ISOBaseParser, ISOFieldParser<>     │
-│   src/fmt_types.hh    – IFE_CHAR, IFB_NUMERIC, … Aliase     │
-│   src/_padder.hh      – Padding-Implementierung             │
+│ Intern – NICHT öffentliche API                             │
+│   src/_parser.hh      – ISOBaseParser, ISOFieldParser<>    │
+│   src/fmt_types.hh    – IFE_CHAR, IFB_NUMERIC, … Aliase   │
+│   src/_padder.hh      – Padding-Implementierung            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Regel:** `src/`-Dateien binden public-Header mit `<iso8583/...>` ein, nie mit `"..."`.<br>
+**Regel:** `src/`-Dateien binden public-Header mit `<iso8583/...>` ein, nie mit `"..."`.
 **Regel:** `_prefixer.hh` und `_encoder.hh` sind nur noch Compat-Stubs → `_codec.hh` verwenden.
 
 ---
@@ -117,8 +117,8 @@ for (std::ptrdiff_t i = (std::ptrdiff_t)len - 1; i >= 0; --i) {
 ```
 
 ### CTest / Windows: Nicht-ASCII in Testnamen
-`catch_discover_tests()` übergibt Testnamen als Filter-String durch die Windows-Konsolenkodepage.<br>
-**UTF-8-Zeichen (–, Umlaute) korrumpieren den Filter → Test wird nie gefunden → immer Failed.**<br>
+`catch_discover_tests()` übergibt Testnamen als Filter-String durch die Windows-Konsolenkodepage.
+**UTF-8-Zeichen (–, Umlaute) korrumpieren den Filter → Test wird nie gefunden → immer Failed.**
 **Regel: Testnamen ausschließlich ASCII.**
 
 ### BCD-Truncation: Bytes vs. Ziffern
@@ -140,13 +140,22 @@ int h = hi < 0xF0u ? 10 + hi - 0xC0 : hi - 0xF0;
 int h = hi < 0xF0u ? 10 + hi - 0xC1 : hi - 0xF0;
 ```
 
-### `ISOMessage::set()` mit `emplace`
-`emplace` überschreibt keine vorhandenen Einträge (gibt `false` zurück).<br>
+### Logging-Makros: `__VA_ARGS__` trailing comma (GCC/Clang)
+```cpp
+// FALSCH: bei Aufruf ohne extra Argumente entsteht ein trailing comma
+#define TNG_LOG_ERROR(fmt, ...) LOG_ERROR(logger, fmt, __VA_ARGS__)
+// → LOG_ERROR(logger, "msg", )  ← Syntaxfehler auf GCC/Clang
+
+// RICHTIG: ## entfernt das Komma wenn __VA_ARGS__ leer ist
+#define TNG_LOG_ERROR(fmt, ...) LOG_ERROR(logger, fmt, ##__VA_ARGS__)
+```
+`##__VA_ARGS__` ist eine GNU-Extension, wird aber von GCC, Clang und MSVC unterstützt.
+`emplace` überschreibt keine vorhandenen Einträge (gibt `false` zurück).
 **Gelöst:** `insert_or_assign` verwenden.
 
 ### `encode_length` Buffer-Sizing
 `encode_length` schreibt per Index ohne Bounds-Check. Buffer muss vorher die richtige
-Größe haben oder die Funktion muss ihn selbst sizen (`if (b.size() < len) b.resize(len, 0)`).<br>
+Größe haben oder die Funktion muss ihn selbst sizen (`if (b.size() < len) b.resize(len, 0)`).
 **Aktueller Stand:** Funktion setzt Buffer selbst auf korrekte Größe.
 
 ---
@@ -192,19 +201,19 @@ fields:
 ## Offene Punkte / TODOs
 
 ### Kritisch
-- **`parse()`-Pfad für `std::string` ist unvollständig** (`src/_parser.hh`, Zeile ~378):<br>
+- **`parse()`-Pfad für `std::string` ist unvollständig** (`src/_parser.hh`, Zeile ~378):
   Der Buffer wird alloziert und der Längen-Prefix kodiert, aber die eigentlichen Nutzdaten
   werden **nie** in `b_img` geschrieben. `return b_img` gibt einen Null-gefüllten Buffer zurück.
   Felder → Bytes (Serialisierung) funktioniert damit nicht korrekt.
 
-- **`bcd2str()` in `_components.cc` ist ein Stub** (gibt immer `""` zurück, Zeile ~508).<br>
+- **`bcd2str()` in `_components.cc` ist ein Stub** (gibt immer `""` zurück, Zeile ~508).
   Wird für BCD-Konvertierung in Header-Klassen benötigt.
 
 ### Mittelfristig
-- `_tz.hh` / `_tz.cc` / `_tz_private.hh` fehlen (Zeitzone-Handling für Datums-/Zeitfelder).<br>
+- `_tz.hh` / `_tz.cc` / `_tz_private.hh` fehlen (Zeitzone-Handling für Datums-/Zeitfelder).
   `_date.hh` und `_currency.hh` sind öffentlich, aber die Implementierung fehlt noch.
 
-- `ISOComponentv2` / `ISOMessagev2` in `_components.hh` sind auskommentierter Legacy-Code.<br>
+- `ISOComponentv2` / `ISOMessagev2` in `_components.hh` sind auskommentierter Legacy-Code.
   Entweder vollständig entfernen oder reaktivieren.
 
 - Testabdeckung `parse()`-Pfad (Felder → Bytes) fehlt komplett sobald der Bug oben behoben ist.

@@ -21,10 +21,10 @@ namespace TNG_NAMESPACE::log {
 
     quill::Logger* getLogger();
 
-#define TNG_LOG_TRACE(fmt, ...) LOG_TRACE_L1(::TNG_NAMESPACE::log::getLogger(), fmt, __VA_ARGS__)
-#define TNG_LOG_DEBUG(fmt, ...) LOG_DEBUG(::TNG_NAMESPACE::log::getLogger(), fmt, __VA_ARGS__)
-#define TNG_LOG_INFO(fmt, ...) LOG_INFO(::TNG_NAMESPACE::log::getLogger(), fmt, __VA_ARGS__)
-#define TNG_LOG_WARN(fmt, ...)  LOG_WARNING(::TNG_NAMESPACE::log::getLogger(), fmt, __VA_ARGS__)
-#define TNG_LOG_ERROR(fmt, ...) LOG_ERROR(::TNG_NAMESPACE::log::getLogger(), fmt, __VA_ARGS__)
+#define TNG_LOG_TRACE(fmt, ...) LOG_TRACE_L1(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
+#define TNG_LOG_DEBUG(fmt, ...) LOG_DEBUG(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
+#define TNG_LOG_INFO(fmt, ...) LOG_INFO(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
+#define TNG_LOG_WARN(fmt, ...)  LOG_WARNING(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
+#define TNG_LOG_ERROR(fmt, ...) LOG_ERROR(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
 
 }

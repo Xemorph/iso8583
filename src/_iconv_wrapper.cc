@@ -1,4 +1,8 @@
 #include "_iconv_wrapper.hh"
+// [tng/internal]
+#include "_logger.hh"
+// [stdc++]
+#include <system_error>
 
 namespace iconv_wrapper
 {
@@ -11,10 +15,10 @@ namespace iconv_wrapper
         convdesc = iconv_open(tocode.c_str(), fromcode.c_str());
         if (convdesc == invalid_cd)
         {
-            char bfr[80]; bfr[79] = '\n';
-            strerror_s(bfr, 80, errno);
-            printf("ERROR: %s\n", bfr);
-            throw std::system_error(errno, std::system_category());
+            const std::system_error err(errno, std::system_category(),
+                "iconv_open(\"" + fromcode + "\" -> \"" + tocode + "\") failed");
+            TNG_LOG_ERROR("[iconv::open] {}", err.what());
+            throw err;
         }
     }
 

@@ -186,9 +186,9 @@ namespace TNG_NAMESPACE {
         }
         // Sets the DE un/parser's description
         // \param d (description) of DE
-        void description(nonstd::string_view d) {
+        void description(const nonstd::string_view d) override {
             if (n_)
-                n_->description(nonstd::to_string(d));
+                n_->description(d);
             else
                 d_ = nonstd::to_string(d);
         }
