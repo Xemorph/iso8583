@@ -77,10 +77,10 @@ namespace TNG_NAMESPACE {
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;
-        // Sets the data elements (DE) un/parser's description
-        virtual void description(const nonstd::string_view& desc) = 0;
         // Returns the data elements (DE) un/parser's description
         virtual nonstd::string_view description() const = 0;
+        // Sets the data elements (DE) un/parser's description
+        virtual void description(const nonstd::string_view&) = 0;
 
         // -------------------------
         // -          PSL          -
