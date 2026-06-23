@@ -38,7 +38,7 @@ namespace TNG_NAMESPACE {
         else if constexpr (Padder::RIGHT_T_SPACE == e)
             __pad_trunc_right(s, mlen, ' ');
         else
-            static_assert(dependent_false<e>::value, "Don't know how to pad");
+            static_assert(dependent_false<decltype(e)>::value, "Don't know how to pad");
     }
 
     // Explizite Instanziierungen der Template-Funktion

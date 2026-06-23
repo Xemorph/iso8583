@@ -6,116 +6,136 @@ on:
   pull_request:
     branches: [ main, master, develop ]
 
-# PRs werden blockiert wenn irgendein Job fehlschlägt.
-# Branch-Protection in GitHub: Settings → Branches → Require status checks:
-#   - "build-and-test (windows-latest)"
-#   - "build-and-test (ubuntu-latest)"
-
 jobs:
-  build-and-test:
-    name: ${{ matrix.os }} / ${{ matrix.build_type }}
-    runs-on: ${{ matrix.os }}
-
+  # ── Linux (GCC + Ninja) ────────────────────────────────────────────────────
+  build-linux:
+    name: Linux / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: false   # Alle Matrix-Jobs durchlaufen, nicht beim ersten Fehler abbrechen
+      fail-fast: false
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
         build_type: [ Debug, Release ]
-        include:
-          # Windows: MSVC + Ninja
-          - os: windows-latest
-            preset_suffix: ninja
-            cmake_generator: Ninja
-          # Linux: GCC + Ninja
-          - os: ubuntu-latest
-            preset_suffix: ninja
-            cmake_generator: Ninja
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Vollständige History für vcpkg baseline
+          fetch-depth: 0
 
-      # ── vcpkg Setup ─────────────────────────────────────────────────────────
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '06a7fdd564234908731c59ac46a624f808e87b1c'  # Muss mit vcpkg-configuration.json übereinstimmen
-
-      # ── Linux: GCC installieren ──────────────────────────────────────────────
-      - name: Install GCC (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y gcc-13 g++-13 ninja-build cmake
+          sudo apt-get install -y gcc-13 g++-13 ninja-build libiconv-hook-dev
           echo "CC=gcc-13"  >> $GITHUB_ENV
           echo "CXX=g++-13" >> $GITHUB_ENV
 
-      # ── Windows: MSVC Developer-Umgebung aktivieren ──────────────────────────
-      - name: Setup MSVC (Windows)
-        if: runner.os == 'Windows'
+      - uses: lukka/get-cmake@latest
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '06a7fdd564234908731c59ac46a624f808e87b1c'
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DISO8583_BUILD_SHARED=ON
+          -DISO8583_ENABLE_ICONV=ON
+          -DISO8583_BUILD_TESTS=ON
+          -DISO8583_INSTALL=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: |
+          ctest --test-dir build \
+            --output-on-failure \
+            --no-tests=error \
+            --timeout 30
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux-${{ matrix.build_type }}
+          path: build/Testing/
+          retention-days: 7
+
+  # ── Windows (MSVC + Ninja) ─────────────────────────────────────────────────
+  build-windows:
+    name: Windows / ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # ── Ninja auf Windows installieren ───────────────────────────────────────
-      - name: Install Ninja (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Ninja
         run: choco install ninja --no-progress -y
 
-      # ── CMake Configure ──────────────────────────────────────────────────────
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '06a7fdd564234908731c59ac46a624f808e87b1c'
+
       - name: Configure
-        run: |
-          cmake -B build \
-            -G "${{ matrix.cmake_generator }}" \
-            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DISO8583_BUILD_SHARED=ON \
-            -DISO8583_ENABLE_ICONV=ON \
-            -DISO8583_BUILD_TESTS=ON \
-            -DISO8583_INSTALL=OFF
-        env:
-          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+        shell: cmd
+        run: >
+          cmake -B build
+          -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DISO8583_BUILD_SHARED=ON
+          -DISO8583_ENABLE_ICONV=ON
+          -DISO8583_BUILD_TESTS=ON
+          -DISO8583_INSTALL=OFF
 
-      # ── Build ────────────────────────────────────────────────────────────────
       - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+        run: cmake --build build --parallel
 
-      # ── Test ─────────────────────────────────────────────────────────────────
       - name: Test
-        run: |
-          ctest --test-dir build \
-            --build-config ${{ matrix.build_type }} \
-            --output-on-failure \
-            --no-tests=error \
-            --timeout 30
-        # --no-tests=error: schlägt fehl wenn keine Tests gefunden werden
-        # (verhindert false positives bei fehlerhafter Konfiguration)
+        run: >
+          ctest --test-dir build
+          --build-config ${{ matrix.build_type }}
+          --output-on-failure
+          --no-tests=error
+          --timeout 30
 
-      # ── Test-Ergebnisse als Artefakt hochladen ───────────────────────────────
       - name: Upload test results
-        if: always()   # Auch bei Fehler hochladen
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}-${{ matrix.build_type }}
+          name: test-results-windows-${{ matrix.build_type }}
           path: build/Testing/
           retention-days: 7
 
-  # ── Zusammenfassung für Branch-Protection ────────────────────────────────────
-  # Dieser Job muss in den "Required status checks" eingetragen werden.
-  # Er schlägt fehl wenn irgendein build-and-test-Job fehlgeschlagen ist.
+  # ── Zusammenfassung für Branch-Protection ──────────────────────────────────
+  # Settings → Branches → Required status checks: "CI passed"
   ci-success:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: [ build-linux, build-windows ]
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
-          if [ "${{ needs.build-and-test.result }}" != "success" ]; then
-            echo "One or more build/test jobs failed"
+          linux="${{ needs.build-linux.result }}"
+          windows="${{ needs.build-windows.result }}"
+          if [ "$linux" != "success" ] || [ "$windows" != "success" ]; then
+            echo "Failed: linux=$linux windows=$windows"
             exit 1
           fi
           echo "All jobs passed"
