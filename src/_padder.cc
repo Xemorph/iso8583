@@ -27,24 +27,24 @@ namespace TNG_NAMESPACE {
         else s.erase(n);
     }
 
-    template < ::TNG_NAMESPACE::Padder e >
+    template < Padder e >
     void TNG_EXPORT pad(std::string& s, std::size_t mlen) {
-        if constexpr (::TNG_NAMESPACE::Padder::NONE == e)
+        if constexpr (Padder::NONE == e)
             return;
-        else if constexpr (::TNG_NAMESPACE::Padder::LEFT_ZERO == e)
+        else if constexpr (Padder::LEFT_ZERO == e)
             __pad_left(s, mlen, '0');
-        else if constexpr (::TNG_NAMESPACE::Padder::RIGHT_SPACE == e)
+        else if constexpr (Padder::RIGHT_SPACE == e)
             __pad_right(s, mlen, ' ');
-        else if constexpr (::TNG_NAMESPACE::Padder::RIGHT_T_SPACE == e)
+        else if constexpr (Padder::RIGHT_T_SPACE == e)
             __pad_trunc_right(s, mlen, ' ');
         else
             static_assert(dependent_false<e>::value, "Don't know how to pad");
     }
 
     // Explizite Instanziierungen der Template-Funktion
-    template void TNG_EXPORT pad<::TNG_NAMESPACE::Padder::NONE>(std::string&, std::size_t);
-    template void TNG_EXPORT pad<::TNG_NAMESPACE::Padder::LEFT_ZERO>(std::string&, std::size_t);
-    template void TNG_EXPORT pad<::TNG_NAMESPACE::Padder::RIGHT_SPACE>(std::string&, std::size_t);
-    template void TNG_EXPORT pad<::TNG_NAMESPACE::Padder::RIGHT_T_SPACE>(std::string&, std::size_t);
+    template void TNG_EXPORT pad<Padder::NONE>(std::string&, std::size_t);
+    template void TNG_EXPORT pad<Padder::LEFT_ZERO>(std::string&, std::size_t);
+    template void TNG_EXPORT pad<Padder::RIGHT_SPACE>(std::string&, std::size_t);
+    template void TNG_EXPORT pad<Padder::RIGHT_T_SPACE>(std::string&, std::size_t);
 
 } // namespace TNG_NAMESPACE
