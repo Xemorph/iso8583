@@ -1,0 +1,102 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "ISO8583_BUILD_SHARED": "ON",
+        "ISO8583_ENABLE_ICONV": "ON",
+        "ISO8583_INSTALL":      "OFF"
+      }
+    },
+
+    {
+      "name": "debug",
+      "displayName": "Debug (Ninja)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":   "Debug",
+        "ISO8583_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (Ninja)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":    "Release",
+        "ISO8583_BUILD_TESTS": "OFF"
+      }
+    },
+
+    {
+      "name": "msvc-debug",
+      "displayName": "Debug (MSVC)",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":    "Debug",
+        "ISO8583_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "displayName": "Release (MSVC)",
+      "inherits": "msvc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":    "Release",
+        "ISO8583_BUILD_TESTS": "OFF"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "msvc-debug",
+      "configurePreset": "msvc-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc-release",
+      "configuration": "Release"
+    }
+  ],
+
+  "testPresets": [
+    {
+      "name": "debug",
+      "displayName": "Alle Tests (Debug)",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "filter": {
+        "exclude": { "label": "slow" }
+      }
+    },
+    {
+      "name": "msvc-debug",
+      "displayName": "Alle Tests (MSVC Debug)",
+      "configurePreset": "msvc-debug",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

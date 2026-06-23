@@ -1,0 +1,19 @@
+{
+  "name": "libiso8583",
+  "version": "0.1.1",
+  "description": "ISO 8583 financial transaction message parser and encoder (C++17)",
+  "homepage": "https://github.com/your-org/libiso8583",
+  "license": "MIT",
+  "supports": "!uwp",
+  "dependencies": [
+    "nlohmann-json",
+    "fmt",
+    "yaml-cpp",
+    "quill",
+    "robin-map",
+    {
+      "name": "libiconv",
+      "platform": "!linux"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "libiso8583",
+  "version": "0.1.1",
+  "dependencies": [
+    "nlohmann-json",
+    "fmt",
+    "yaml-cpp",
+    "quill",
+    "robin-map",
+    {
+      "name": "catch2",
+      "default-features": false,
+      "platform": "!uwp"
+    },
+    {
+      "name": "libiconv",
+      "platform": "!linux"
+    }
+  ]
+}

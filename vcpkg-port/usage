@@ -1,0 +1,10 @@
+libiso8583 provides CMake integration targets.
+
+Nach der Installation in CMakeLists.txt einbinden:
+
+    find_package(iso8583 CONFIG REQUIRED)
+    target_link_libraries(my_target PRIVATE iso8583::iso8583)
+
+Auf Windows: Die zur DLL gehörige Import-Library (.lib) wird automatisch
+durch den Linker gefunden. Die Runtime-DLL (iso8583.dll) liegt im
+vcpkg bin/-Verzeichnis und muss im PATH oder neben der Anwendung liegen.

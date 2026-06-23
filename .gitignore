@@ -1,0 +1,64 @@
+# ── Build-Verzeichnisse ───────────────────────────────────────────────────────
+build/
+out/
+cmake-build-*/
+
+# ── vcpkg ────────────────────────────────────────────────────────────────────
+vcpkg_installed/
+
+# ── CMake ────────────────────────────────────────────────────────────────────
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# ── MSVC / Visual Studio ─────────────────────────────────────────────────────
+*.sln
+*.vcxproj.user
+*.VC.db
+*.VC.opendb
+.vs/
+*.ilk
+*.pdb
+*.exp
+*.idb
+
+# ── Compiler-Output ───────────────────────────────────────────────────────────
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# ── Legacy-Dateien ────────────────────────────────────────────────────────────
+*.LEGACY
+*.legacy
+
+# ── Editoren & IDEs ───────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.orig
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+__MACOSX/
+
+# ── Windows ──────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+
+# ── Logs & temporäre Dateien ─────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak

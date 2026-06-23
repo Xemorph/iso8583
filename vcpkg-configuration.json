@@ -1,0 +1,7 @@
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "06a7fdd564234908731c59ac46a624f808e87b1c"
+  },
+  "registries": []
+}
