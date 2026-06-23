@@ -79,6 +79,7 @@ set(ISO8583_PUBLIC_HEADERS
     # ── Standardanwender-API ─────────────────────────────────────────────────
     include/iso8583/ISOMessage.hh       # ISOMessage, alle Feldtypen, Header-Klassen
     include/iso8583/ISOSpec.hh          # SpecDecoder::loadFromYaml()
+    include/iso8583/ISOLog.hh           # setLevel(), setLogger(), ISOLogger
 
     # ── Experten-API ──────────────────────────────────────────────────────────
     include/iso8583/ISOParser.hh        # ISOParserPtrBase (für eigene Parser)

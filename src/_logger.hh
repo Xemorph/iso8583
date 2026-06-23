@@ -1,30 +1,38 @@
 #pragma once
 
-// [stdc++]
-#include <string_view>
-// [quill]
+// [quill] - nur intern, nie öffentlich exponiert
 #include <quill/Logger.h>
 #include <quill/LogMacros.h>
-// [tng/config]
-#include <iso8583/config.h>
+// [tng/public]
+#include <iso8583/ISOLog.hh>
 
 namespace TNG_NAMESPACE::log {
 
-    enum class Level { TRACE, DEBUG, INFO, WARN, ERR, CRITICAL, OFF };
-
-    // Vom Aufrufer der DLL konfigurierbar
-    TNG_EXPORT void setLevel(Level lvl);
-
-    // Aufrufer kann eigenen Quill-Logger injizieren –
-    // z.B. um in die eigene Log-Infrastruktur zu integrieren
-    TNG_EXPORT void setExternalLogger(quill::Logger* logger);
-
+    // Interner Quill-Logger – wird von den TNG_LOG_*-Makros verwendet.
+    // Nicht öffentlich: Anwender interagieren ausschließlich über ISOLog.hh.
     quill::Logger* getLogger();
 
-#define TNG_LOG_TRACE(fmt, ...) LOG_TRACE_L1(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
-#define TNG_LOG_DEBUG(fmt, ...) LOG_DEBUG(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
-#define TNG_LOG_INFO(fmt, ...) LOG_INFO(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
-#define TNG_LOG_WARN(fmt, ...)  LOG_WARNING(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
-#define TNG_LOG_ERROR(fmt, ...) LOG_ERROR(::TNG_NAMESPACE::log::getLogger(), fmt, ##__VA_ARGS__)
+    // Interne Hilfsfunktion: gibt den externen ISOLogger zurück (oder nullptr).
+    ISOLogger* getExternalLogger();
 
 }
+
+// ── Interne Log-Makros ────────────────────────────────────────────────────────
+// Leiten an den externen ISOLogger weiter wenn gesetzt,
+// sonst an Quill.
+#define TNG_LOG_IMPL(LEVEL, QUILL_MACRO, vfmt, ...) \
+    do { \
+        if (auto* _ext = ::TNG_NAMESPACE::log::getExternalLogger()) { \
+            if (::TNG_NAMESPACE::log::Level::LEVEL >= ::TNG_NAMESPACE::log::getLevel()) { \
+                _ext->log(::TNG_NAMESPACE::log::Level::LEVEL, __FILE__, __LINE__, fmt::format(vfmt, ##__VA_ARGS__)); \
+            } \
+        } else { \
+            QUILL_MACRO(::TNG_NAMESPACE::log::getLogger(), vfmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+#define TNG_LOG_TRACE(fmt, ...)  TNG_LOG_IMPL(TRACE,    LOG_TRACE_L1, fmt, ##__VA_ARGS__)
+#define TNG_LOG_DEBUG(fmt, ...)  TNG_LOG_IMPL(DEBUG,    LOG_DEBUG,    fmt, ##__VA_ARGS__)
+#define TNG_LOG_INFO(fmt, ...)   TNG_LOG_IMPL(INFO,     LOG_INFO,     fmt, ##__VA_ARGS__)
+#define TNG_LOG_WARN(fmt, ...)   TNG_LOG_IMPL(WARN,     LOG_WARNING,  fmt, ##__VA_ARGS__)
+#define TNG_LOG_ERROR(fmt, ...)  TNG_LOG_IMPL(ERR,      LOG_ERROR,    fmt, ##__VA_ARGS__)

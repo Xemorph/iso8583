@@ -33,6 +33,7 @@
 // ── Hauptarbeitsobjekte (Standardanwender) ───────────────────────────────────
 #include "ISOMessage.hh"    // ISOMessage, ISOOpaqueField, ISOBinaryField, …
 #include "ISOSpec.hh"       // SpecDecoder::loadFromYaml()
+#include "ISOLog.hh"        // setLevel(), setLogger(), ISOLogger
 
 // ── Erweiterter Zugang (Experten-API) ────────────────────────────────────────
 #include "ISOParser.hh"     // ISOParserPtrBase (für eigene Parser-Implementierungen)
