@@ -5,22 +5,26 @@
 #include <quill/sinks/FileSink.h>
 
 namespace {
-    // Interner Zustand – nur in dieser Translation Unit sichtbar
     ::TNG_NAMESPACE::log::ISOLogger* g_external_logger = nullptr;
-    ::TNG_NAMESPACE::log::Level      g_level           = ::TNG_NAMESPACE::log::Level::WARN;
+    ::TNG_NAMESPACE::log::Level      g_level = ::TNG_NAMESPACE::log::Level::WARN;
+    quill::Logger* g_quill_override = nullptr;
 }
 
 namespace TNG_NAMESPACE::log {
 
     // ── Interner Quill-Logger ─────────────────────────────────────────────────
     quill::Logger* getLogger() {
+        // Anwender-Quill-Logger hat Vorrang vor internem
+        if (g_quill_override)
+            return g_quill_override;
+
         static quill::Logger* logger = []() -> quill::Logger* {
             quill::BackendOptions bo;
             bo.thread_name = "tng_log";
             quill::Backend::start(bo);
             auto sink = quill::Frontend::create_or_get_sink<quill::FileSink>("iso8583.log");
             return quill::Frontend::create_or_get_logger("tng", std::move(sink));
-        }();
+            }();
         return logger;
     }
 
@@ -52,6 +56,10 @@ namespace TNG_NAMESPACE::log {
 
     void setLogger(ISOLogger* logger) {
         g_external_logger = logger;
+    }
+
+    void setQuillLogger(quill::Logger* logger) {
+        g_quill_override = logger;
     }
 
 } // namespace TNG_NAMESPACE::log

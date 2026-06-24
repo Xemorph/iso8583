@@ -2,11 +2,11 @@ spec: "Mastercard ISO-8583 Spec"
 # Globales Encoding: gilt für alle Felder ohne eigenes `encoding`.
 # Mastercard verwendet ausschliesslich EBCDIC – kein Feld braucht ein eigenes encoding.
 encoding: ebcdic
-header: !include hdrWLPFO
+header: !use hdrWLPFO
 
 fields:
-  "000": !include mti
-  "001": !include bmap
+  "000": !use mti
+  "001": !use bmap
 
   "002":
     type: scalar
@@ -52,11 +52,11 @@ fields:
 # VISA-Beispiel: Mix aus BCD und EBCDIC
 spec: "VISA ISO-8583 Spec"
 encoding: ebcdic         # Meiste Felder sind EBCDIC
-header: !include hdrWLPFO
+header: !use hdrWLPFO
 
 fields:
-  "000": !include mti
-  "001": !include bmap
+  "000": !use mti
+  "001": !use bmap
 
   "002":
     type: scalar

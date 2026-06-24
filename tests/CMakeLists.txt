@@ -3,11 +3,14 @@ cmake_minimum_required(VERSION 3.21)
 find_package(Catch2 CONFIG REQUIRED)
 
 add_executable(libiso8583_tests
-    test_prefixer_encoder.cc
+    test_codec.cc
     test_field_parser.cc
     test_iso_message.cc
     test_full_unparse.cc
     test_spec_loader.cc
+    test_logging.cc
+    test_preprocessor.cc
+    test_remaining_field.cc
 )
 
 target_link_libraries(libiso8583_tests

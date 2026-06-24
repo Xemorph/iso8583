@@ -9,6 +9,9 @@ namespace TNG_NAMESPACE {
     using IF_NOP      = ISOFieldParser< std::nullptr_t, Length::FIX,  PrefixEncoder::NONE,   Encoder::BINARY, Padder::NONE >;
     using IF_UNUSED   = ISOFieldParser< ::TNG_NAMESPACE::UNUSED, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
 
+    using IF_REMAINING = ISORemainderFieldParser< std::vector<uint8_t>, Encoder::BINARY >;
+    using IFE_REMAINING = ISORemainderFieldParser< std::string, Encoder::EBCDIC >;
+
     // ── Bitmap ───────────────────────────────────────────────────────────────
     using IFB_BITMAP    = ISOBitmapFieldParser;
 

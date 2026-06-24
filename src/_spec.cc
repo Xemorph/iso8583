@@ -151,7 +151,7 @@ namespace TNG_NAMESPACE::spec {
     static bool isEncodingNeutral(const std::string& format) {
         static const std::unordered_set<std::string> neutral = {
             "BINARY", "LBINARY", "LLBINARY", "LLLBINARY", "LLLLBINARY",
-            "BITMAP", "NOP", "UNUSED"
+            "BITMAP", "NOP", "UNUSED", "REMAINING"
         };
         return neutral.count(format) > 0;
     }
@@ -285,6 +285,7 @@ namespace TNG_NAMESPACE::spec {
             { "LCHAR|EBCDIC",        MAKE(IFE_LCHAR)       },
             { "LLCHAR|EBCDIC",       MAKE(IFE_LLCHAR)      },
             { "LLLCHAR|EBCDIC",      MAKE(IFE_LLLCHAR)     },
+            { "REMAINING|EBCDIC",    MAKE(IFE_REMAINING)   },
         };
 
         #undef MAKE

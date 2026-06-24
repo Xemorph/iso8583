@@ -66,6 +66,7 @@ namespace TNG_NAMESPACE {
         BINARY,
         BITMAP,
         NESTED,
+        REMAINING,
     };
 
     // Forward decleration

@@ -137,6 +137,7 @@ namespace TNG_NAMESPACE {
     {
 
         static_assert(l_ == Length::FIX ? (pe_ != PrefixEncoder::NONE ? false : true) : true, "Length::FIX must be used with PrefixEncoder::NONE");
+        static_assert(l_ == Length::UNKNOWN ? (pe_ != PrefixEncoder::NONE ? false : true) : true, "Length::UNKNOWN must be used with PrefixEncoder::NONE");
 
         // Maximum allowed DE length
         std::size_t de_l_;
@@ -198,6 +199,8 @@ namespace TNG_NAMESPACE {
                 return ::TNG_NAMESPACE::ISOFieldParserType::UNUSED;
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >)
                 return ::TNG_NAMESPACE::ISOFieldParserType::EXCEPTIONAL;
+            else if constexpr (l_ == Length::UNKNOWN) // Special case, but required
+                return ::TNG_NAMESPACE::ISOFieldParserType::REMAINING;
             else if constexpr (std::is_same_v< T, std::string >)
                 return ::TNG_NAMESPACE::ISOFieldParserType::OPAQUE;
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
@@ -300,11 +303,16 @@ namespace TNG_NAMESPACE {
                 if constexpr (std::is_same_v< T, std::nullptr_t >) {
                     return 0;
                 }
-
-                std::size_t l = decode_length<pe_, l_>(b, o); // Something like this?
+                
+                std::size_t l = 0u;
+                if constexpr (l_ == Length::UNKNOWN)
+                    l /* remaining */ = b.size() - o;
+                else
+                    l = decode_length<pe_, l_>(b, o); // Something like this?
                 // Checks for length are different between types
                 if (l == 0 || l > de_l_)
                     l = de_l_;
+
                 std::size_t ll = parsed_length<pe_, l_>();
 
                 // Truncation:
@@ -317,7 +325,7 @@ namespace TNG_NAMESPACE {
                 // Beispiel:
                 // Bei Nichteinhaltung wird BCD sonst auf halbe Länge gekürzt
                 //    (6 Bytes = 12 BCD-Ziffern, aber 6 < 12 würde fälschlicherweise truncaten).
-                if (o + ll <= b.size()) {
+                if (o + ll <= b.size()) { // 4+0 <= 7
                     const std::size_t available_bytes = b.size() - (o + ll);
                     const std::size_t needed_bytes = required_sz_for_as<e_>(l);
                     if (available_bytes < needed_bytes) {
@@ -338,7 +346,7 @@ namespace TNG_NAMESPACE {
                 else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
                     (void)std::dynamic_pointer_cast<ISOBinaryField>(c)->value(as< T, e_ >(b, o + ll, l));
 
-                const std::size_t total = ll + required_sz_for_as<e_>(l);
+                const std::size_t total = ll + required_sz_for_as<e_>(l); // l= 3 ---> 3
                 // wire_length: hier gesetzt, da erst jetzt die tatsächliche Byte-Länge bekannt ist.
                 // wire_offset: wird vom aufrufenden ISOBaseParser mit dem absoluten Offset gesetzt,
                 //              da ISOFieldParser nur den lokalen Offset o im aktuellen Sub-Buffer kennt.
@@ -407,5 +415,8 @@ namespace TNG_NAMESPACE {
     using ISOBitmapFieldParser = ISOFieldParser< dynamic_bitset<>, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
     template < typename ISOField >
     using ISONestedFieldParser = ISOFieldParser< ISOField, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+    template < typename T, Encoder e, Padder p = Padder::NONE >
+    using ISORemainderFieldParser = ISOFieldParser< T, Length::UNKNOWN, PrefixEncoder::NONE, e, p>;
+
 
 }

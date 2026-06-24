@@ -116,12 +116,13 @@ namespace TNG_NAMESPACE {
     /// - Length::LL: 2-digit length encoding.
     /// - Length::LLL: 3-digit length encoding.
     /// - Length::LLLL: 4-digit length encoding.
-    enum class TNG_EXPORT Length : unsigned int {
-        FIX  = 0u, ///< fixed length (no Prefix)
-        L    = 1u, ///< 1-digit length (max.    9)
-        LL   = 2u, ///< 2-digit length (max.   99)
-        LLL  = 3u, ///< 3-digit length (max.  999)
-        LLLL = 4u, ///< 4-digit length (max. 9999)
+    enum class TNG_EXPORT Length : int {
+        UNKNOWN = -1, ///< unknown lenght (gets calculated)
+        FIX     = 0u, ///< fixed length (no Prefix)
+        L       = 1u, ///< 1-digit length (max.    9)
+        LL      = 2u, ///< 2-digit length (max.   99)
+        LLL     = 3u, ///< 3-digit length (max.  999)
+        LLLL    = 4u, ///< 4-digit length (max. 9999)
     };
 
     /// Encoding-Methode für Feldinhalt
