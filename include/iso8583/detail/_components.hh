@@ -16,7 +16,7 @@
 #include <vector>
 // [nlohmann/json]
 #include <nlohmann/json.hpp>
-// ── tsl::robin_map (via vcpkg: robin-map) ───────────────────────────────────
+// -- tsl::robin_map (via vcpkg: robin-map) -----------------------------------
 // Ersetzt die archivierte martinus/robin-hood-hashing Bibliothek.
 // Wird als vcpkg-Abhängigkeit eingebunden, nicht mehr als Single-Header.
 // Anwender verwenden ausschließlich TNG_NAMESPACE::detail::flat_map –
@@ -163,18 +163,18 @@ namespace TNG_NAMESPACE {
 // Forward declaration
 //class ISOMessagev2;
 
-//typedef std::unordered_map< TNG_KEY_TYPE, std::variant< ISOOpaqueFieldv2, ISOBinaryFieldv2, ISOFastBinaryFieldv2, ISOBitmapv2 > > ISO_FAST_MAP;
+//typedef std::unordered_map< TNG_KEY_TYPE, std::variant< ISOOpaqueFieldv2, ISOBinaryFieldv2, ISOFastBinaryFieldv2, ISOBitmapv2, ISOMessagev2 > > ISO_FAST_MAP;
 //typedef ::TNG_NAMESPACE::type_list_maker< ISOOpaqueFieldv2, ISOBinaryFieldv2, ISOFastBinaryFieldv2, ISOBitmapv2 >::result ISO_MAP_TYPE;
 //typedef ::TNG_NAMESPACE::multi_type_map< TNG_KEY_TYPE, ISO_MAP_TYPE > ISO_MAP_v2;
 
 namespace TNG_NAMESPACE {
     /* ISOMessagev2
     class TNG_EXPORT ISOMessagev2 final
-        : public ::TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, ISO_MAP_v2 >
+        : public ::TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, ISO_FAST_MAP >
     {
     private:
         // Highest data element
-        ISO_MAP_v2::key_type hf_;
+        ISO_FAST_MAP::key_type hf_;
         // Bitmap needs be recalculated?
         bool recalc_;
         // Threading
@@ -190,7 +190,7 @@ namespace TNG_NAMESPACE {
         // [Constructor]
         // Creates a nested 'ISOMessage'
         // \param key (in the outer 'ISOMessage') of the nested component
-        ISOMessagev2(const ISO_MAP_v2::key_type& key);
+        ISOMessagev2(const ISO_FAST_MAP::key_type& key);
         // [Constructor]
         // Creates an 'ISOMessage' with given Message Type Indicator (MTI)
         // \param mti, Message Type Indicator (e.g. 0100 for Authorization)
@@ -203,7 +203,6 @@ namespace TNG_NAMESPACE {
 }
 
 // Data Layout
-//typedef spp::sparse_hash_map< TNG_KEY_TYPE, std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > > ISO_MAP;
 typedef TNG_NAMESPACE::detail::flat_map< TNG_KEY_TYPE, std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > > ISO_MAP;
 // Components
 typedef TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string > ISOOpaqueField;
@@ -295,20 +294,28 @@ namespace TNG_NAMESPACE {
         // -          MAP          -
         // -------------------------
 
+        /// <summary>
+        /// Checks if a data element (DE) is set within this component ('ISOMessage')
+        /// </summary>
+        /// @param key number of data element
+        /// @return true if found otherwise false
         bool has(const ISO_MAP::key_type& key);
 
-        // Set a new data element (DE) within this component ('ISOMessage').
-        // This is a write operation which is guarded by a mutex
-        // \param component (typeof ISOComponent)
-        // \return true if successfull otherwise false
+        /// <summary>
+        /// Set a new data element (DE) within this component ('ISOMessage').
+        /// This is a write operation which is guarded by a mutex
+        /// </summary>
+        /// <param name="component">to set into this component (push_back)</param>
+        /// <return>true if successfull otherwise false</return>
         bool set(ISO_MAP::mapped_type component);
 
-        // Unset a data element (DE) within in this component ('ISOMessage').
-        // This is a write operation which is guarded by mutex
-        // \param key of data element
-        // \return true if successfull otherwise false, it will also return false if the user-defined key has not been found
+        /// <summary>
+        /// Unset a data element (DE) within in this component ('ISOMessage').
+        /// This is a write operation which is guarded by mutex
+        /// </summary>
+        /// @param key of data element
+        /// @return true if successfull otherwise false, it will also return false if the user-defined key has not been found
         bool unset(const ISO_MAP::key_type& key);
-
 
 
         template< typename T = ::TNG_NAMESPACE::ISOComponentPtrBase >
@@ -321,16 +328,6 @@ namespace TNG_NAMESPACE {
                 return nullptr;
             return std::dynamic_pointer_cast<T>(itr->second);
         }
-        /*
-        template<>
-        inline std::shared_ptr<ISOComponentPtrBase> get<ISOComponentPtrBase>(const ISO_MAP::key_type& key) {
-            std::shared_lock<std::shared_mutex> w_lock(d_lock_);
-            auto itr = d_.find(key);
-            if (itr == d_.end())
-                return nullptr;
-            return itr->second;
-        }
-        */
 
         template< typename T = ::TNG_NAMESPACE::ISOComponentPtrBase >
         std::optional< std::shared_ptr< T > > tryGet(const ISO_MAP::key_type& key) {
@@ -359,7 +356,7 @@ namespace TNG_NAMESPACE {
             if (!comp)
                 return std::nullopt;
 
-            return comp->value();  // Rückgabe wird kopiert
+            return comp->value();
         }
         template<typename T = ::TNG_NAMESPACE::ISOComponentPtrBase >
         auto tryGetValueRef(const ISO_MAP::key_type& key)
@@ -378,12 +375,13 @@ namespace TNG_NAMESPACE {
         }
 
 
-
+        /// <summary>
+        /// Clears the whole underlying container
+        /// </summary>
         void reset(void);
 
-        // Returns the size of the underlying data which is in this
-        // case an unordered_map
-        // \return number of elements inside data
+        /// @brief Returns the size of the underlying container
+        /// @return number of elements inside the container
         const std::size_t size() const noexcept;
     
         // -------------------------
@@ -597,7 +595,59 @@ namespace TNG_NAMESPACE {
     };
 
     namespace ISOUtils {
-        std::map<std::string, std::string> flatten(const ISOMessage&);
+
+        // Flacht eine ISOMessage in eine std::map<string,string> ab.
+        TNG_EXPORT std::map<std::string, std::string> flatten(const ISOMessage&);
+
+        // Gibt den Feldwert zurück oder wirft std::out_of_range wenn das Feld
+        // fehlt oder den falschen Typ hat.
+        // Geeignet wenn das Feld laut Spec garantiert vorhanden sein muss.
+        //
+        // Beispiel:
+        //   std::string pan = ISOUtils::getOrThrow<ISOOpaqueField>(msg, 2);
+        template <typename T>
+        auto getOrThrow(ISOMessage& msg, TNG_KEY_TYPE key)
+            -> decltype(std::declval<T>().value())
+        {
+            auto opt = msg.tryGet<T>(key);
+            if (!opt)
+                throw std::out_of_range(
+                    "DE" + std::to_string(key) + " fehlt oder hat falschen Typ");
+            return (*opt)->value();
+        }
+
+        // Gibt den Feldwert zurück oder einen Default-Wert wenn das Feld fehlt.
+        // Geeignet für optionale Felder mit sinnvollem Fallback.
+        //
+        // Beispiel:
+        //   std::string stan = ISOUtils::getOrDefault<ISOOpaqueField>(msg, 11, "000000");
+        template <typename T>
+        auto getOrDefault(ISOMessage& msg, TNG_KEY_TYPE key,
+            decltype(std::declval<T>().value()) defaultValue)
+            -> decltype(std::declval<T>().value())
+        {
+            auto opt = msg.tryGet<T>(key);
+            if (!opt) return defaultValue;
+            return (*opt)->value();
+        }
+
+        // Ruft den Callback mit dem Feldwert auf wenn das Feld vorhanden ist.
+        // Gibt true zurück wenn das Feld gefunden wurde, sonst false.
+        // Geeignet um if (auto x = msg.tryGet<...>(...)) { ... } zu vermeiden.
+        //
+        // Beispiel:
+        //   ISOUtils::ifPresent<ISOOpaqueField>(msg, 2, [](const std::string& pan) {
+        //       std::cout << "PAN: " << pan << "\n";
+        //   });
+        template <typename T, typename Fn>
+        bool ifPresent(ISOMessage& msg, TNG_KEY_TYPE key, Fn&& fn)
+        {
+            auto opt = msg.tryGet<T>(key);
+            if (!opt) return false;
+            std::forward<Fn>(fn)((*opt)->value());
+            return true;
+        }
+
     }
 
 }

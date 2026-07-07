@@ -21,7 +21,10 @@ C++17-Bibliothek zum Parsen und Erzeugen von ISO 8583-Finanznachrichten.
 | nlohmann-json | JSON-Serialisierung                | `nlohmann-json` |
 | fmtlib        | String-Formatting                  | `fmt`           |
 | yaml-cpp      | YAML-Spezifikations-Parser         | `yaml-cpp`      |
-| Quill         | Logging                            | `quill`         |
+| quill         | Logging                            | `quill`         |
+| libpopcnt     | Für dynamisches Bitset             | ---             |
+| dynamic_bitset| Dynamisches Bitset                 | ---             |
+| string_view   | nonstd::string_view                | ---             |
 | libiconv      | EBCDIC-Kodierung (optional)        | `libiconv`      |
 
 ---
@@ -36,8 +39,10 @@ C++17-Bibliothek zum Parsen und Erzeugen von ISO 8583-Finanznachrichten.
 
 ### Schritt 1 – Abhängigkeiten installieren
 
+>vcpkg läuft im Manifest-Modus, Abhängigkeiten werden aus `vcpkg.json` im Projektordner installiert!
+
 ```sh
-vcpkg install nlohmann-json fmt yaml-cpp quill libiconv robin-map catch2
+vcpkg install
 ```
 
 Der `builtin-baseline` in `vcpkg-configuration.json` pinnt alle Pakete auf einen bestimmten vcpkg-Commit. Um auf den neuesten Stand zu aktualisieren:
@@ -64,29 +69,32 @@ cmake --install build --prefix /usr/local
 
 ## API-Übersicht
 
-Die Bibliothek ist in drei klar getrennte Ebenen aufgeteilt:
+Die Bibliothek ist in drei Ebenen aufgeteilt:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌-------------------------------------------------------------┐
 │  Standardanwender                                           │
 │    ISOMessage.hh  – Nachrichtenobjekt und alle Feldtypen    │
 │    ISOSpec.hh     – YAML-Spezifikation laden                │
-├─────────────────────────────────────────────────────────────┤
+|    ISOLog.hh      - Eigener Logger injizierbar              |
+├-------------------------------------------------------------┤
 │  Erfahrene Anwender (eigene Parser-Implementierung)         │
 │    ISOParser.hh   – nur ISOParserPtrBase (abstrakt)         │
-├─────────────────────────────────────────────────────────────┤
+|    _codec.hh      - Funktionalitäten zur Konvertierung      |
+├-------------------------------------------------------------┤
 │  Intern – NICHT Teil der öffentlichen API                   │
 │    src/_parser.hh     – ISOBaseParser, ISOFieldParser<>     │
-│    src/fmt_types.hh   – IF_BINARY, IFE_CHAR, … (Aliase)    │
-└─────────────────────────────────────────────────────────────┘
+│    src/fmt_types.hh   – IF_BINARY, IFE_CHAR, … (Aliase)     │
+|    ...etc.                                                  |
+└-------------------------------------------------------------┘
 ```
 
 ### Standardanwender: YAML-Spezifikation laden und Nachricht entpacken
 
 ```cpp
 #include <iso8583/iso8583.h>   // oder einzeln:
-// #include <iso8583/ISOMessage.hh>
-// #include <iso8583/ISOSpec.hh>
+//#include <iso8583/ISOMessage.hh>
+//#include <iso8583/ISOSpec.hh>
 
 // 1. Parser aus YAML-Spezifikation erzeugen
 auto parser = tng::spec::SpecDecoder::loadFromYaml("visa_spec.yaml");
@@ -111,10 +119,12 @@ std::cout << msg->to_json().dump(2) << "\n";
 
 // 6. MTI-Helfer
 if (msg->isAuthorization() && msg->isRequest())
-    std::cout << "Das ist eine Autorisierungsanfrage\n";
+    std::cout << "Autorisierungsanfrage\n";
 ```
 
 ### Nachricht packen (Felder → Bytes)
+
+>Die `parse`-Funktion aus der `tng::ISOMessage` ist zurzeit nur ein boilerplate & beinhaltet keine Funktionalität
 
 ```cpp
 auto msg = std::make_shared<tng::ISOMessage>("0100");  // MTI direkt im Konstruktor
@@ -133,7 +143,7 @@ msg->set(amount);
 // std::vector<uint8_t> bytes = msg->parse(msg);  // sobald implementiert
 ```
 
-### Erfahrene Anwender: Eigenen Parser implementieren
+### Erfahrene User: Eigenen Parser implementieren
 
 ```cpp
 #include <iso8583/ISOParser.hh>
@@ -148,6 +158,7 @@ public:
         const std::vector<uint8_t>& b) override
     {
         // ... eigene Byte-zu-Feld-Logik ...
+        // siehe _codec.hh für verfügbare Konvertierungsfunktionalitäten
         return b.size();
     }
 
@@ -168,13 +179,15 @@ msg->parser(parser);
 ### Logging konfigurieren
 
 ```cpp
-#include <iso8583/iso8583.h>
+#include <iso8583/ISOLog.hh> // vor dem Quill-Include
+#define ISO8583_ENABLE_QUILL_INJECTION
+#include <quill/Logger.h>
 
 tng::log::setLevel(tng::log::Level::DEBUG);
 
 // Oder eigenen Quill-Logger injizieren
 quill::Logger* myLogger = quill::get_logger("myapp");
-tng::log::setExternalLogger(myLogger);
+tng::log::setQuillLogger(myLogger);
 ```
 
 ---
@@ -197,48 +210,52 @@ target_compile_definitions(my_app PRIVATE ISO8583_DLL)
 
 ```
 libiso8583/
-├── CMakeLists.txt
-├── vcpkg.json
-├── cmake/
-│   └── iso8583Config.cmake.in
-├── include/iso8583/              ← Öffentliche API
-│   ├── iso8583.h                 ← Convenience-Master-Header
-│   ├── ISOMessage.hh             ← ISOMessage, Feldtypen, Header-Klassen  ← STANDARDANWENDER
-│   ├── ISOSpec.hh                ← SpecDecoder::loadFromYaml()             ← STANDARDANWENDER
-│   ├── ISOParser.hh              ← ISOParserPtrBase                        ← EXPERTEN
-│   ├── config.h                  ← TNG_EXPORT, TNG_NAMESPACE, TNG_KEY_TYPE
-│   ├── _interfaces.hh            ← Abstrakte Basisklassen
-│   ├── _components.hh            ← Vollständige ISOMessage-Klassendefin.
-│   ├── _robin_hood.hh            ← Hash-Map (transitiv von _components.hh)
-│   ├── _encoder.hh               ← Encoder-Enum und Template-Funktionen
-│   ├── _prefixer.hh              ← PrefixEncoder, Length Enums
-│   ├── _currency.hh / _date.hh   ← Domänentypen
-│   ├── _framework.hh / _memory.hh / _meta.hh
-│   ├── dynamic_bitset.hpp / libpopcnt.hpp / string_view.hpp
-│   └── _interfaces.hh
-└── src/                          ← Private Implementierung
-    ├── config.cc
-    ├── _components.cc/.hh
-    ├── _parser.cc/.hh            ← ISOBaseParser, ISOFieldParser<> (INTERN)
-    ├── fmt_types.hh              ← IF_BINARY, IFE_CHAR, … (INTERN)
-    ├── _spec.cc/.hh
-    ├── _preprocessor.cc/.hh
-    ├── _padder.cc/.hh
-    ├── _prefixer.hh (intern)
-    ├── _pos.cc/.hh
-    ├── _logger.cc/.hh
-    ├── _iconv_wrapper.cc/.hh
-    └── _utils.cc/.hh
+├-- CMakeLists.txt
+├-- vcpkg.json
+├-- cmake/
+│   └-- iso8583Config.cmake.in
+├-- include/iso8583/              ← Öffentliche API
+│   ├-- iso8583.h                 ← Convenience-Master-Header
+│   ├-- ISOMessage.hh             ← ISOMessage, Feldtypen, Header-Klassen  ← STANDARDANWENDER
+│   ├-- ISOSpec.hh                ← SpecDecoder::loadFromYaml()             ← STANDARDANWENDER
+│   ├-- ISOParser.hh              ← ISOParserPtrBase                        ← EXPERTEN
+│   ├-- config.h                  ← TNG_EXPORT, TNG_NAMESPACE, TNG_KEY_TYPE
+│   ├-- _codec.hh                 ← Encoder, Prefixer, Length, Template-Funktionen
+|   └-- detail/
+│       ├-- _interfaces.hh        ← Implementiereungen
+│       ├-- _interfaces.hh        ← Abstrakte Basisklassen
+│       ├-- _components.hh        ← Vollständige ISOMessage-Klassendefin.
+|       └-- external/             ← inkludierte header-only Bibliotheken
+|           └- dynamic_bitset.hpp / libpopcnt.hpp / string_view.hpp
+└-- src/                          ← Private Implementierung
+    ├-- config.cc
+    ├-- _date.hh
+    ├-- _components.cc
+    ├-- _parser.cc/.hh            ← ISOBaseParser, ISOFieldParser<> (INTERN)
+    ├-- fmt_types.hh              ← IF_BINARY, IFE_CHAR, … (INTERN)
+    ├-- _spec.cc/.hh
+    ├-- _preprocessor.cc/.hh
+    ├-- _padder.cc/.hh
+    ├-- _logger.cc/.hh
+    ├-- _iconv_wrapper.cc/.hh
+    └-- _utils.cc/.hh
 ```
 
 ---
 
-## Bugfixes gegenüber Original
+## Transparenz
 
-| Datei | Problem | Fix |
-|---|---|---|
-| `config.cc` | `#ifdef _WIN32 \|\| _WIN64` → ungültige Präprozessorsyntax | Ersetzt durch `#if defined(_WIN32) \|\| defined(_WIN64)` |
-| `_logger.hh` | Doppeltes `#pragma once` | Entfernt |
-| `config.h` | `TNG_EXPORT` war immer `dllexport` | Import/Export-Guard ergänzt |
-| `_spec.hh/.cc` | `loadFromYaml()` gab `shared_ptr<ISOBaseParser>` zurück → exponiert interne Klasse | Rückgabetyp auf `ISOParserPtrBaseSmartPtr` geändert |
-| Alle Dateien | UTF-8 BOM + CRLF | Normalisiert auf LF, kein BOM |
+Das Grundgerüst des Testsets wurde von Claude erstellt! Der produzierte Code wurde von mir persönlich
+reviewed und an einigen Stellen korrigiert bzw. modifiziert. Ich plane auch in Zukunft das Testset von Claude
+erweitern zu lassen. <br>
+Das Testset soll dafür sorgen, dass die Bibliothek bei internen Änderungen weiterhin stabil bleibt und keine
+sogenannten `Breaking-Changes` implementiert werden.
+<br>
+<br>
+Diese Bibliothek ist noch weitentfernt für einen produktiven Einsatz; bildet aber bereits jetzt eine sehr gute Grundlage.<br>
+Es wird nur die Parsing- und Erzeugenfunktionalität implementiert, das Empfangen bzw. Senden solcher ISO-8583 Nachrichten übers
+Netzwerk ist dem User überlassen.
+<br>
+<br>
+Die Namen eigener Klassen sind fast identisch aus dem `iso`-Part von `jPOS` und von dort kommt auch die Inspiration.
+Dennoch unterscheidet sich diese Bibliothek deutlich von `jPOS`.

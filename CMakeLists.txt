@@ -6,17 +6,17 @@ project(libiso8583
     LANGUAGES CXX
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Standard-Optionen
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 option(ISO8583_BUILD_SHARED   "Shared Library (.dll/.so) bauen"          ON)
 option(ISO8583_ENABLE_ICONV   "libiconv für EBCDIC-Konvertierung nutzen" ON)
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # C++17 global enforced
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD          17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
@@ -29,22 +29,21 @@ if(WIN32)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Abhängigkeiten via vcpkg / find_package
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 find_package(nlohmann_json  CONFIG REQUIRED)
 find_package(fmt            CONFIG REQUIRED)
 find_package(yaml-cpp       CONFIG REQUIRED)
-find_package(quill          CONFIG REQUIRED)
 find_package(tsl-robin-map  CONFIG REQUIRED)
 
 if(ISO8583_ENABLE_ICONV)
     find_package(Iconv REQUIRED)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Quell-Dateien
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 set(ISO8583_SOURCES
     src/config.cc
     src/_codec.cc
@@ -53,7 +52,6 @@ set(ISO8583_SOURCES
     src/_logger.cc
     src/_padder.cc
     src/_parser.cc
-    src/_pos.cc
     src/_preprocessor.cc
     src/_spec.cc
     src/_utils.cc
@@ -65,7 +63,6 @@ set(ISO8583_PRIVATE_HEADERS
     src/_logger.hh
     src/_padder.hh
     src/_parser.hh          # ISOBaseParser, ISOFieldParser<> – bewusst NICHT öffentlich
-    src/_pos.hh
     src/_preprocessor.hh
     src/_spec.hh
     src/_utils.hh
@@ -73,18 +70,18 @@ set(ISO8583_PRIVATE_HEADERS
 )
 
 set(ISO8583_PUBLIC_HEADERS
-    # ── Master-Header ────────────────────────────────────────────────────────
+    # -- Master-Header --------------------------------------------------------
     include/iso8583/iso8583.h
 
-    # ── Standardanwender-API ─────────────────────────────────────────────────
+    # -- Standardanwender-API -------------------------------------------------
     include/iso8583/ISOMessage.hh       # ISOMessage, alle Feldtypen, Header-Klassen
     include/iso8583/ISOSpec.hh          # SpecDecoder::loadFromYaml()
     include/iso8583/ISOLog.hh           # setLevel(), setLogger(), ISOLogger
 
-    # ── Experten-API ──────────────────────────────────────────────────────────
+    # -- Experten-API ----------------------------------------------------------
     include/iso8583/ISOParser.hh        # ISOParserPtrBase (für eigene Parser)
 
-    # ── Implementierungs-Support-Header ──────────────────────────────────────
+    # -- Implementierungs-Support-Header --------------------------------------
     # (werden von ISOMessage.hh / _interfaces.hh transitiv gebraucht)
     include/iso8583/config.h
     include/iso8583/_codec.hh           # Prefixer + Encoder: Enums, Tabellen, Deklarationen
@@ -102,9 +99,9 @@ set(ISO8583_INCLUDED_EXTERNAL_HEADERS
     include/iso8583/detail/extern/string_view.hpp
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Library-Target
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if(ISO8583_BUILD_SHARED)
     add_library(iso8583 SHARED ${ISO8583_SOURCES} ${ISO8583_PRIVATE_HEADERS})
 else()
@@ -114,9 +111,9 @@ endif()
 # Alias für find_package(iso8583 CONFIG)-Nutzung
 add_library(iso8583::iso8583 ALIAS iso8583)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Compile-Definitionen
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 target_compile_definitions(iso8583
     PRIVATE
         $<$<BOOL:${ISO8583_ENABLE_ICONV}>:ENABLE_ICONV=1>
@@ -130,9 +127,9 @@ if(NOT MSVC AND ISO8583_BUILD_SHARED)
     target_compile_options(iso8583 PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Include-Pfade
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 target_include_directories(iso8583
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -142,15 +139,14 @@ target_include_directories(iso8583
         ${CMAKE_CURRENT_SOURCE_DIR}/include/iso8583
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Link-Abhängigkeiten
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 target_link_libraries(iso8583
     PUBLIC
         nlohmann_json::nlohmann_json
         fmt::fmt
         yaml-cpp::yaml-cpp
-        quill::quill
         tsl::robin_map
     PRIVATE
         $<$<BOOL:${ISO8583_ENABLE_ICONV}>:Iconv::Iconv>
@@ -161,9 +157,9 @@ if(UNIX)
     target_link_libraries(iso8583 PRIVATE dl)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # MSVC-spezifisch
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if(MSVC)
     target_compile_options(iso8583 PRIVATE
         /W4          # Hohe Warnstufe
@@ -178,9 +174,9 @@ if(MSVC)
     target_link_options(iso8583 PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Install & CMake-Paket-Konfiguration
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if(ISO8583_INSTALL)
     include(GNUInstallDirs)
     include(CMakePackageConfigHelpers)
@@ -233,9 +229,9 @@ if(ISO8583_INSTALL)
     )
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Tests (optional, Catch2 via vcpkg)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 if(ISO8583_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

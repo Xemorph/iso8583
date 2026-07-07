@@ -16,9 +16,9 @@
 
 namespace TNG_NAMESPACE {
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // parsed_length
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 #define INST_PARSED(PE, L) \
     template std::size_t parsed_length<PrefixEncoder::PE, Length::L>() noexcept;
 
@@ -53,9 +53,9 @@ INST_PARSED(EBCDIC, UNKNOWN)
 
 #undef INST_PARSED
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // encode_length
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 #define INST_ENC(PE, L) \
     template void encode_length<PrefixEncoder::PE, Length::L>(std::size_t, std::vector<uint8_t>&);
 
@@ -67,9 +67,9 @@ INST_ENC(EBCDIC, L)   INST_ENC(EBCDIC, LL)   INST_ENC(EBCDIC, LLL)   INST_ENC(EB
 
 #undef INST_ENC
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // decode_length
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 #define INST_DEC(PE, L) \
     template std::size_t decode_length<PrefixEncoder::PE, Length::L>(const std::vector<uint8_t>&, std::size_t);
 
@@ -81,17 +81,17 @@ INST_DEC(EBCDIC, L)   INST_DEC(EBCDIC, LL)   INST_DEC(EBCDIC, LLL)   INST_DEC(EB
 
 #undef INST_DEC
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // required_sz_for_as
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 template std::size_t required_sz_for_as<Encoder::ASCII>  (std::size_t) noexcept;
 template std::size_t required_sz_for_as<Encoder::BCD>    (std::size_t) noexcept;
 template std::size_t required_sz_for_as<Encoder::BINARY> (std::size_t) noexcept;
 template std::size_t required_sz_for_as<Encoder::EBCDIC> (std::size_t) noexcept;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // as<T, Encoder>
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 #define INST_AS_STR(E) \
     template std::string as<std::string, Encoder::E>(const std::vector<uint8_t>&, std::size_t, std::size_t);
 #define INST_AS_BIN(E) \

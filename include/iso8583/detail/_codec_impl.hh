@@ -9,9 +9,9 @@
 
 namespace TNG_NAMESPACE {
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     // parsed_length<encoding, digits>
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     template <PrefixEncoder encoding, Length digits>
     static constexpr std::size_t parsed_length() noexcept {
         if constexpr (PrefixEncoder::NONE   == encoding) return 0u;
@@ -22,9 +22,9 @@ namespace TNG_NAMESPACE {
         else static_assert(dependent_false<decltype(encoding)>::value, "unknown PrefixEncoder");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     // encode_length<encoding, digits>
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     template <PrefixEncoder encoding, Length digits>
     static constexpr void encode_length(std::size_t l, std::vector<uint8_t>& b) {
         if constexpr (PrefixEncoder::NONE == encoding) {
@@ -66,9 +66,9 @@ namespace TNG_NAMESPACE {
         else static_assert(dependent_false<decltype(encoding)>::value, "unknown PrefixEncoder");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     // decode_length<encoding, digits>
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     template <PrefixEncoder encoding, Length digits>
     static constexpr std::size_t decode_length(const std::vector<uint8_t>& b, std::size_t o) {
         std::size_t l = 0u;
@@ -98,9 +98,9 @@ namespace TNG_NAMESPACE {
         return l;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     // required_sz_for_as<e>
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     template <Encoder e>
     static constexpr std::size_t required_sz_for_as(std::size_t n) noexcept {
         if constexpr (Encoder::BINARY == e) return n;
@@ -111,13 +111,13 @@ namespace TNG_NAMESPACE {
         else static_assert(dependent_false<decltype(e)>::value, "unknown Encoder");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     // as<T, e>
-    // ─────────────────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
     template <typename T, Encoder e>
     static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length) {
         if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
-            // ── Binärer Rückgabepfad ─────────────────────────────────────────
+            // -- Binärer Rückgabepfad -----------------------------------------
             if constexpr (Encoder::HEX_EBCDIC == e) {
                 std::vector<uint8_t> d(length, 0x00);
                 for (std::size_t i = 0; i < length; ++i) {
@@ -137,7 +137,7 @@ namespace TNG_NAMESPACE {
                 "as<vector<uint8_t>, E>: unsupported encoder");
         }
         else if constexpr (std::is_same_v<T, std::string>) {
-            // ── String-Rückgabepfad ──────────────────────────────────────────
+            // -- String-Rückgabepfad ------------------------------------------
             if constexpr (Encoder::EBCDIC == e) {
                 std::string data(text.begin() + offset, text.begin() + offset + length);
 #if ENABLE_ICONV

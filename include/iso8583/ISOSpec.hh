@@ -52,7 +52,7 @@ namespace TNG_NAMESPACE {
         class TNG_EXPORT SpecDecoder {
         public:
             static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-                loadFromYaml(const std::string& path);
+                loadFromYaml(const std::string& /*path*/ );
         };
 
     }

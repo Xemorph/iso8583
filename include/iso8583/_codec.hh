@@ -13,7 +13,7 @@
 // [iconv]
 #include "_iconv_wrapper.hh"
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // _codec.hh
 //
 // Enthält ausschließlich:
@@ -23,11 +23,11 @@
 //
 // Erfahrene Anwender die einen eigenen ISOBaseParser schreiben binden
 // ausschließlich diesen Header ein.
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 namespace TNG_NAMESPACE {
 
-    // ── Lookup-Tabellen ───────────────────────────────────────────────────────
+    // -- Lookup-Tabellen -------------------------------------------------------
 
     // - NullPrefixer
     // - AsciiPrefixer
@@ -86,7 +86,7 @@ namespace TNG_NAMESPACE {
         0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e,
     };
 
-    // ── Enums ─────────────────────────────────────────────────────────────────
+    // -- Enums -----------------------------------------------------------------
 
     /// Enum that defines the available encoding schemes for prefixing lengths.
     /// It includes different formats for encoding the length of data fields.
@@ -117,7 +117,8 @@ namespace TNG_NAMESPACE {
     /// - Length::LLL: 3-digit length encoding.
     /// - Length::LLLL: 4-digit length encoding.
     enum class TNG_EXPORT Length : int {
-        UNKNOWN = -1, ///< unknown lenght (gets calculated)
+        CONSUME = -2, ///< consume all (only in current buffer)
+        UNKNOWN = -1, ///< unknown length (gets calculated)
         FIX     = 0u, ///< fixed length (no Prefix)
         L       = 1u, ///< 1-digit length (max.    9)
         LL      = 2u, ///< 2-digit length (max.   99)
@@ -134,7 +135,7 @@ namespace TNG_NAMESPACE {
         HEX_EBCDIC = 4, ///< Hex-Nibbles in EBCDIC-Darstellung
     };
 
-    /* ── Prefixer : Declarations ─────────────────────────────────────────────── */
+    /* -- Prefixer : Declarations ----------------------------------------------- */
 
 
     /// Returns the number of bytes required to encode the length, based on the specified encoding and length format.
@@ -167,7 +168,7 @@ namespace TNG_NAMESPACE {
     template <PrefixEncoder encoding, Length digits>
     static constexpr std::size_t decode_length(const std::vector<uint8_t>& b, std::size_t o);
 
-    // ── Encoder: Deklarationen ────────────────────────────────────────────────
+    // -- Encoder: Deklarationen ------------------------------------------------
 
     // T = gewünschter Rückgabewert
     // Text = Eingabetyp
@@ -185,7 +186,7 @@ namespace TNG_NAMESPACE {
     template <Encoder e>
     static constexpr std::size_t required_sz_for_as(std::size_t n) noexcept;
 
-    // ── Interne Hilfsfunktionen (nicht Teil der öffentlichen API) ─────────────
+    // -- Interne Hilfsfunktionen (nicht Teil der öffentlichen API) -------------
     namespace detail {
         /// EBCDIC-Byte in-place nach ASCII konvertieren (nullterminierter String)
         static inline void e2a(char* s) noexcept {

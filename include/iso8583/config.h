@@ -7,7 +7,7 @@
 #define TNG_NAMESPACE tng
 #define TNG_CORE_VERSION   "0.1.1-alpha"
 
-// ── DLL-Visibility ────────────────────────────────────────────────────────
+// -- DLL-Visibility --------------------------------------------------------
 // Beim Bauen der Shared-Library (ISO8583_DLL_EXPORTS gesetzt durch CMake):
 //   Windows  → dllexport
 //   GCC/Clang→ visibility("default")  (zusammen mit -fvisibility=hidden)

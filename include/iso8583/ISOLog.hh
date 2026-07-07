@@ -27,14 +27,16 @@
  *   tng::log::setLogger(&logger);
  * @endcode
  *
- * ── Option 3: Eigenen Quill-Logger injizieren (wenn Quill verfügbar) ──────
+ * ── Option 3: Eigenen Quill-Logger injizieren ────────────────────────────
  * @code
- *   #include <iso8583/ISOLog.hh>    // vor dem Quill-Include
- *   #define ISO8583_ENABLE_QUILL_INJECTION
- *   #include <quill/Logger.h>
+ *   #include <iso8583/ISOLog.hh>
+ *   #include <quill/Frontend.h>
+ *   #include <quill/sinks/ConsoleSink.h>
  *
- *   quill::Logger* myLogger = quill::Frontend::create_or_get_logger(...);
- *   tng::log::setQuillLogger(myLogger);
+ *   quill::Backend::start();
+ *   auto sink   = quill::Frontend::create_or_get_sink<quill::ConsoleSink>();
+ *   auto* myLog = quill::Frontend::create_or_get_logger("myapp", std::move(sink));
+ *   tng::log::setQuillLogger(static_cast<void*>(myLog));
  * @endcode
  *
  * ── Option 4: Logging deaktivieren ────────────────────────────────────────
@@ -104,39 +106,89 @@ namespace TNG_NAMESPACE::log {
      */
     TNG_EXPORT void setLogger(ISOLogger* logger);
 
-} // namespace TNG_NAMESPACE::log
-
-// ── Optionale Quill-Direktinjektion ───────────────────────────────────────────
-// Nur verfügbar wenn der Anwender Quill bereits eingebunden hat.
-// Muss VOR diesem Header definiert werden:
-//   #define ISO8583_ENABLE_QUILL_INJECTION
-//   #include <quill/Logger.h>
-//   #include <iso8583/ISOLog.hh>
-#if defined(ISO8583_ENABLE_QUILL_INJECTION) && defined(QUILL_VERSION)
-namespace TNG_NAMESPACE::log {
     /**
      * @brief Injiziert einen eigenen Quill-Logger direkt.
      *
-     * Effizienter als ISOLogger-Bridge da keine fmt::format()-Konvertierung
-     * nötig ist – Quill formatiert lazy im Backend-Thread.
+     * Nimmt einen `void*` entgegen um die Quill-Abhängigkeit aus dem
+     * öffentlichen Header zu entfernen. Der Aufrufer übergibt seinen
+     * `quill::Logger*` als `void*` – die Bibliothek castet intern zurück.
+     *
+     * Nutzer die kein Quill verwenden müssen diesen Header nicht einbinden
+     * und erhalten keine transitive Quill-Abhängigkeit.
+     *
+     * Voraussetzung: Quill-Backend muss bereits gestartet sein.
+     * Mit nullptr wird auf den internen Quill-Logger zurückgeschaltet.
      *
      * Beispiel:
      * @code
-     *   #define ISO8583_ENABLE_QUILL_INJECTION
-     *   #include <quill/Logger.h>
      *   #include <iso8583/ISOLog.hh>
+     *   #include <quill/Frontend.h>
+     *   #include <quill/sinks/ConsoleSink.h>
      *
-     *   // Eigenen Logger mit File + Console Sink:
-     *   auto file_sink    = quill::Frontend::create_or_get_sink<quill::FileSink>("app.log");
-     *   auto stdout_sink  = quill::Frontend::create_or_get_sink<quill::ConsoleSink>();
-     *   quill::Logger* my = quill::Frontend::create_or_get_logger(
-     *       "myapp", { file_sink, stdout_sink });
+     *   quill::Backend::start();
+     *   auto sink   = quill::Frontend::create_or_get_sink<quill::ConsoleSink>();
+     *   quill::Logger* myLog = quill::Frontend::create_or_get_logger("myapp", std::move(sink));
      *
-     *   tng::log::setQuillLogger(my);
+     *   tng::log::setLevel(tng::log::Level::DEBUG);
+     *   tng::log::setQuillLogger(static_cast<void*>(myLog));
      * @endcode
-     *
-     * @param logger Quill-Logger (nullptr = zurück zum internen Logger)
      */
-    TNG_EXPORT void setQuillLogger(quill::Logger* logger);
-}
-#endif
+    TNG_EXPORT void setQuillLogger(void* quillLoggerPtr);
+
+} // namespace TNG_NAMESPACE::log
+
+
+// ── QuillBridge ───────────────────────────────────────────────────────────────
+// Header-only ISOLogger-Implementierung die an einen quill::Logger weiterleitet.
+//
+// WARUM QuillBridge statt setQuillLogger():
+//   iso8583 ist eine DLL. Quill verwendet pro Prozess einen Singleton für die
+//   Thread-Queue-Verwaltung. Wenn iso8583.dll Quill-Makros direkt aufruft,
+//   landen sie im DLL-eigenen Singleton – nicht im Singleton von tng.exe.
+//   Das Backend liest nur den tng.exe-Singleton → DLL-Nachrichten verschwinden.
+//
+//   QuillBridge wird im Kontext von tng.exe kompiliert (Header-only) und
+//   ruft Quill-Makros dort auf → korrekter Singleton → Nachrichten erscheinen.
+//
+// Verwendung:
+//   #include <iso8583/ISOLog.hh>
+//   #include <quill/LogMacros.h>
+//
+//   static tng::log::QuillBridge bridge(myQuillLogger);
+//   tng::log::setLogger(&bridge);
+//   tng::log::setLevel(tng::log::Level::DEBUG);
+
+#if defined(QUILL_VERSION)
+#include <quill/LogMacros.h>
+
+namespace TNG_NAMESPACE::log {
+
+    class QuillBridge final : public ISOLogger {
+        quill::Logger* logger_;
+
+    public:
+        explicit QuillBridge(quill::Logger* logger) : logger_(logger) {}
+
+        void log(Level level,
+            std::string_view /*file*/,
+            int /*line*/,
+            std::string_view message) override
+        {
+            if (!logger_) return;
+            // Diese Makros werden im Kontext des Aufrufers expandiert (tng.exe),
+            // nicht im DLL-Kontext – damit korrekter Quill-Singleton.
+            const std::string msg(message);
+            switch (level) {
+            case Level::TRACE:    QUILL_LOG_TRACE_L1(logger_, "{}", msg); break;
+            case Level::DEBUG:    QUILL_LOG_DEBUG(logger_, "{}", msg); break;
+            case Level::INFO:     QUILL_LOG_INFO(logger_, "{}", msg); break;
+            case Level::WARN:     QUILL_LOG_WARNING(logger_, "{}", msg); break;
+            case Level::ERR:      QUILL_LOG_ERROR(logger_, "{}", msg); break;
+            case Level::CRITICAL: QUILL_LOG_CRITICAL(logger_, "{}", msg); break;
+            default: break;
+            }
+        }
+    };
+
+} // namespace TNG_NAMESPACE::log
+#endif // defined(QUILL_VERSION)

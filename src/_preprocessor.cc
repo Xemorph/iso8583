@@ -38,14 +38,14 @@
 
 namespace TNG_NAMESPACE::spec {
 
-    // ── Forward-Deklaration ───────────────────────────────────────────────────
+    // -- Forward-Deklaration ---------------------------------------------------
     static YAML::Node processNode(
         const YAML::Node& node,
         const YAML::Node& context,
         const std::filesystem::path& basePath,
         std::unordered_set<std::string>& visited);
 
-    // ── mergeInto: fügt alle Keys aus source in dest ein ─────────────────────
+    // -- mergeInto: fügt alle Keys aus source in dest ein ---------------------
     // definitions werden tief gemergt (Quelle überschreibt Ziel-Keys).
     // Alle anderen Top-Level-Keys werden flach überschrieben.
     static void mergeInto(YAML::Node& dest, const YAML::Node& source) {
@@ -67,7 +67,7 @@ namespace TNG_NAMESPACE::spec {
         }
     }
 
-    // ── !use / !include: Definition aus `definitions` einfügen ───────────────
+    // -- !use / !include: Definition aus `definitions` einfügen ---------------
     static YAML::Node processUse(
         const YAML::Node& node,
         const YAML::Node& context,
@@ -94,7 +94,7 @@ namespace TNG_NAMESPACE::spec {
         return context["definitions"][refKey];
     }
 
-    // ── !template: Kurzschreibweise für variable Feldlängen ──────────────────
+    // -- !template: Kurzschreibweise für variable Feldlängen ------------------
     // Syntax: PREFIX(FORMAT, MAX_LENGTH[, DESCRIPTION])
     // Beispiele:
     //   LL(CHAR, 19)            → { type: scalar, format: LLCHAR,   length: 19  }
@@ -145,7 +145,7 @@ namespace TNG_NAMESPACE::spec {
         return result;
     }
 
-    // ── !merge: mehrere Maps zusammenführen ───────────────────────────────────
+    // -- !merge: mehrere Maps zusammenführen -----------------------------------
     static YAML::Node processMerge(
         const YAML::Node& node,
         const YAML::Node& context,
@@ -173,7 +173,7 @@ namespace TNG_NAMESPACE::spec {
         return result;
     }
 
-    // ── Rekursiver Node-Prozessor ─────────────────────────────────────────────
+    // -- Rekursiver Node-Prozessor ---------------------------------------------
     static YAML::Node processNode(
         const YAML::Node& node,
         const YAML::Node& context,
@@ -230,7 +230,7 @@ YAML::Node TNG_NAMESPACE::spec::SpecPreProcessor::preprocessFile(const std::stri
 
     YAML::Node root(YAML::NodeType::Map);
 
-    // ── !include_files: externe Dateien laden ─────────────────────────────────
+    // -- !include_files: externe Dateien laden ---------------------------------
     const YAML::Node& first = docs[0];
     if (first.Tag() == "!include_files" && first.IsSequence()) {
         TNG_LOG_DEBUG("[Preprocessor] !include_files in '{}'", path);

@@ -2,7 +2,7 @@
 // [tng]
 #include "_logger.hh"
 
-// ─── Top-Level unparse (kein base_offset) ────────────────────────────────────
+// --- Top-Level unparse (kein base_offset) ------------------------------------
 std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     ::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c,
     const std::vector<uint8_t>& b)
@@ -10,7 +10,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     return unparse(c, b, 0u);
 }
 
-// ─── unparse mit base_offset ─────────────────────────────────────────────────
+// --- unparse mit base_offset -------------------------------------------------
 // base_offset: Byte-Position des Buffers b innerhalb der Original-Nachricht.
 // Für Top-Level-Aufrufe ist das 0. Für nested-Felder ist es der Offset des
 // Elternfeldes (nach seinem eigenen Längen-Prefix), sodass Kind-Offsets
@@ -46,7 +46,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         consumed += hdr_sz_;
     }
 
-    // ── MTI ──────────────────────────────────────────────────────────────────
+    // -- MTI ------------------------------------------------------------------
     std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase> p = l_.at(0);
     if (p && (
         p->type() != ::TNG_NAMESPACE::ISOFieldParserType::BITMAP &&
@@ -64,7 +64,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         m->set(mti);
     }
 
-    // ── Bitmap ───────────────────────────────────────────────────────────────
+    // -- Bitmap ---------------------------------------------------------------
     dynamic_bitset<> bmp;
     std::size_t bmp_sz = 0;
     TNG_KEY_TYPE hf = (TNG_KEY_TYPE)(l_.size() - 1);
@@ -92,7 +92,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         hf = std::min(hf, (TNG_KEY_TYPE)last_idx);
     }
 
-    // ── Datenfelder ──────────────────────────────────────────────────────────
+    // -- Datenfelder ----------------------------------------------------------
     CONST_ITERATOR _begin = l_.cbegin() + first_field();
     CONST_ITERATOR _end   = (hf + 1 < (TNG_KEY_TYPE)l_.size())
                           ? (l_.cbegin() + hf + 1)

@@ -54,7 +54,7 @@ namespace TNG_NAMESPACE::spec {
         std::string format;
         std::string encoding; // "ebcdic" | "ascii" | "bcd" | "binary" | "" (= default)
         int length = 0;
-        std::string description{"<dummy>"};
+        std::string description{ "<dummy>" };
 
         std::vector<SpecField> children;
     };
@@ -85,64 +85,46 @@ namespace TNG_NAMESPACE::spec {
     }
 
     static void validateSpecYaml(const YAML::Node& root) {
-        if (!root["fields"]) {
-            throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");
-        }
+        // Validierung läuft auf dem BEREITS PREPROCESSIERTEN YAML.
+        // !template, !merge, !use wurden bereits expandiert – daher:
+        //   - 'type' kann durch !template fehlen (produziert kein type-Feld)
+        //   - 'length' kann bei NOP fehlen (gültig)
+        //   - children-Kinder können NOP ohne length sein
+
+        if (!root["fields"])
+            throw std::runtime_error("Fehlender Abschnitt \'fields\' in YAML.");
 
         const YAML::Node& fields = root["fields"];
         for (const auto& fieldEntry : fields) {
-            std::string key = fieldEntry.first.as<std::string>();
-            YAML::Mark mark = fieldEntry.first.Mark();
+            const std::string key = fieldEntry.first.as<std::string>();
+            const YAML::Mark  mark = fieldEntry.first.Mark();
 
-            if (!std::all_of(key.begin(), key.end(), ::isdigit)) {
-                throw SpecValidationError("Feldschlüssel '" + key + "' ist nicht numerisch", mark);
-            }
+            if (!std::all_of(key.begin(), key.end(), ::isdigit))
+                throw SpecValidationError("Feldschlüssel \'" + key + "\' ist nicht numerisch", mark);
 
             const YAML::Node& field = fieldEntry.second;
-            validateFieldKeys(field, key);
+            if (!field.IsMap()) continue;  // z.B. Bitmap-Wert als Scalar
 
-            if (!field["type"]) {
-                throw SpecValidationError("Fehlender 'type' im Feld " + key, field.Mark());
-            }
-
-            std::string type = field["type"].as<std::string>();
-            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
-
-            if (type != "scalar" && type != "nested") {
-                throw SpecValidationError("Ungültiger 'type' im Feld " + key + ": " + type, field["type"].Mark());
-            }
-
-            if (type == "scalar" || type == "nested") {
-                if (!field["format"]) {
-                    throw SpecValidationError("Fehlendes 'format' im scalar-Feld " + key, field.Mark());
-                }
-                if (!field["format"].IsScalar()) {
-                    throw SpecValidationError("'format' im Feld " + key + " muss ein String sein", field["format"].Mark());
-                }
+            // format ist das einzig zwingend nötige Feld nach dem Preprocessing
+            if (field["format"] && field["format"].IsScalar()) {
                 std::string fmt = field["format"].as<std::string>();
                 std::transform(fmt.begin(), fmt.end(), fmt.begin(),
                     [](unsigned char c) { return std::tolower(c); });
-                if (fmt != "nop") {
-                    if (!field["length"]) {
-                        throw SpecValidationError("Fehlendes 'length' im scalar-Feld " + key, field.Mark());
-                    }
 
-                    if (!field["length"].IsScalar() || !field["length"].IsDefined()) {
-                        throw SpecValidationError("'length' im Feld " + key + " muss ein Integer sein", field["length"].Mark());
-                    }
+                // Nur bei nicht-NOP/nicht-BITMAP Feldern ist length erforderlich
+                const bool needsLength = (fmt != "nop" && fmt != "bitmap" &&
+                    fmt != "unused" && fmt != "remaining");
+                if (needsLength && !field["length"]) {
+                    TNG_LOG_WARN("[SpecDecoder] Feld {} hat format='{}' aber kein 'length'", key, fmt);
                 }
             }
 
-            if (type == "nested") {
-                if (!field["children"] || !field["children"].IsSequence()) {
-                    throw SpecValidationError("'children' im nested-Feld " + key + " fehlt oder ist keine Liste", field.Mark());
-                }
-
-                for (const auto& child : field["children"]) {
-                    if (!child["format"] || !child["length"]) {
-                        throw SpecValidationError("Kind-Feld in nested-Feld " + key + " unvollständig", child.Mark());
-                    }
-                }
+            // Nested: children muss eine Sequence sein
+            if (field["type"] && field["type"].as<std::string>() == "nested") {
+                if (field["children"] && !field["children"].IsSequence())
+                    throw SpecValidationError(
+                        "\'children\' im nested-Feld " + key + " muss eine Liste sein",
+                        field.Mark());
             }
         }
     }
@@ -151,14 +133,15 @@ namespace TNG_NAMESPACE::spec {
     static bool isEncodingNeutral(const std::string& format) {
         static const std::unordered_set<std::string> neutral = {
             "BINARY", "LBINARY", "LLBINARY", "LLLBINARY", "LLLLBINARY",
-            "BITMAP", "NOP", "UNUSED", "REMAINING"
+            "BITMAP", "NOP", "UNUSED",
+            "REMAINING",  // kein Encoding – liest rohe Bytes
         };
         return neutral.count(format) > 0;
     }
 
     static SpecField parseSpecField(const YAML::Node& node,
-                                    const std::string& defaultEncoding,
-                                    const std::string& tag = "") {
+        const std::string& defaultEncoding,
+        const std::string& tag = "") {
         SpecField f;
         std::string type = node["type"].as<std::string>("");
         std::transform(type.begin(), type.end(), type.begin(),
@@ -172,7 +155,8 @@ namespace TNG_NAMESPACE::spec {
         // Encoding-Auflösung: Feld-Encoding > globales Encoding > leer (für neutrale Formate)
         if (isEncodingNeutral(f.format)) {
             f.encoding = "";  // encoding-neutrale Formate ignorieren jede Vorgabe
-        } else {
+        }
+        else {
             f.encoding = node["encoding"].as<std::string>(defaultEncoding);
             std::transform(f.encoding.begin(), f.encoding.end(), f.encoding.begin(),
                 [](unsigned char c) { return std::toupper(c); });
@@ -184,6 +168,16 @@ namespace TNG_NAMESPACE::spec {
             : (f.length == 0 ? "<dummy>" : "?");
 
         if (node["children"]) {
+            // Encoding das an Kinder vererbt wird:
+            //   - Wenn das Elternfeld selbst encoding-neutral ist (z.B. format: binary
+            //     bei einem nested-Container), darf sein leeres f.encoding NICHT an
+            //     die Kinder weitergereicht werden – sonst erben Kinder fälschlicherweise
+            //     ein leeres Encoding und das globale defaultEncoding geht verloren.
+            //   - Nur wenn das Elternfeld selbst ein echtes Encoding trägt
+            //     (z.B. format: numeric mit encoding: bcd), erben Kinder dieses.
+            const std::string& inheritedEncoding =
+                isEncodingNeutral(f.format) ? defaultEncoding : f.encoding;
+
             for (const auto& child : node["children"]) {
                 SpecField childSpec;
                 childSpec.format = child["format"].as<std::string>("");
@@ -192,10 +186,11 @@ namespace TNG_NAMESPACE::spec {
 
                 if (isEncodingNeutral(childSpec.format)) {
                     childSpec.encoding = "";
-                } else {
-                    // Kinder erben zunächst das Encoding des Elternfeldes,
-                    // das wiederum schon defaultEncoding berücksichtigt hat
-                    childSpec.encoding = child["encoding"].as<std::string>(f.encoding);
+                }
+                else {
+                    // Kinder erben das Encoding des Elternfeldes – oder, falls das
+                    // Elternfeld encoding-neutral ist, direkt das globale Encoding.
+                    childSpec.encoding = child["encoding"].as<std::string>(inheritedEncoding);
                     std::transform(childSpec.encoding.begin(), childSpec.encoding.end(), childSpec.encoding.begin(),
                         [](unsigned char c) { return std::toupper(c); });
                 }
@@ -228,12 +223,13 @@ namespace TNG_NAMESPACE::spec {
     >;
 
     static const std::unordered_map<std::string, ParserFactory>& parserTable() {
-        // Lambda-Helfer um Tipp-Redundanz zu reduzieren
-        #define MAKE(T) [](int len, const std::string& desc) \
-            -> ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr \
+        using F = ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr;
+
+        // Lokale Makros um die Factory-Lambda-Redundanz zu reduzieren.
+        // #undef direkt nach der Tabelle – kein Einfluss auf andere TUs.
+#define MAKE(T) [](int len, const std::string& desc) -> F \
             { return std::make_shared<T>(len, desc); }
-        #define MAKE_NOP() [](int, const std::string&) \
-            -> ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr \
+#define MAKE_NOP() [](int, const std::string&) -> F \
             { return std::make_shared<IF_NOP>(); }
 
         static const std::unordered_map<std::string, ParserFactory> table = {
@@ -241,9 +237,19 @@ namespace TNG_NAMESPACE::spec {
             { "BITMAP|",          MAKE(IFB_BITMAP)      },
             { "NOP|",             MAKE_NOP()             },
             { "UNUSED|",          MAKE_NOP()             },
+            // Liest alle verbleibenden Bytes des Parent-Buffers.
+            // Fuer trailing variable-length Felder ohne eigenen Laengen-Prefix.
+            // Trailing variable-length Felder ohne Prefix.
+            // Encoding-neutral fuer binary, EBCDIC-Variante fuer EBCDIC-Specs.
+            { "REMAINING|",          MAKE(IF_REMAINING)   },
+            { "REMAINING|BINARY",    MAKE(IF_REMAINING)   },
+            { "REMAINING|EBCDIC",    MAKE(IFE_REMAINING)  },
 
             // ── BINARY (rohe Bytes) ───────────────────────────────────────────
             { "BINARY|",          MAKE(IF_BINARY)        },
+            { "LBINARY|",         MAKE(IF_LBINARY)       },
+            { "LLBINARY|",        MAKE(IF_LLBINARY)      },
+            { "LLLBINARY|",       MAKE(IF_LLLBINARY)     },
             { "BINARY|BINARY",    MAKE(IF_BINARY)        },
             { "LBINARY|BINARY",   MAKE(IF_LBINARY)       },
             { "LLBINARY|BINARY",  MAKE(IF_LLBINARY)      },
@@ -285,16 +291,15 @@ namespace TNG_NAMESPACE::spec {
             { "LCHAR|EBCDIC",        MAKE(IFE_LCHAR)       },
             { "LLCHAR|EBCDIC",       MAKE(IFE_LLCHAR)      },
             { "LLLCHAR|EBCDIC",      MAKE(IFE_LLLCHAR)     },
-            { "REMAINING|EBCDIC",    MAKE(IFE_REMAINING)   },
         };
 
-        #undef MAKE
-        #undef MAKE_NOP
+#undef MAKE
+#undef MAKE_NOP
         return table;
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
-    createScalarParser(const SpecField& f) {
+        createScalarParser(const SpecField& f) {
         const std::string key = f.format + "|" + f.encoding;
         const auto& table = parserTable();
 
@@ -307,9 +312,16 @@ namespace TNG_NAMESPACE::spec {
         if (it2 != table.end())
             return it2->second(f.length, f.description);
 
-        TNG_LOG_WARN("[SpecDecoder] Unbekannte Format/Encoding-Kombination: '{}' / '{}' – falle auf NOP zurück",
-            f.format, f.encoding);
-        return std::make_shared<IF_NOP>();
+        // Unbekannte Kombination – Exception mit klarer Fehlermeldung.
+        // Häufige Ursache: Tippfehler im encoding-Wert
+        throw std::runtime_error(
+            "Unbekannte Format/Encoding-Kombination in der Spec:\n"
+            "  format:   '" + f.format + "'\n"
+            "  encoding: '" + f.encoding + "'\n"
+            "  description: '" + f.description + "'\n"
+            "  Erlaubte Encodings: ASCII | BCD | BINARY | EBCDIC\n"
+            "  Prüfe auf Tippfehler im globalen 'encoding'-Schlüssel oder im Feld selbst."
+        );
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr buildFieldParser(const SpecField& f) {
@@ -317,7 +329,7 @@ namespace TNG_NAMESPACE::spec {
             return createScalarParser(f);
         }
         else if (f.type == SpecFieldType::NESTED) {
-            auto base = createScalarParser(f);//std::make_shared<IF_BINARY>(f.binary_length, f.description);
+            auto base = createScalarParser(f);
 
             auto nestedParser = std::make_shared<::TNG_NAMESPACE::ISONestedFieldParser<::TNG_NAMESPACE::ISOBaseParser>>(base, f.description);
             auto subparser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
@@ -342,7 +354,7 @@ namespace TNG_NAMESPACE::spec {
         }
         catch (const std::exception& e) {
             TNG_LOG_ERROR("[SpecDecoder] Validation failed for '{}': {}", path, e.what());
-            return std::nullptr_t{};
+            throw;
         }
 
 

@@ -5,24 +5,25 @@
 
 namespace TNG_NAMESPACE {
 
-    // ── Sonder-Typen ────────────────────────────────────────────────────────
+    // -- Sonder-Typen --------------------------------------------------------
     using IF_NOP      = ISOFieldParser< std::nullptr_t, Length::FIX,  PrefixEncoder::NONE,   Encoder::BINARY, Padder::NONE >;
     using IF_UNUSED   = ISOFieldParser< ::TNG_NAMESPACE::UNUSED, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+    using IF_CONSUMER = ISOConsumer;
 
     using IF_REMAINING = ISORemainderFieldParser< std::vector<uint8_t>, Encoder::BINARY >;
     using IFE_REMAINING = ISORemainderFieldParser< std::string, Encoder::EBCDIC >;
 
-    // ── Bitmap ───────────────────────────────────────────────────────────────
+    // -- Bitmap ---------------------------------------------------------------
     using IFB_BITMAP    = ISOBitmapFieldParser;
 
-    // ── BINARY (rohe Bytes, kein Encoding) ──────────────────────────────────
+    // -- BINARY (rohe Bytes, kein Encoding) ----------------------------------
     using IF_BINARY      = ISOBinaryFieldParser< Length::FIX,  PrefixEncoder::NONE,   Encoder::BINARY >;
     using IF_LBINARY     = ISOBinaryFieldParser< Length::L,    PrefixEncoder::BINARY, Encoder::BINARY >;
     using IF_LLBINARY    = ISOBinaryFieldParser< Length::LL,   PrefixEncoder::BINARY, Encoder::BINARY >;
     using IF_LLLBINARY   = ISOBinaryFieldParser< Length::LLL,  PrefixEncoder::BINARY, Encoder::BINARY >;
     using IF_LLLLBINARY  = ISOBinaryFieldParser< Length::LLLL, PrefixEncoder::BINARY, Encoder::BINARY >;
 
-    // ── ASCII ────────────────────────────────────────────────────────────────
+    // -- ASCII ----------------------------------------------------------------
     // Numerisch (rechts-ausgerichtet, Null-gefüllt)
     using IFA_NUMERIC    = ISOOpaqueFieldParser< Length::FIX,  PrefixEncoder::NONE,   Encoder::ASCII, Padder::LEFT_ZERO >;
     // Alphabetisch/alphanumerisch (links-ausgerichtet, Leerzeichen-gefüllt)
@@ -41,7 +42,7 @@ namespace TNG_NAMESPACE {
     using IFA_LLBINARY   = ISOBinaryFieldParser< Length::LL,   PrefixEncoder::ASCII,  Encoder::BINARY >;
     using IFA_LLLBINARY  = ISOBinaryFieldParser< Length::LLL,  PrefixEncoder::ASCII,  Encoder::BINARY >;
 
-    // ── BCD (Binary Coded Decimal) ───────────────────────────────────────────
+    // -- BCD (Binary Coded Decimal) -------------------------------------------
     // Numerisch, gepackt (2 Ziffern pro Byte)
     using IFB_NUMERIC    = ISOOpaqueFieldParser< Length::FIX,  PrefixEncoder::NONE,   Encoder::BCD,   Padder::LEFT_ZERO >;
     // Variable Länge (BCD Length-Prefix)
@@ -53,7 +54,7 @@ namespace TNG_NAMESPACE {
     using IFB_LLBINARY   = ISOBinaryFieldParser< Length::LL,   PrefixEncoder::BCD,    Encoder::BINARY >;
     using IFB_LLLBINARY  = ISOBinaryFieldParser< Length::LLL,  PrefixEncoder::BCD,    Encoder::BINARY >;
 
-    // ── EBCDIC ───────────────────────────────────────────────────────────────
+    // -- EBCDIC ---------------------------------------------------------------
     using IFE_BINARY     = ISOBinaryFieldParser< Length::FIX,  PrefixEncoder::NONE,   Encoder::HEX_EBCDIC >;
     using IFE_LBINARY    = ISOBinaryFieldParser< Length::L,    PrefixEncoder::EBCDIC, Encoder::BINARY >;
     using IFE_LLBINARY   = ISOBinaryFieldParser< Length::LL,   PrefixEncoder::EBCDIC, Encoder::BINARY >;
@@ -67,7 +68,7 @@ namespace TNG_NAMESPACE {
     using IFE_LLCHAR     = ISOOpaqueFieldParser< Length::LL,   PrefixEncoder::EBCDIC, Encoder::EBCDIC >;
     using IFE_LLLCHAR    = ISOOpaqueFieldParser< Length::LLL,  PrefixEncoder::EBCDIC, Encoder::EBCDIC >;
 
-    // ── Aliase für Rückwärtskompatibilität ───────────────────────────────────
+    // -- Aliase für Rückwärtskompatibilität -----------------------------------
     using IFEMC_TCC = IFE_CHAR;
 
 }
