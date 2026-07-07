@@ -1,0 +1,307 @@
+# SOFTWARE LICENSE AGREEMENT (BILINGUAL)
+
+## Proprietary Source-Available License v1.0
+
+**Version:** 1.0
+**Effective Date:** 07 July 2026
+**Copyright © 2026 Finn Brandes**
+**All Rights Reserved**
+
+---
+
+# Deutsch
+
+## 1. Präambel
+
+Diese Lizenz regelt die Nutzung der Software einschließlich ihres Quellcodes, aller Binärdateien, Dokumentationen, Skripte, Konfigurationsdateien und sämtlicher Bestandteile (nachfolgend „Software").
+
+Mit der Nutzung der Software erkennt der Lizenznehmer diese Lizenzbedingungen an.
+
+---
+
+## 2. Eigentum
+
+Die Software bleibt ausschließliches Eigentum des Urhebers.
+
+Diese Lizenz überträgt keinerlei Eigentums-, Marken-, Patent- oder sonstige Schutzrechte.
+
+---
+
+## 3. Gewährung der Lizenz
+
+Der Urheber gewährt eine persönliche, widerrufliche, nicht ausschließliche und nicht übertragbare Lizenz zur Nutzung der Software ausschließlich
+
+* für private Zwecke,
+* zu Ausbildungszwecken,
+* zu Forschungszwecken,
+* oder zur internen Evaluierung.
+
+Jegliche andere Nutzung bedarf der vorherigen schriftlichen Zustimmung des Urhebers.
+
+---
+
+## 4. Verbotene Handlungen
+
+Ohne ausdrückliche schriftliche Genehmigung des Urhebers ist insbesondere untersagt:
+
+### 4.1 Kommerzielle Nutzung
+
+* Verkauf
+* Vermietung
+* Verleih
+* Hosting
+* SaaS-Angebote
+* Cloud-Dienste
+* Nutzung innerhalb kommerzieller Produkte
+* Nutzung zur Gewinnerzielung
+* Nutzung im Rahmen bezahlter Dienstleistungen
+
+### 4.2 Veränderung
+
+Nicht gestattet sind
+
+* Änderungen
+* Erweiterungen
+* Anpassungen
+* Portierungen
+* Übersetzungen
+* Optimierungen
+* Reverse Engineering
+* Dekompilierung
+* Disassemblierung, soweit gesetzlich zulässig verzichtbar.
+
+### 4.3 Weitergabe
+
+Nicht gestattet sind
+
+* Veröffentlichung
+* Verbreitung
+* Upload
+* Spiegelung (Mirroring)
+* Weitergabe an Dritte
+* Bereitstellung des Quellcodes
+* Bereitstellung veränderter Versionen
+
+---
+
+## 5. Kein Anspruch auf Support
+
+Der Urheber ist nicht verpflichtet,
+
+* Support zu leisten,
+* Fragen zu beantworten,
+* Fehler zu beheben,
+* Sicherheitsupdates bereitzustellen,
+* neue Versionen zu veröffentlichen,
+* Funktionen zu erweitern.
+
+Support erfolgt ausschließlich freiwillig.
+
+---
+
+## 6. Keine Wartungspflicht
+
+Es besteht keinerlei Verpflichtung zur Pflege oder Weiterentwicklung der Software.
+
+Die Entwicklung kann jederzeit ohne Ankündigung eingestellt werden.
+
+---
+
+## 7. Gewährleistung
+
+Die Software wird ohne jegliche Gewährleistung bereitgestellt.
+
+Sie wird „WIE BESEHEN" ("AS IS") bereitgestellt.
+
+Der Urheber übernimmt insbesondere keine Gewähr für
+
+* Fehlerfreiheit,
+* Sicherheit,
+* Verfügbarkeit,
+* Kompatibilität,
+* Eignung für einen bestimmten Zweck.
+
+---
+
+## 8. Haftungsbeschränkung
+
+Soweit gesetzlich zulässig haftet der Urheber nicht für
+
+* Datenverlust,
+* Produktionsausfälle,
+* Umsatzausfälle,
+* entgangenen Gewinn,
+* indirekte Schäden,
+* Folgeschäden,
+* Schäden durch Fehlfunktionen.
+
+Zwingende gesetzliche Haftungsvorschriften bleiben unberührt.
+
+---
+
+## 9. Kündigung
+
+Jeder Verstoß gegen diese Lizenz beendet automatisch sämtliche Nutzungsrechte.
+
+Nach Beendigung sind sämtliche Kopien der Software unverzüglich und vollständig zu löschen.
+
+---
+
+## 10. Anwendbares Recht
+
+Es gilt ausschließlich das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts (CISG).
+
+Gerichtsstand ist, soweit gesetzlich zulässig, der Sitz des Urhebers.
+
+---
+
+## 11. Salvatorische Klausel
+
+Sollte eine Bestimmung dieser Lizenz unwirksam sein oder werden, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
+
+---
+
+# English
+
+## 1. Preamble
+
+This License governs the use of the Software, including its source code, binaries, documentation, scripts, configuration files, and all related components ("Software").
+
+By using the Software, the Licensee agrees to be bound by this License.
+
+---
+
+## 2. Ownership
+
+The Software remains the exclusive property of the Copyright Holder.
+
+No ownership, trademark, patent, or other intellectual property rights are transferred.
+
+---
+
+## 3. License Grant
+
+The Copyright Holder grants a personal, revocable, non-exclusive, non-transferable license solely for
+
+* private use,
+* educational purposes,
+* research,
+* internal evaluation.
+
+Any other use requires prior written permission.
+
+---
+
+## 4. Prohibited Uses
+
+Without prior written permission, the following are prohibited:
+
+### 4.1 Commercial Use
+
+* selling
+* licensing
+* leasing
+* hosting
+* Software-as-a-Service
+* cloud services
+* commercial products
+* revenue-generating activities
+* paid services
+
+### 4.2 Modification
+
+The Licensee may not
+
+* modify,
+* adapt,
+* extend,
+* port,
+* translate,
+* optimize,
+* reverse engineer,
+* decompile,
+* disassemble,
+
+except where mandatory law expressly permits such activities.
+
+### 4.3 Redistribution
+
+The Licensee may not
+
+* publish,
+* distribute,
+* mirror,
+* upload,
+* sublicense,
+* provide source code,
+* provide modified versions,
+* transfer the Software to third parties.
+
+---
+
+## 5. No Support
+
+The Copyright Holder has no obligation to
+
+* provide support,
+* answer questions,
+* fix bugs,
+* publish updates,
+* provide security patches,
+* continue development.
+
+Any support is provided voluntarily.
+
+---
+
+## 6. No Maintenance
+
+The Copyright Holder is under no obligation to maintain, improve, or continue developing the Software.
+
+Development may cease at any time without notice.
+
+---
+
+## 7. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS".
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER DISCLAIMS ALL WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, SECURITY, AND AVAILABILITY.
+
+---
+
+## 8. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR
+
+* LOSS OF DATA,
+* LOSS OF PROFITS,
+* BUSINESS INTERRUPTION,
+* INDIRECT DAMAGES,
+* CONSEQUENTIAL DAMAGES,
+* SPECIAL DAMAGES,
+* DAMAGES RESULTING FROM SOFTWARE FAILURE.
+
+Mandatory statutory liability remains unaffected.
+
+---
+
+## 9. Termination
+
+Any violation of this License immediately terminates all rights granted herein.
+
+The Licensee must immediately cease all use and permanently delete all copies.
+
+---
+
+## 10. Governing Law
+
+This License shall be governed exclusively by the laws of the Federal Republic of Germany, excluding the United Nations Convention on Contracts for the International Sale of Goods (CISG).
+
+To the extent permitted by law, the place of jurisdiction shall be the registered office of the Copyright Holder.
+
+---
+
+## 11. Severability
+
+If any provision of this License is held to be invalid or unenforceable, the remaining provisions shall remain in full force and effect.
