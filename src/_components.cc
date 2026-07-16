@@ -155,14 +155,31 @@ json TNG_NAMESPACE::ISOComponent<IntegerType, T>::to_json() const {
 }
 
 // Explicit instantiations for the concrete ISOComponent types used by the library.
-// TNG_EXPORT is intentionally omitted here: on GCC/Clang the visibility attribute
-// on an explicit instantiation is ignored (and warns) when the class template was
-// already declared with visibility in the header. On MSVC the dllexport is carried
-// through from the class definition in the header.
-template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
-template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
-template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
-template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
+//
+// Platform notes:
+//   - MSVC:      TNG_EXPORT on the class definition in the header is sufficient;
+//                the attribute here is redundant but harmless (no warning on MSVC).
+//   - GCC/Clang: When -fvisibility=hidden is set (shared library build), symbols
+//                are hidden by default. The explicit instantiation here is the ONLY
+//                place that makes the vtable and member function symbols visible in
+//                the .so. TNG_EXPORT must appear here too.
+//                GCC warns "-Wattributes: type attributes ignored after type is already
+//                defined" but the warning is incorrect for explicit instantiations of
+//                class templates – the symbols ARE exported correctly despite the warning.
+//                Suppress with -Wno-attributes for this translation unit if needed.
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wattributes"
+#endif
+
+template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
+template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
+template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
+template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
+
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 
 
 TNG_NAMESPACE::ISOMessage::ISOMessage()
