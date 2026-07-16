@@ -132,7 +132,7 @@ namespace TNG_NAMESPACE::spec {
     // Formate die kein Encoding kennen – ignorieren globales und Feld-Encoding
     static bool isEncodingNeutral(const std::string& format) {
         static const std::unordered_set<std::string> neutral = {
-            "BINARY", "LBINARY", "LLBINARY", "LLLBINARY", "LLLLBINARY",
+            "BINARY",
             "BITMAP", "NOP", "UNUSED",
             "REMAINING",  // kein Encoding – liest rohe Bytes
         };

@@ -1,0 +1,68 @@
+# Doxyfile for libiso8583
+# Doxygen parses the C++ headers and produces XML that Breathe feeds into Sphinx.
+# Run: doxygen docs/Doxyfile  (from the repo root)
+
+PROJECT_NAME           = "libiso8583"
+PROJECT_NUMBER         = "0.1.1-alpha"
+PROJECT_BRIEF          = "C++17 ISO 8583 financial message parser and builder"
+PROJECT_LOGO           =
+
+# Output: only XML (Sphinx/Breathe reads this, not the HTML)
+OUTPUT_DIRECTORY       = docs/_doxygen
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = YES
+
+# Input: only the public headers
+INPUT                  = include/iso8583
+FILE_PATTERNS          = *.hh *.h
+RECURSIVE              = YES
+
+# Exclude legacy and extern third-party files
+EXCLUDE_PATTERNS       = */detail/extern/* \
+                         *.LEGACY
+EXCLUDE                = include/iso8583/detail/extern
+
+# Extract everything – including undocumented members
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+# Markdown support
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+
+# Brief/detail parsing
+# QT_AUTOBRIEF + JAVADOC_AUTOBRIEF both OFF: avoids Breathe crash on
+# docSect2TypeSub nodes that occur when Doxygen parses @code blocks inside
+# sections created by autobrief splitting on the first period.
+JAVADOC_AUTOBRIEF      = NO
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+
+# Disable @section/@subsection processing to prevent Breathe's
+# 'docSect2TypeSub has no attribute title' bug (Breathe issue #830).
+# All sectioning in /// comments should use plain prose instead.
+ALIASES                = "section{1}=\par \1" \
+                         "subsection{1}=\par \1"
+
+# Make Doxygen understand C++17
+EXTENSION_MAPPING      = hh=C++ h=C++
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = TNG_EXPORT= \
+                         TNG_NAMESPACE=tng \
+                         TNG_KEY_TYPE=int16_t \
+                         "ISOComponentPtrBaseSmartPtr=std::shared_ptr<ISOComponentPtrBase>" \
+                         "ISOFieldParserPtrBaseSmartPtr=std::shared_ptr<ISOFieldParserPtrBase>" \
+                         "ISOParserPtrBaseSmartPtr=std::shared_ptr<ISOParserPtrBase>" \
+                         "ISOHeaderSmartPtr=std::shared_ptr<ISOHeader>"
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = NO
+QUIET                  = NO
+WARNINGS               = YES

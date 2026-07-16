@@ -311,6 +311,186 @@ bool TNG_NAMESPACE::ISOMessage::set(ISO_MAP::mapped_type component) {
     }
 }
 
+// ── Interne Hilfsfunktion: Erstellt ein ISOComponent aus String-Wert ──────────
+// Kapselt die Parser-Typ-Prüfung für set(key, data) und set(dot, data).
+static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::string data,
+    const TNG_NAMESPACE::ISOFieldParserPtrBase* fieldParser)   // nullptr = kein Parser
+{
+    using namespace TNG_NAMESPACE;
+
+    if (fieldParser) {
+        switch (fieldParser->type()) {
+        case ISOFieldParserType::OPAQUE:
+        case ISOFieldParserType::EXCEPTIONAL:
+        case ISOFieldParserType::REMAINING:
+        case ISOFieldParserType::UNUSED: {
+            auto f = std::make_shared<ISOOpaqueField>(key);
+            f->value(std::move(data));
+            f->description(fieldParser->description());
+            return f;
+        }
+        case ISOFieldParserType::BINARY: {
+            auto f = std::make_shared<ISOBinaryField>(key);
+            std::vector<uint8_t> bytes;
+            bytes.reserve(data.size() / 2);
+            for (std::size_t i = 0; i + 1 < data.size(); i += 2) {
+                try {
+                    bytes.push_back(static_cast<uint8_t>(
+                        std::stoul(data.substr(i, 2), nullptr, 16)));
+                }
+                catch (...) {
+                    TNG_LOG_WARN("[ISOMessage::set] Ungültiges Hex-Byte "
+                        "an Position {} in DE{}", i, key);
+                    return nullptr;
+                }
+            }
+            f->value(std::move(bytes));
+            f->description(fieldParser->description());
+            return f;
+        }
+        case ISOFieldParserType::BITMAP:
+            TNG_LOG_WARN("[ISOMessage::set] DE{}: BITMAP wird automatisch "
+                "berechnet – manuelles set() nicht erlaubt", key);
+            return nullptr;
+        case ISOFieldParserType::NESTED:
+            TNG_LOG_WARN("[ISOMessage::set] DE{}: NESTED-Felder haben "
+                "keinen eigenen Wert – Subfelder per Dot-Notation setzen", key);
+            return nullptr;
+        default:
+            break;
+        }
+    }
+
+    // Kein Parser oder unbekannter Typ → immer OpaqueField
+    auto f = std::make_shared<ISOOpaqueField>(key);
+    f->value(std::move(data));
+    return f;
+}
+
+bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string data) {
+    ISO_MAP::mapped_type component;
+    {
+        std::shared_lock<std::shared_mutex> r_lock(d_lock_);
+        const ISOFieldParserPtrBase* fieldParser = nullptr;
+        std::shared_ptr<const ISOFieldParserPtrBase> fp_holder;
+
+        if (p_) {
+            if (auto base = std::dynamic_pointer_cast<ISOBaseParser>(p_)) {
+                fp_holder = base->field_parser(key);
+                fieldParser = fp_holder.get();
+            }
+        }
+        component = make_component_from_string(key, std::move(data), fieldParser);
+    }
+    if (!component) return false;
+    return set(std::move(component));
+}
+
+bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string_view data) {
+    return set(key, std::string(data));
+}
+
+bool TNG_NAMESPACE::ISOMessage::set_recursive(
+    const TNG_KEY_TYPE* keys,
+    std::size_t         depth,
+    std::string         data)
+{
+    // keys[0]       = Key auf dieser Ebene
+    // keys[1..n-1]  = verbleibende Segmente
+    // depth == 1    = Blatt – normaler set(key, data)
+    if (depth == 1)
+        return set(keys[0], std::move(data));
+
+    const TNG_KEY_TYPE parentKey = keys[0];
+
+    // Parser-Prüfung für diesen Key
+    std::shared_ptr<ISOBaseParser>               base;
+    std::shared_ptr<const ISOFieldParserPtrBase> parentFP;
+    std::shared_ptr<ISOParserPtrBase>            subParserPtr;
+
+    {
+        std::shared_lock<std::shared_mutex> r_lock(d_lock_);
+
+        if (p_) {
+            base = std::dynamic_pointer_cast<ISOBaseParser>(p_);
+            if (base) {
+                parentFP = base->field_parser(parentKey);
+                if (parentFP) {
+                    if (parentFP->type() != ISOFieldParserType::NESTED) {
+                        TNG_LOG_ERROR("[ISOMessage::set] DE{} ist nicht NESTED",
+                            parentKey);
+                        return false;
+                    }
+                    subParserPtr = parentFP->subParser();
+                }
+            }
+        }
+    }
+
+    // Parent-ISOMessage holen oder neu anlegen
+    std::shared_ptr<ISOMessage> parentMsg;
+    {
+        std::unique_lock<std::shared_mutex> w_lock(d_lock_);
+
+        auto it = d_.find(parentKey);
+        if (it != d_.end()) {
+            parentMsg = std::dynamic_pointer_cast<ISOMessage>(it->second);
+            if (!parentMsg) {
+                TNG_LOG_ERROR("[ISOMessage::set] DE{} existiert aber ist kein Composite",
+                    parentKey);
+                return false;
+            }
+        }
+        else {
+            parentMsg = std::make_shared<ISOMessage>(parentKey);
+            if (parentFP)
+                parentMsg->description(parentFP->description());
+            // Sub-Parser setzen damit die nächste Ebene Typ-Prüfung machen kann
+            if (subParserPtr)
+                parentMsg->parser(subParserPtr);
+            d_.insert_or_assign(parentKey, parentMsg);
+            if (parentKey > hf_) hf_ = parentKey;
+            recalc_ = true;
+        }
+    }
+
+    // Nächste Ebene rekursiv im Child-Context auflösen
+    return parentMsg->set_recursive(keys + 1, depth - 1, std::move(data));
+}
+
+bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string data) {
+    // Dot-Notation in Segmente aufteilen
+    std::vector<TNG_KEY_TYPE> keys;
+    std::istringstream ss(dot_key);
+    std::string token;
+    while (std::getline(ss, token, '.')) {
+        try {
+            keys.push_back(static_cast<TNG_KEY_TYPE>(std::stoi(token)));
+        }
+        catch (...) {
+            TNG_LOG_ERROR("[ISOMessage::set] Ungültiger Key '{}' in '{}'",
+                token, dot_key);
+            return false;
+        }
+    }
+
+    if (keys.empty()) {
+        TNG_LOG_ERROR("[ISOMessage::set] Leere Dot-Notation");
+        return false;
+    }
+
+    // Ein Segment = normaler key-basierter Aufruf
+    if (keys.size() == 1)
+        return set(keys[0], std::move(data));
+
+    // Mehrere Segmente = rekursiv in Subfelder
+    return set_recursive(keys.data(), keys.size(), std::move(data));
+}
+
+bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string_view data) {
+    return set(dot_key, std::string(data));
+}
+
 bool TNG_NAMESPACE::ISOMessage::unset(const ISO_MAP::key_type& key) {
     // Guarded by std::mutex -> unique
     std::unique_lock<std::shared_mutex> w_lock(d_lock_);

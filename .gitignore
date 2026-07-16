@@ -62,3 +62,7 @@ Desktop.ini
 *.log
 *.tmp
 *.bak
+
+# -- Doxygen ------------------------------------------------------------------
+docs/_doxygen/
+docs/_build/

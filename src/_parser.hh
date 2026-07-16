@@ -181,6 +181,15 @@ namespace TNG_NAMESPACE {
             c_ = std::move(c);
         }
 
+        /// Returns the inner ::TNG_NAMESPACE::ISOBaseParser when type() == NESTED
+        /// Allows ::TNG_NAMESPACE::ISOMessage::set(dot-notation) to find sub element types
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+            subParser() const noexcept override {
+            if constexpr (std::is_base_of_v<ISOBaseParser, T>)
+                return c_;
+            return nullptr;
+        }
+
         // Returns the DE un/parser's description
         nonstd::string_view description() const override {
             if (n_)
@@ -223,7 +232,7 @@ namespace TNG_NAMESPACE {
                 return std::vector<uint8_t>{};
             }
             else if constexpr (std::is_base_of_v< ISOBaseParser, T >) {
-                return std::vector<uint8_t>{};
+                return c_->parse(c);
             }
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >) {
                 throw std::runtime_error(
@@ -295,11 +304,24 @@ namespace TNG_NAMESPACE {
                 std::size_t consumed_outer = n_->unparse(b_, b, o);
 
                 if (c->is_composite() && !b_->value().empty()) {
-                    // Der Offset der Kind-Felder in der Original-Nachricht ist:
-                    //   o (Offset dieses Elternfeldes im übergebenen Buffer b)
-                    // + parsed_length<pe_, l_>() (Länge des Präfix-Feldes, z.B. 3 Bytes für LLL)
-                    // Damit erscheinen Kind-Felder mit dem korrekten absoluten Offset.
-                    const std::size_t child_base_offset = o + parsed_length<pe_, l_>();
+                    // BUG-FIX: parsed_length<pe_, l_>() ist für ISONestedFieldParser
+                    // immer 0 (pe_=NONE, l_=FIX), weil pe_/l_ die Template-Parameter
+                    // des äußeren ISOFieldParser<T,...> sind – nicht die des inneren n_.
+                    //
+                    // Der tatsächliche Prefix-Offset ergibt sich aus der Differenz:
+                    //   consumed_outer = Prefix-Bytes + Nutzdaten-Bytes
+                    //   b_->value().size() = Nutzdaten-Bytes
+                    //   → actual_prefix = consumed_outer - b_->value().size()
+                    //
+                    // Beispiel BMP_003 (format: binary, length: 6, kein Prefix):
+                    //   consumed_outer = 6, b_->value().size() = 6 → prefix = 0 ✓
+                    //
+                    // Beispiel DE063 (format: LLLBINARY, length: 50, 3 Bytes Prefix):
+                    //   consumed_outer = 53, b_->value().size() = 50 → prefix = 3 ✓
+                    const std::size_t actual_prefix = consumed_outer >= b_->value().size()
+                        ? consumed_outer - b_->value().size()
+                        : 0;
+                    const std::size_t child_base_offset = o + actual_prefix;
                     c_->unparse(c, b_->value(), child_base_offset);
                 }
                 return consumed_outer;
@@ -423,6 +445,18 @@ namespace TNG_NAMESPACE {
     using ISOBitmapFieldParser = ISOFieldParser< dynamic_bitset<>, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
     template < typename ISOField >
     using ISONestedFieldParser = ISOFieldParser< ISOField, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+
+    // ── ISORemainderFieldParser ───────────────────────────────────────────────
+    // Template-Alias für trailing variable-length Felder ohne eigenen Prefix.
+    // Nutzt Length::UNKNOWN: der unparse()-Pfad berechnet die Länge zur Laufzeit
+    // als (b.size() - o) anstatt einen Prefix zu dekodieren.
+    //
+    // Verwendung in YAML:   format: remaining
+    // Verwendung in Code:   IF_REMAINING  (binary)
+    //                       IFE_REMAINING (EBCDIC)
+    //
+    // Maximale Länge (de_l_) wird aus der Spec übernommen und als Obergrenze
+    // angewendet – laut Mastercard-Spec ist BMP_061 Subfeld 15 max. 10 Bytes.
     template < typename T, Encoder e, Padder p = Padder::NONE >
     using ISORemainderFieldParser = ISOFieldParser< T, Length::UNKNOWN, PrefixEncoder::NONE, e, p>;
     using ISOConsumer = ISOFieldParser< std::vector<uint8_t>, Length::CONSUME, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;

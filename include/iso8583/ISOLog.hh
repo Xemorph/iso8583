@@ -1,53 +1,64 @@
 #pragma once
 
-/**
- * @file ISOLog.hh
- * @brief Öffentliche Logging-API für libiso8583.
- *
- * Ermöglicht dem Anwender das Logging der Bibliothek zu kontrollieren.
- *
- * ── Option 1: Log-Level setzen ────────────────────────────────────────────
- * @code
- *   tng::log::setLevel(tng::log::Level::DEBUG);
- * @endcode
- *
- * ── Option 2: Eigenen Logger injizieren (ohne Quill-Abhängigkeit) ─────────
- * @code
- *   class MyLogger : public tng::log::ISOLogger {
- *   public:
- *       void log(tng::log::Level level,
- *                std::string_view file, int line,
- *                std::string_view message) override
- *       {
- *           std::cout << "[iso8583] " << message << "\n";
- *       }
- *   };
- *
- *   static MyLogger logger;          // Lebensdauer beachten!
- *   tng::log::setLogger(&logger);
- * @endcode
- *
- * ── Option 3: Eigenen Quill-Logger injizieren ────────────────────────────
- * @code
- *   #include <iso8583/ISOLog.hh>
- *   #include <quill/Frontend.h>
- *   #include <quill/sinks/ConsoleSink.h>
- *
- *   quill::Backend::start();
- *   auto sink   = quill::Frontend::create_or_get_sink<quill::ConsoleSink>();
- *   auto* myLog = quill::Frontend::create_or_get_logger("myapp", std::move(sink));
- *   tng::log::setQuillLogger(static_cast<void*>(myLog));
- * @endcode
- *
- * ── Option 4: Logging deaktivieren ────────────────────────────────────────
- * @code
- *   tng::log::setLevel(tng::log::Level::OFF);
- * @endcode
- *
- * @note Der Anwender ist für die Lebensdauer des übergebenen Loggers
- *       verantwortlich. Der Logger muss gültig bleiben solange die
- *       Bibliothek verwendet wird.
- */
+/// @file ISOLog.hh
+/// @brief Public logging API for libiso8583.
+///
+/// The library emits internal diagnostic messages through this interface.
+/// By default all messages are suppressed (level WARN, no external logger set).
+///
+/// @par Integration options (choose one)
+///
+/// **Option 1 – Level only (suppress noise):**
+/// @code
+///   tng::log::setLevel(tng::log::Level::DEBUG);   // see library internals
+///   tng::log::setLevel(tng::log::Level::OFF);      // silence all output
+/// @endcode
+///
+/// **Option 2 – Custom logger (no Quill dependency):**
+/// @code
+///   class MyLogger : public tng::log::ISOLogger {
+///   public:
+///       void log(tng::log::Level level,
+///                std::string_view file, int line,
+///                std::string_view message) override {
+///           fmt::print("[iso8583] {}\n", message);
+///       }
+///   };
+///   static MyLogger g_iso_logger;   // must outlive all library calls
+///   tng::log::setLogger(&g_iso_logger);
+/// @endcode
+///
+/// **Option 3 – Quill bridge (recommended for Quill users):**
+///
+/// Because libiso8583 is a DLL, Quill's per-process singleton is split across
+/// the DLL boundary.  Log macros called inside the DLL write to the DLL's own
+/// Quill queue, which the EXE's backend never reads.
+///
+/// The solution is `QuillBridge`: a header-only `ISOLogger` that calls Quill
+/// macros **in the caller's compilation unit** (EXE side), keeping everything
+/// in the correct singleton.
+///
+/// @code
+///   // Include order matters – quill headers before ISOLog.hh
+///   #include <quill/Frontend.h>
+///   #include <quill/LogMacros.h>
+///   #include <iso8583/ISOLog.hh>    // QuillBridge is activated by QUILL_VERSION
+///
+///   quill::Backend::start();
+///   auto* myLog = quill::Frontend::create_or_get_logger("myapp", mySink);
+///
+///   static tng::log::QuillBridge bridge(myLog);
+///   tng::log::setLogger(&bridge);
+///   tng::log::setLevel(tng::log::Level::DEBUG);
+/// @endcode
+///
+/// **Option 4 – Silence:**
+/// @code
+///   tng::log::setLevel(tng::log::Level::OFF);
+/// @endcode
+///
+/// @note The caller is responsible for the lifetime of any injected logger.
+///       The logger must remain valid until the library is no longer used.
 
 #include "config.h"
 #include <string_view>
@@ -55,118 +66,130 @@
 namespace TNG_NAMESPACE::log {
 
     // ── Log-Level ─────────────────────────────────────────────────────────────
+
+    /// @brief Minimum severity levels understood by libiso8583.
+    ///
+    /// Only messages at or above the level set via @ref setLevel are forwarded
+    /// to the active @ref ISOLogger.  The numeric values mirror Quill's ordering.
     enum class TNG_EXPORT Level {
-        TRACE = 0,
-        DEBUG = 1,
-        INFO = 2,
-        WARN = 3,
-        ERR = 4,
-        CRITICAL = 5,
-        OFF = 6,
+        TRACE    = 0, ///< Very verbose internal tracing (parsing loops, byte offsets).
+        DEBUG    = 1, ///< Useful for integration debugging (field values, parser decisions).
+        INFO     = 2, ///< Normal operational events (spec loaded, connection established).
+        WARN     = 3, ///< Recoverable anomalies (unknown format/encoding combination). **Default.**
+        ERR      = 4, ///< Errors that affect correctness (parse failure, null component).
+        CRITICAL = 5, ///< Unrecoverable errors.
+        OFF      = 6, ///< Disables all output.
     };
 
-    // ── Logger-Interface (ohne externe Abhängigkeiten) ────────────────────────
-    /**
-     * @brief Abstrakte Basisklasse für eigene Logger-Implementierungen.
-     *
-     * Implementiere diese Klasse und übergib eine Instanz an `setLogger()`
-     * um das Logging der Bibliothek in die eigene Log-Infrastruktur zu leiten.
-     */
+    // ── Logger interface ─────────────────────────────────────────────────────
+
+    /// @brief Abstract base class for custom logger implementations.
+    ///
+    /// Implement this interface and pass an instance to @ref setLogger to route
+    /// all library log output into your own logging infrastructure (spdlog,
+    /// std::cout, a UI panel, etc.).  The library has no Quill dependency in
+    /// its public headers.
     class TNG_EXPORT ISOLogger {
     public:
         virtual ~ISOLogger() = default;
 
-        /**
-         * @brief Wird für jede Log-Meldung aufgerufen.
-         *
-         * @param level   Log-Level der Meldung
-         * @param file    Quelldatei
-         * @param line    Zeilennummer
-         * @param message Formatierte Log-Meldung
-         */
+        /// @brief Called for every log message that passes the active level filter.
+        ///
+        /// @param level    Severity of this message.
+        /// @param file     Source file where the log call originated (`__FILE__`).
+        /// @param line     Source line (`__LINE__`).
+        /// @param message  Pre-formatted message string (already has all arguments
+        ///                 substituted via `fmt::format`).
         virtual void log(Level level,
             std::string_view file,
             int line,
             std::string_view message) = 0;
     };
 
-    // ── Konfiguration ─────────────────────────────────────────────────────────
+    // ── Configuration ────────────────────────────────────────────────────────
 
-    /** Setzt den minimalen Log-Level. Standard: Level::WARN */
+    /// @brief Sets the minimum log level.  Messages below this level are dropped.
+    ///
+    /// Default: `Level::WARN`.
+    /// @param lvl New minimum level.
     TNG_EXPORT void setLevel(Level lvl);
 
-    /** Gibt den aktuellen Log-Level zurück. */
+    /// @brief Returns the currently active minimum log level.
     TNG_EXPORT Level getLevel();
 
-    /**
-     * @brief Injiziert einen eigenen Logger (ohne Quill-Abhängigkeit).
-     *
-     * Mit `nullptr` wird auf den internen Quill-Logger zurückgeschaltet.
-     * Der Anwender ist für die Lebensdauer des Loggers verantwortlich.
-     */
+    /// @brief Injects a custom logger.
+    ///
+    /// Replaces any previously set logger.  Pass `nullptr` to remove the
+    /// custom logger (messages are then silently dropped unless a Quill
+    /// override was set via @ref setQuillLogger).
+    ///
+    /// @param logger Pointer to your @ref ISOLogger implementation.
+    ///               Must remain valid until the library is no longer used.
     TNG_EXPORT void setLogger(ISOLogger* logger);
 
-    /**
-     * @brief Injiziert einen eigenen Quill-Logger direkt.
-     *
-     * Nimmt einen `void*` entgegen um die Quill-Abhängigkeit aus dem
-     * öffentlichen Header zu entfernen. Der Aufrufer übergibt seinen
-     * `quill::Logger*` als `void*` – die Bibliothek castet intern zurück.
-     *
-     * Nutzer die kein Quill verwenden müssen diesen Header nicht einbinden
-     * und erhalten keine transitive Quill-Abhängigkeit.
-     *
-     * Voraussetzung: Quill-Backend muss bereits gestartet sein.
-     * Mit nullptr wird auf den internen Quill-Logger zurückgeschaltet.
-     *
-     * Beispiel:
-     * @code
-     *   #include <iso8583/ISOLog.hh>
-     *   #include <quill/Frontend.h>
-     *   #include <quill/sinks/ConsoleSink.h>
-     *
-     *   quill::Backend::start();
-     *   auto sink   = quill::Frontend::create_or_get_sink<quill::ConsoleSink>();
-     *   quill::Logger* myLog = quill::Frontend::create_or_get_logger("myapp", std::move(sink));
-     *
-     *   tng::log::setLevel(tng::log::Level::DEBUG);
-     *   tng::log::setQuillLogger(static_cast<void*>(myLog));
-     * @endcode
-     */
+    /// @brief Injects a `quill::Logger*` as a `void*` to avoid a public Quill dependency.
+    ///
+    /// Cast your `quill::Logger*` to `void*` at the call site:
+    /// @code
+    ///   tng::log::setQuillLogger(static_cast<void*>(myQuillLogger));
+    /// @endcode
+    ///
+    /// @warning Due to Quill's DLL-boundary singleton problem this function
+    ///          may not work as expected when libiso8583 is loaded as a DLL.
+    ///          Prefer @ref QuillBridge via @ref setLogger in that case.
+    ///
+    /// @param quillLoggerPtr  `quill::Logger*` cast to `void*`.
+    ///                        Pass `nullptr` to clear the override.
     TNG_EXPORT void setQuillLogger(void* quillLoggerPtr);
 
 } // namespace TNG_NAMESPACE::log
 
 
-// ── QuillBridge ───────────────────────────────────────────────────────────────
-// Header-only ISOLogger-Implementierung die an einen quill::Logger weiterleitet.
+// ── QuillBridge (header-only, opt-in) ────────────────────────────────────────
 //
-// WARUM QuillBridge statt setQuillLogger():
-//   iso8583 ist eine DLL. Quill verwendet pro Prozess einen Singleton für die
-//   Thread-Queue-Verwaltung. Wenn iso8583.dll Quill-Makros direkt aufruft,
-//   landen sie im DLL-eigenen Singleton – nicht im Singleton von tng.exe.
-//   Das Backend liest nur den tng.exe-Singleton → DLL-Nachrichten verschwinden.
+// Activated automatically when <quill/LogMacros.h> has been included before
+// this header (QUILL_VERSION is then defined).
 //
-//   QuillBridge wird im Kontext von tng.exe kompiliert (Header-only) und
-//   ruft Quill-Makros dort auf → korrekter Singleton → Nachrichten erscheinen.
-//
-// Verwendung:
-//   #include <iso8583/ISOLog.hh>
-//   #include <quill/LogMacros.h>
-//
-//   static tng::log::QuillBridge bridge(myQuillLogger);
-//   tng::log::setLogger(&bridge);
-//   tng::log::setLevel(tng::log::Level::DEBUG);
+// QuillBridge solves the DLL-singleton problem by expanding Quill macros in
+// the *caller's* compilation unit (typically the EXE) rather than inside the
+// DLL.  The result is that library log messages reach the same Quill queue and
+// backend that the application itself uses.
 
 #if defined(QUILL_VERSION)
 #include <quill/LogMacros.h>
 
 namespace TNG_NAMESPACE::log {
 
+    /// @brief Header-only ISOLogger that forwards to a `quill::Logger`.
+    ///
+    /// @par Why this class exists
+    ///
+    /// libiso8583 is shipped as a DLL.  Quill manages thread-local SPSC queues
+    /// through a per-process singleton stored in a function-local static.  When
+    /// both the DLL and the host EXE link Quill statically, each binary has its
+    /// own singleton.  Log calls made **inside the DLL** enqueue to the DLL's
+    /// singleton; the backend thread (running in the EXE) only drains the EXE's
+    /// singleton – so DLL messages are permanently lost.
+    ///
+    /// `QuillBridge` is compiled into the **EXE** (it is header-only) and
+    /// therefore expands `QUILL_LOG_*` macros in the correct Quill singleton.
+    ///
+    /// @par Usage
+    /// @code
+    ///   // Must come BEFORE ISOLog.hh to activate QuillBridge
+    ///   #include <quill/LogMacros.h>
+    ///   #include <iso8583/ISOLog.hh>
+    ///
+    ///   static tng::log::QuillBridge bridge(myQuillLogger);
+    ///   tng::log::setLogger(&bridge);
+    ///   tng::log::setLevel(tng::log::Level::DEBUG);
+    /// @endcode
     class QuillBridge final : public ISOLogger {
         quill::Logger* logger_;
 
     public:
+        /// @brief Constructs the bridge around an existing `quill::Logger`.
+        /// @param logger  The Quill logger to forward messages to.  Must not be null.
         explicit QuillBridge(quill::Logger* logger) : logger_(logger) {}
 
         void log(Level level,
