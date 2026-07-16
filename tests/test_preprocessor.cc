@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 using namespace TNG_NAMESPACE;
 
