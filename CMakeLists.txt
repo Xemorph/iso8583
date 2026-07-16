@@ -125,6 +125,14 @@ target_compile_definitions(iso8583
 #            nur TNG_EXPORT-Symbole sind sichtbar
 if(NOT MSVC AND ISO8583_BUILD_SHARED)
     target_compile_options(iso8583 PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+    # _components.cc contains explicit template instantiations for ISOComponent<>.
+    # GCC ignores visibility attributes on explicit instantiations when the TU is
+    # compiled with -fvisibility=hidden, causing undefined-reference link errors in
+    # consumers. Override to default visibility for this file so vtable, typeinfo
+    # and all member functions are exported correctly into the shared library.
+    set_source_files_properties(src/_components.cc PROPERTIES
+        COMPILE_OPTIONS "-fvisibility=default"
+    )
 endif()
 
 # -----------------------------------------------------------------------------
