@@ -757,13 +757,12 @@ namespace TNG_NAMESPACE {
         /// @param  key          DE number.
         /// @param  defaultValue Value to return when the field is absent.
         /// @return              The field's value, or `defaultValue`.
-        template <typename T>
-        auto getOrDefault(ISOMessage& msg, TNG_KEY_TYPE key,
-            decltype(std::declval<T>().value()) defaultValue)
+        template <typename T, typename Default>
+        auto getOrDefault(ISOMessage& msg, TNG_KEY_TYPE key, Default&& defaultValue)
             -> decltype(std::declval<T>().value())
         {
             auto opt = msg.tryGet<T>(key);
-            if (!opt) return defaultValue;
+            if (!opt) return decltype(std::declval<T>().value())(std::forward<Default>(defaultValue));
             return (*opt)->value();
         }
 

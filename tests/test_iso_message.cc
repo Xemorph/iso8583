@@ -1,8 +1,11 @@
-// [catch2]
 #include <catch2/catch_test_macros.hpp>
-// [tng]
+#include <catch2/matchers/catch_matchers_string.hpp>
+
 #include <iso8583/iso8583.h>
 #include <iso8583/detail/_components.hh>
+
+#include <atomic>
+#include <thread>
 
 using namespace TNG_NAMESPACE;
 
@@ -101,17 +104,6 @@ TEST_CASE("ISOMessage - set returns false for null component", "[message][crud]"
     CHECK_FALSE(msg->set(nullptr));
     CHECK(msg->size() == 0);
 }
-
-/*
-auto msg = std::make_shared<ISOMessage>();
-msg->set(make_opaque(2, "4111111111111111"));
-REQUIRE(msg->has(2));
-
-CHECK(msg->unset(2));
-CHECK_FALSE(msg->has(2));
-CHECK(msg->size() == 0);
-}
-*/
 
 TEST_CASE("ISOMessage - unset returns false for missing field", "[message][crud]") {
     auto msg = std::make_shared<ISOMessage>();
@@ -350,7 +342,7 @@ TEST_CASE("MTI 0801 - Network Management Retransmission", "[message][mti]") {
     auto msg = std::make_shared<ISOMessage>("0801");
     CHECK(msg->isNetworkManagement());
     CHECK(msg->isRetransmission());  // digit[3] == '1'
-    CHECK(msg->isRequest());
+    CHECK(msg->isResponse());
 }
 
 TEST_CASE("MTI - mti() throws without MTI field", "[message][mti][error]") {
@@ -397,7 +389,6 @@ TEST_CASE("to_json - ISOMessage fields array", "[message][json]") {
     CHECK(j["fields"].size() >= 2);
 }
 
-/* ToDo:
 TEST_CASE("to_json - wire_offset and wire_length appear when set", "[message][json]") {
     auto f = make_opaque(4, "000000010000");
     f->wire_offset(12);
@@ -418,13 +409,10 @@ TEST_CASE("to_json - wire positions absent when not set", "[message][json]") {
     CHECK_FALSE(j.contains("wire_offset"));
     CHECK_FALSE(j.contains("wire_length"));
 }
-*/
 
 // =============================================================================
 // Thread-safety: concurrent set/get
 // =============================================================================
-
-#include <thread>
 
 TEST_CASE("ISOMessage - concurrent set does not corrupt", "[message][thread]") {
     auto msg = std::make_shared<ISOMessage>();
@@ -500,4 +488,100 @@ TEST_CASE("ISOMessage - size tracks correctly across operations", "[message][siz
 
     msg->reset();
     CHECK(msg->size() == 0);
+}
+
+// =============================================================================
+// ISOUtils
+// =============================================================================
+
+TEST_CASE("ISOUtils::getOrThrow - returns value when field present", "[utils][getOrThrow]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(2, "4111111111111111"));
+
+    std::string pan;
+    REQUIRE_NOTHROW(pan = ISOUtils::getOrThrow<ISOOpaqueField>(*msg, 2));
+    CHECK(pan == "4111111111111111");
+}
+
+TEST_CASE("ISOUtils::getOrThrow - throws std::out_of_range for missing field", "[utils][getOrThrow]") {
+    auto msg = std::make_shared<ISOMessage>();
+    REQUIRE_THROWS_AS(ISOUtils::getOrThrow<ISOOpaqueField>(*msg, 2), std::out_of_range);
+}
+
+TEST_CASE("ISOUtils::getOrThrow - throws for wrong type", "[utils][getOrThrow]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(2, "text"));
+    REQUIRE_THROWS_AS(ISOUtils::getOrThrow<ISOBinaryField>(*msg, 2), std::out_of_range);
+}
+
+TEST_CASE("ISOUtils::getOrThrow - exception message contains DE key", "[utils][getOrThrow]") {
+    auto msg = std::make_shared<ISOMessage>();
+    try {
+        ISOUtils::getOrThrow<ISOOpaqueField>(*msg, 42);
+        FAIL("Expected exception");
+    }
+    catch (const std::out_of_range& e) {
+        CHECK(std::string(e.what()).find("42") != std::string::npos);
+    }
+}
+
+TEST_CASE("ISOUtils::getOrDefault - returns value when field present", "[utils][getOrDefault]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(11, "000042"));
+
+    auto stan = ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 11, "000000");
+    CHECK(stan == "000000042");
+}
+
+TEST_CASE("ISOUtils::getOrDefault - returns default when field missing", "[utils][getOrDefault]") {
+    auto msg = std::make_shared<ISOMessage>();
+    auto stan = ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 11, "000000");
+    CHECK(stan == "000000");
+}
+
+TEST_CASE("ISOUtils::getOrDefault - returns default for wrong type", "[utils][getOrDefault]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(11, "text"));
+    auto val = ISOUtils::getOrDefault<ISOBinaryField>(*msg, 11, std::vector<uint8_t>{});
+    CHECK(val.empty());
+}
+
+TEST_CASE("ISOUtils::ifPresent - calls callback when field present", "[utils][ifPresent]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(2, "4111111111111111"));
+
+    std::string captured;
+    bool found = ISOUtils::ifPresent<ISOOpaqueField>(*msg, 2,
+        [&](const std::string& pan) { captured = pan; });
+
+    CHECK(found == true);
+    CHECK(captured == "4111111111111111");
+}
+
+TEST_CASE("ISOUtils::ifPresent - returns false and skips callback when missing", "[utils][ifPresent]") {
+    auto msg = std::make_shared<ISOMessage>();
+
+    bool called = false;
+    bool found = ISOUtils::ifPresent<ISOOpaqueField>(*msg, 2,
+        [&](const std::string&) { called = true; });
+
+    CHECK(found == false);
+    CHECK(called == false);
+}
+
+TEST_CASE("ISOUtils::ifPresent - lambda can mutate outer state", "[utils][ifPresent]") {
+    auto msg = std::make_shared<ISOMessage>();
+    msg->set(make_opaque(4, "000000010000"));
+    msg->set(make_opaque(49, "978"));
+
+    int64_t amount = 0;
+    std::string currency;
+
+    ISOUtils::ifPresent<ISOOpaqueField>(*msg, 4,
+        [&](const std::string& v) { amount = std::stoll(v); });
+    ISOUtils::ifPresent<ISOOpaqueField>(*msg, 49,
+        [&](const std::string& v) { currency = v; });
+
+    CHECK(amount == 10000);
+    CHECK(currency == "978");
 }

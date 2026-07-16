@@ -13,65 +13,6 @@
 // [tng/date]
 #include "_date.hh"
 
-/*
-template < typename KeyType, typename DataType >
-TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::ISOComponentv2(const KeyType& key)
-    : key_(key)
-{
-    data_ = DataType();
-}
-template < typename KeyType, typename DataType >
-TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::ISOComponentv2(const KeyType& key, const DataType& data)
-    : key_(key), data_(data)
-{}
-template < typename KeyType, typename DataType >
-void TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::key(const KeyType& key) {
-    key_ = key;
-}
-template < typename KeyType, typename DataType >
-const KeyType TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::key() const {
-    return key_;
-}
-
-template < typename KeyType, typename DataType >
-void TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::data(const DataType& data) {
-    data_ = data;
-}
-template < typename KeyType, typename DataType >
-const DataType& TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::data() const {
-    return data_;
-}
-
-template < typename KeyType, typename DataType >
-bool TNG_NAMESPACE::ISOComponentv2<KeyType, DataType>::is_composite() const {
-    return false;
-}
-
-// Explicitly instantiate only the classes you want to be defined.
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, std::string >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, std::vector<uint8_t> >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, std::byte >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, dynamic_bitset<> >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, ISO_FAST_MAP >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponentv2< TNG_KEY_TYPE, ISO_MAP_v2 >;
-
-TNG_NAMESPACE::ISOMessagev2::ISOMessagev2()
-    : ISOComponentv2(-1), hf_(-1), recalc_(true)
-{}
-TNG_NAMESPACE::ISOMessagev2::ISOMessagev2(const ISO_MAP::key_type& key)
-    : ISOComponentv2(key), hf_(-1), recalc_(true)
-{}
-TNG_NAMESPACE::ISOMessagev2::ISOMessagev2(nonstd::string_view mti)
-    : ISOComponentv2(-1), hf_(-1), recalc_(true)
-{}
-
-bool TNG_NAMESPACE::ISOMessagev2::is_composite() const {
-    return true;
-}
-*/
-
-// ==========================================================================================
-
 template < typename IntegerType, typename T >
 TNG_NAMESPACE::ISOComponent<IntegerType, T>::ISOComponent(const IntegerType& key)
     : k_(key)
@@ -213,11 +154,15 @@ json TNG_NAMESPACE::ISOComponent<IntegerType, T>::to_json() const {
     return j;
 }
 
-// Explicitly instantiate only the classes you want to be defined.
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
-template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
+// Explicit instantiations for the concrete ISOComponent types used by the library.
+// TNG_EXPORT is intentionally omitted here: on GCC/Clang the visibility attribute
+// on an explicit instantiation is ignored (and warns) when the class template was
+// already declared with visibility in the header. On MSVC the dllexport is carried
+// through from the class definition in the header.
+template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
+template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
+template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
+template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
 
 
 TNG_NAMESPACE::ISOMessage::ISOMessage()
