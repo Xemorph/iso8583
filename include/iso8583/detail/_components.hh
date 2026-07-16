@@ -150,19 +150,27 @@ typedef TNG_NAMESPACE::detail::flat_map<
 > ISO_MAP;
 
 /// @brief Alphanumeric / text data element (EBCDIC, ASCII, BCD decoded to string).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::string>              ISOOpaqueField;
+typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::string> ISOOpaqueField;
 
 /// @brief Raw binary data element (e.g. PIN block, ICC/EMV data, cryptograms).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<uint8_t>>     ISOBinaryField;
+typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<uint8_t>> ISOBinaryField;
 
 /// @brief Fast binary data element using `std::byte` storage.
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<std::byte>>   ISOFastBinaryField;
+typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<std::byte>> ISOFastBinaryField;
 
 /// @brief Bitmap data element (primary + optional secondary bitmap).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, dynamic_bitset<>>         ISOBitmap;
+typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, dynamic_bitset<>> ISOBitmap;
 
 /// @brief Integer code data element (e.g. response codes stored as int32_t).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, int32_t>                  ISOCodeField;
+typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, int32_t> ISOCodeField;
+
+// Without this, GCC/Clang with -fvisibility=hidden emits local hidden-
+// visibility copies in each TU, causing undefined-reference link errors
+// when the tests try to resolve symbols from the shared library.
+extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
+extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
+extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
+extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
 
 namespace TNG_NAMESPACE {
 
