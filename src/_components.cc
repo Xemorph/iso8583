@@ -151,6 +151,11 @@ json TNG_NAMESPACE::ISOComponent<IntegerType, T>::to_json() const {
         j["value"] = "Unsupported";  // Optional: Eine Nachricht, dass der Typ nicht unterstützt wird
     }
 
+    if (wire_length_ > 0) {
+        j["wire_offset"] = wire_offset_;
+        j["wire_length"] = wire_length_;
+    }
+
     return j;
 }
 

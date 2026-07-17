@@ -170,7 +170,6 @@ typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, int32_t> ISOCodeField;
 extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::string >;
 extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, std::vector<uint8_t> >;
 extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, dynamic_bitset<> >;
-extern template class TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
 
 namespace TNG_NAMESPACE {
 
@@ -624,6 +623,8 @@ namespace TNG_NAMESPACE {
     /// | 21   | User info                     |
     ///
     /// Reject extension (present only in reject messages):
+    /// | Byte | Field                         |
+    /// |------|-------------------------------|
     /// | 22–23| Bitmap (2 bytes)              |
     /// | 24–25| Reject data group (2 bytes)   |
     class TNG_EXPORT BASE1Header final : public ::TNG_NAMESPACE::BaseHeader {
@@ -767,12 +768,14 @@ namespace TNG_NAMESPACE {
         /// @return              The field's value, or `defaultValue`.
         template <typename T, typename Default>
         auto getOrDefault(ISOMessage& msg, TNG_KEY_TYPE key, Default&& defaultValue)
-            -> decltype(std::declval<T>().value())
+            -> std::decay_t<decltype(std::declval<T>().value())>
         {
+            using ValueType = std::decay_t<decltype(std::declval<T>().value())>;
             auto opt = msg.tryGet<T>(key);
-            if (!opt) return decltype(std::declval<T>().value())(std::forward<Default>(defaultValue));
+            if (!opt) return ValueType(std::forward<Default>(defaultValue));
             return (*opt)->value();
         }
+
 
         /// @brief Calls `fn` with the field value if the field is present.
         ///

@@ -342,7 +342,7 @@ TEST_CASE("MTI 0801 - Network Management Retransmission", "[message][mti]") {
     auto msg = std::make_shared<ISOMessage>("0801");
     CHECK(msg->isNetworkManagement());
     CHECK(msg->isRetransmission());  // digit[3] == '1'
-    CHECK(msg->isResponse());
+    CHECK(msg->isRequest());
 }
 
 TEST_CASE("MTI - mti() throws without MTI field", "[message][mti][error]") {
@@ -530,7 +530,7 @@ TEST_CASE("ISOUtils::getOrDefault - returns value when field present", "[utils][
     msg->set(make_opaque(11, "000042"));
 
     auto stan = ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 11, "000000");
-    CHECK(stan == "000000042");
+    CHECK(stan == "000042");
 }
 
 TEST_CASE("ISOUtils::getOrDefault - returns default when field missing", "[utils][getOrDefault]") {
