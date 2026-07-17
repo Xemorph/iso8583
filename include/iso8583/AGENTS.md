@@ -153,9 +153,6 @@ tng::ISOUtils::ifPresent<ISOOpaqueField>(*msg, 11, [](const std::string& stan) {
 
 ---
 
-
----
-
 ## Spec introspection (ISOSpec)
 
 `loadBothFromYaml` returns both a parser and an `ISOSpec` object that lets you
