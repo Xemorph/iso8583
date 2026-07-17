@@ -26,7 +26,7 @@
 ///         fmt::print("DE{:03d}: {}\n", f.key, f.description);
 
 #include "config.h"
-#include "_interfaces.hh"
+#include "detail/_interfaces.hh"
 
 #include <memory>
 #include <optional>
