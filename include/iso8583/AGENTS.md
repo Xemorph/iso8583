@@ -14,11 +14,13 @@ messages** — the protocol used by Visa, Mastercard, and most payment networks.
 Core workflow:
 
 ```
-YAML spec file  ──► SpecDecoder::loadFromYaml()  ──► ISOParserPtrBase
-                                                           │
-Raw wire bytes  ──► ISOMessage::unparse()         ──► ISOMessage (decoded)
-                                                           │
-ISOMessage      ──► ISOParserPtrBase::parse()     ──► wire bytes
+YAML spec file  ──► SpecDecoder::loadFromYaml()      ──► ISOParserPtrBase
+                │
+                └──► SpecDecoder::loadBothFromYaml()  ──► ISOParserPtrBase
+                                                        └──► ISOSpec (introspection)
+
+ISOParserPtrBase + raw wire bytes  ──► ISOMessage::unparse()  ──► ISOMessage (decoded)
+ISOMessage                         ──► ISOParserPtrBase::parse() ──► wire bytes
 ```
 
 ---
@@ -42,7 +44,7 @@ TNG_KEY_TYPE  key = 2;   // expands to tng::key_type = int16_t
 |---|---|
 | `<iso8583/iso8583.h>` | Always: pulls in everything below |
 | `<iso8583/ISOMessage.hh>` | Working with messages and field types |
-| `<iso8583/ISOSpec.hh>` | Loading a YAML spec file |
+| `<iso8583/ISOSpec.hh>` | Loading a YAML spec file; introspecting the loaded spec (`ISOSpec`, `SpecFieldInfo`, `SpecFieldFormat`) |
 | `<iso8583/ISOLog.hh>` | Configuring library logging |
 | `<iso8583/ISOParser.hh>` | Implementing a custom parser (advanced) |
 | `<iso8583/_codec.hh>` | Using codec enums/functions directly (advanced) |
@@ -148,6 +150,92 @@ tng::ISOUtils::ifPresent<ISOOpaqueField>(*msg, 11, [](const std::string& stan) {
     log("STAN: {}", stan);
 });
 ```
+
+---
+
+
+---
+
+## Spec introspection (ISOSpec)
+
+`loadBothFromYaml` returns both a parser and an `ISOSpec` object that lets you
+query the structure of the loaded spec at runtime.
+
+```cpp
+#include <iso8583/iso8583.h>
+
+auto [parser, spec] = tng::spec::SpecDecoder::loadBothFromYaml("mastercard.yml");
+
+// Attach parser to messages as usual
+msg->parser(parser);
+
+// --- Introspection ---
+
+// Name and global encoding from the YAML "spec:" / "encoding:" keys
+spec->name();      // e.g. "Mastercard GMC"
+spec->encoding();  // e.g. "EBCDIC"
+
+// Check whether a DE is defined
+spec->has(2);      // true if DE002 exists
+
+// Query a single field
+if (auto f = spec->field(2)) {
+    f->description;            // "Primary Account Number"
+    f->format.type;            // "CHAR"
+    f->format.prefix_digits;   // 2  (= LL prefix)
+    f->format.max_length;      // 19
+    f->encoding;               // "EBCDIC"
+    f->is_nested;              // false
+    f->is_bitmap;              // false
+}
+
+// Query a nested field and its children
+if (auto pos = spec->field(61)) {
+    pos->is_nested;            // true
+    pos->children.size();      // number of sub-fields
+    pos->children[0].description;           // "POS Terminal Attendance"
+    pos->children[0].format.prefix_digits;  // 0  (fixed)
+}
+
+// Iterate all defined DEs in key order
+for (const auto& f : spec->fields())
+    fmt::print("DE{:03d}  {:<30}  {}{}  max={}
+",
+        f.key, f.description,
+        f.format.prefix_digits > 0
+            ? std::string(f.format.prefix_digits, 'L') : "FIX",
+        f.format.type,
+        f.format.max_length);
+```
+
+### SpecFieldFormat fields
+
+| Member | Type | Meaning |
+|---|---|---|
+| `type` | `std::string` | Base format: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"` |
+| `prefix_digits` | `int` | `0`=fixed, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
+| `max_length` | `int` | Maximum payload length in logical units (chars, digits, or bytes) |
+
+### SpecFieldInfo fields
+
+| Member | Type | Meaning |
+|---|---|---|
+| `key` | `TNG_KEY_TYPE` | DE number |
+| `description` | `std::string` | Human-readable name from spec YAML |
+| `format` | `SpecFieldFormat` | Wire format (see above) |
+| `encoding` | `std::string` | `"EBCDIC"`, `"ASCII"`, `"BCD"`, `"BINARY"`, `""` (neutral) |
+| `is_nested` | `bool` | `true` for composite sub-message DEs |
+| `is_bitmap` | `bool` | `true` for the bitmap DE |
+| `children` | `vector<SpecFieldInfo>` | Sub-fields of nested DEs (empty for leaves) |
+
+### When to use loadFromYaml vs loadBothFromYaml
+
+| | `loadFromYaml` | `loadBothFromYaml` |
+|---|---|---|
+| Parsing / building messages | ✓ | ✓ |
+| Querying field names / formats at runtime | ✗ | ✓ |
+| UI field lists, validators, documentation | ✗ | ✓ |
+| Overhead | minimal | one extra pass over the field map |
 
 ---
 
@@ -277,7 +365,8 @@ if (h && h->isRejected())
     handle_reject(h->getRejectCode());
 ```
 
-Available header types: `tng::BaseHeader`, `tng::BASE1Header` (Visa).
+Available header types: `tng::BaseHeader`, `tng::BASE1Header` (Visa),
+`tng::WLP_FOHeader` (Worldline).
 
 ---
 

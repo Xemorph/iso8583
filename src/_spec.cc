@@ -345,54 +345,154 @@ namespace TNG_NAMESPACE::spec {
     }
 
     //=== PUBLIC ==============================================================
-    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr SpecDecoder::loadFromYaml(const std::string& path) {
-        // Pre-Processing
-        YAML::Node processedYaml = ::TNG_NAMESPACE::spec::SpecPreProcessor::preprocessFile(path);
-        // Validation
-        try {
-            validateSpecYaml(processedYaml);
-        }
-        catch (const std::exception& e) {
-            TNG_LOG_ERROR("[SpecDecoder] Validation failed for '{}': {}", path, e.what());
-            throw;
-        }
+    // ── SpecFieldFormat helper ────────────────────────────────────────────────
+    // Splits "LLCHAR" -> {type="CHAR", prefix_digits=2, max_length=N}
+    static SpecFieldFormat makeSpecFieldFormat(const SpecField& f) {
+        SpecFieldFormat fmt;
+        fmt.max_length = f.length;
 
+        // Count leading L's (format string is already uppercase)
+        const std::string& s = f.format;
+        std::size_t prefix = 0;
+        while (prefix < s.size() && s[prefix] == 'L')
+            ++prefix;
 
-        std::string desc = processedYaml["spec"].as<std::string>("Unknown spec");
-        std::size_t hdr_sz = 0u;
-        if (processedYaml["header"])
-            hdr_sz = processedYaml["header"].as<std::size_t>();
+        fmt.prefix_digits = static_cast<int>(prefix);
+        fmt.type = (prefix > 0) ? s.substr(prefix) : s;
 
-        // Globales Encoding: gilt für alle Felder ohne eigenes `encoding`.
-        // Mastercard/VISA-Specs können so mit einer einzigen Zeile alle Felder setzen.
-        // Priorität: Feld-Encoding > globales Encoding > "" (nur für neutrale Formate)
-        std::string defaultEncoding = processedYaml["encoding"].as<std::string>("");
-        std::transform(defaultEncoding.begin(), defaultEncoding.end(), defaultEncoding.begin(),
+        // These formats carry no meaningful length
+        if (fmt.type == "NOP" || fmt.type == "UNUSED" || fmt.type == "REMAINING")
+            fmt.max_length = 0;
+
+        return fmt;
+    }
+
+    // Recursively converts internal SpecField -> public SpecFieldInfo
+    static SpecFieldInfo makeSpecFieldInfo(TNG_KEY_TYPE key, const SpecField& f) {
+        SpecFieldInfo info;
+        info.key = key;
+        info.description = f.description;
+        info.format = makeSpecFieldFormat(f);
+        info.encoding = f.encoding;
+        info.is_nested = (f.type == SpecFieldType::NESTED);
+        info.is_bitmap = (f.format == "BITMAP");
+
+        TNG_KEY_TYPE childKey = 0;
+        for (const auto& child : f.children)
+            info.children.push_back(makeSpecFieldInfo(childKey++, child));
+
+        return info;
+    }
+
+    // ── Shared YAML loading ───────────────────────────────────────────────────
+    // Preprocesses and validates once, returns the parsed SpecField map plus
+    // metadata so both loadFromYaml and loadBothFromYaml share the same logic.
+    struct LoadedSpec {
+        std::string              desc;
+        std::string              defaultEncoding;
+        std::size_t              hdr_sz;
+        std::map<int, SpecField> fields;
+    };
+
+    static LoadedSpec loadAndParse(const std::string& path) {
+        auto processedYaml = SpecPreProcessor::preprocessFile(path);
+        validateSpecYaml(processedYaml);
+
+        LoadedSpec result;
+        result.desc = processedYaml["spec"].as<std::string>("<unnamed>");
+        result.hdr_sz = processedYaml["header"]
+            ? processedYaml["header"].as<std::size_t>() : 0;
+        result.defaultEncoding = processedYaml["encoding"].as<std::string>("");
+        std::transform(result.defaultEncoding.begin(), result.defaultEncoding.end(),
+            result.defaultEncoding.begin(),
             [](unsigned char c) { return std::toupper(c); });
 
-        auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(desc, hdr_sz);
-
-        std::map<int, SpecField> fields;
         for (const auto& fieldEntry : processedYaml["fields"]) {
             std::string de = fieldEntry.first.as<std::string>();
-            int deNumeric = std::stoi(de);
-            fields[deNumeric] = parseSpecField(fieldEntry.second, defaultEncoding, de);
+            int         deNum = std::stoi(de);
+            result.fields[deNum] = parseSpecField(
+                fieldEntry.second, result.defaultEncoding, de);
         }
-
-        // Calculate highest field
-        int hf = fields.rbegin()->first;
-
-        for (int i = 0; i <= hf; ++i) {
-            if (fields.count(i)) {
-                parser->add(buildFieldParser(fields[i]));
-            }
-            else {
-                parser->add(std::make_shared<IF_NOP>());
-            }
-        }
-
-        TNG_LOG_INFO("[SpecDecoder] Loaded '{}' - {} fields, header={}B",
-            desc, fields.size(), hdr_sz);
-        return parser;
+        return result;
     }
+
+    // ── ISOSpec public methods
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFromYaml(const std::string& path) {
+        try {
+            auto loaded = loadAndParse(path);
+            auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(
+                loaded.desc, loaded.hdr_sz);
+            int hf = loaded.fields.rbegin()->first;
+            for (int i = 0; i <= hf; ++i) {
+                parser->add(loaded.fields.count(i)
+                    ? buildFieldParser(loaded.fields[i])
+                    : std::make_shared<IF_NOP>());
+            }
+            TNG_LOG_INFO("[SpecDecoder] Loaded '{}' - {} fields, header={}B",
+                loaded.desc, loaded.fields.size(), loaded.hdr_sz);
+            return parser;
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadFromYaml failed for '{}': {}", path, e.what());
+            throw;
+        }
+    }
+
+    std::optional<SpecFieldInfo> ISOSpec::field(TNG_KEY_TYPE key) const {
+        for (const auto& f : fields_)
+            if (f.key == key)
+                return f;
+        return std::nullopt;
+    }
+
+    bool ISOSpec::has(TNG_KEY_TYPE key) const noexcept {
+        for (const auto& f : fields_)
+            if (f.key == key)
+                return true;
+        return false;
+    }
+
+    // ── SpecDecoder::loadBothFromYaml ─────────────────────────────────────────
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadBothFromYaml(const std::string& path) {
+        try {
+            auto loaded = loadAndParse(path);
+
+            // Build parser (same logic as loadFromYaml)
+            auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(
+                loaded.desc, loaded.hdr_sz);
+            int hf = loaded.fields.rbegin()->first;
+            for (int i = 0; i <= hf; ++i) {
+                parser->add(loaded.fields.count(i)
+                    ? buildFieldParser(loaded.fields[i])
+                    : std::make_shared<IF_NOP>());
+            }
+
+            // Build ISOSpec
+            std::vector<SpecFieldInfo> fieldInfos;
+            fieldInfos.reserve(loaded.fields.size());
+            for (const auto& [key, f] : loaded.fields)
+                fieldInfos.push_back(makeSpecFieldInfo(
+                    static_cast<TNG_KEY_TYPE>(key), f));
+
+            auto spec = std::make_shared<ISOSpec>(
+                loaded.desc, loaded.defaultEncoding, std::move(fieldInfos));
+
+            TNG_LOG_INFO("[SpecDecoder] loadBothFromYaml '{}' - {} fields",
+                loaded.desc, loaded.fields.size());
+
+            return { parser, spec };
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadBothFromYaml failed for '{}': {}",
+                path, e.what());
+            throw;
+        }
+    }
+
 }
