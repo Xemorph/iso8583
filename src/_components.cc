@@ -492,6 +492,32 @@ void TNG_NAMESPACE::ISOMessage::parser(const ::TNG_NAMESPACE::ISOParserPtrBase::
     return (p_ ? p_ : nullptr);
 }
 
+void TNG_NAMESPACE::ISOMessage::recalcBitmap() {
+    if (!recalc_) return;
+
+    const int mf = std::min(static_cast<int>(hf_), 192);
+    const std::size_t bmap_size = static_cast<std::size_t>((mf + 62) >> 6 << 6);
+
+    dynamic_bitset<> bmap(bmap_size + 1); // +1: dynamic_bitset nutzt Index 0 nicht
+
+    for (int i = 1; i <= mf; ++i)
+        if (d_.count(static_cast<TNG_KEY_TYPE>(i)))
+            bmap.set(static_cast<std::size_t>(i));
+
+    auto bitmap = std::make_shared<ISOBitmap>(-1);
+    bitmap->value(bmap);
+    set(bitmap);
+
+    recalc_ = false;
+}
+
+std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) {
+    if (!p_) return {};
+
+    recalcBitmap();
+    return p_->parse(c);
+}
+
 std::size_t TNG_NAMESPACE::ISOMessage::unparse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c, const std::vector<uint8_t>& b) {
     return (p_ ? p_->unparse(c, b) : SIZE_MAX);
 }

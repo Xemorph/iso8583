@@ -482,6 +482,8 @@ namespace TNG_NAMESPACE {
         /// @brief Returns the currently attached parser, or `nullptr`.
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser() const;
 
+        std::vector<uint8_t> parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c);
+
         /// @brief Decodes a raw wire buffer into this message's field map.
         ///
         /// Requires a parser to be set via @ref parser(ISOParserPtrBaseSmartPtr).
@@ -564,6 +566,7 @@ namespace TNG_NAMESPACE {
 
     private:
         bool set_recursive(const TNG_KEY_TYPE* keys, std::size_t depth, std::string data);
+        void recalcBitmap();
     };
 
     // ── Header implementations ──────────────────────────────────────────────

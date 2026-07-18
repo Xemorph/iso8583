@@ -17,13 +17,14 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
         return {};
     }
 
+    if (l_.empty()) {
+        TNG_LOG_ERROR("[ISOBaseParser::parse] Parser-Liste ist leer – nicht konfiguriert?");
+        return {};
+    }
+
     auto m = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(c);
     if (!m) {
         TNG_LOG_ERROR("[ISOBaseParser::parse] Komponente ist kein ISOMessage");
-        return {};
-    }
-    if (l_.empty()) {
-        TNG_LOG_ERROR("[ISOBaseParser::parse] Parser-Liste ist leer – nicht konfiguriert?");
         return {};
     }
 
