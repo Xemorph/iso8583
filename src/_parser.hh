@@ -59,7 +59,7 @@ namespace TNG_NAMESPACE {
 
         // Checks if the bitmap has to be emitted
         // \return true if bitmap has to be emitted otherwise false
-        bool emit_bitmap() noexcept override {
+        bool emit_bitmap() const noexcept override {
             return (
                 field_parser(1) ? 
                     field_parser(1)->type() == TNG_NAMESPACE::ISOFieldParserType::BITMAP :
@@ -67,7 +67,7 @@ namespace TNG_NAMESPACE {
             );
         }
 
-        const std::shared_ptr< const ::TNG_NAMESPACE::ISOFieldParserPtrBase > field_parser(short key) noexcept {
+        const std::shared_ptr< const ::TNG_NAMESPACE::ISOFieldParserPtrBase > field_parser(short key) const noexcept {
             try
             {
                 return l_.at(key);
@@ -91,7 +91,7 @@ namespace TNG_NAMESPACE {
 
         // Usually 2 for normal fields, 1 for bitmap-less or ANSI X9.2
         // \return key of first valid data element
-        short first_field() {
+        short first_field() const {
             if ((field_parser(0)->type() != TNG_NAMESPACE::ISOFieldParserType::NESTED) && l_.size() > 1)
                 return field_parser(1)->type() == TNG_NAMESPACE::ISOFieldParserType::BITMAP ? 2 : 1;
             return 0;
@@ -109,9 +109,7 @@ namespace TNG_NAMESPACE {
 
         // Parses the provided 'ISOComponent'
         // \param c (component) to parse
-        std::vector<uint8_t> parse(ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) override {
-            return std::vector<uint8_t>{};
-        }
+        std::vector<uint8_t> parse(ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) const override;
 
         // Unparses the provided byte-image
         // \param c (component) to store result into
@@ -227,7 +225,7 @@ namespace TNG_NAMESPACE {
                 static_assert(::TNG_NAMESPACE::dependent_false<T>::value, "undefined ISOFieldParserType");
         }
 
-        virtual std::vector<uint8_t> parse(ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) override {
+        virtual std::vector<uint8_t> parse(ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) const override {
             if constexpr (std::is_same_v< T, std::nullptr_t >) {
                 return std::vector<uint8_t>{};
             }

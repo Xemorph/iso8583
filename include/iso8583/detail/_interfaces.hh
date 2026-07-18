@@ -141,7 +141,7 @@ namespace TNG_NAMESPACE {
         ///
         /// Most ISO 8583 parsers emit a bitmap.  Specialised sub-parsers for
         /// nested fields (e.g. DE048 sub-elements) typically do not.
-        virtual bool emit_bitmap() noexcept = 0;
+        virtual bool emit_bitmap() const noexcept = 0;
 
         /// @brief Deserialises a full message from a wire buffer (top-level).
         ///
@@ -171,7 +171,7 @@ namespace TNG_NAMESPACE {
         /// @brief Serialises all fields of the component into a wire byte sequence.
         /// @param c Message whose fields should be encoded.
         /// @return  Encoded bytes ready for transmission.
-        virtual std::vector<uint8_t> parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr) = 0;
+        virtual std::vector<uint8_t> parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr) const = 0;
     };
 
     // Forward decleration
@@ -209,7 +209,7 @@ namespace TNG_NAMESPACE {
         /// @brief Serialises the given component to a wire byte sequence.
         /// @param c Component whose value should be encoded.
         /// @return Encoded bytes ready for transmission.
-        virtual std::vector<uint8_t> parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr) = 0;
+        virtual std::vector<uint8_t> parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr) const = 0;
 
         /// @brief Deserialises bytes from the wire buffer into the component.
         /// @param c   Target component that receives the decoded value.
