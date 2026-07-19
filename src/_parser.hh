@@ -248,7 +248,7 @@ namespace TNG_NAMESPACE {
                 pad<p_>(data, de_l_); // Padding data
                 std::vector<uint8_t> b_img(parsed_length<pe_, l_>() + required_sz_for_as<e_>(data.size()), 0);
                 encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                // Parsing data
+                to<e_>(data, b_img, parsed_length<pe_, l_>());
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
@@ -258,7 +258,7 @@ namespace TNG_NAMESPACE {
                     return std::vector<uint8_t>{};
                 std::vector<uint8_t> b_img(pl + required_sz_for_as<e_>(data.size()), 0);
                 encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                // Parsing data
+                to<e_>(data, b_img, pl);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, dynamic_bitset<> >) {
@@ -268,7 +268,7 @@ namespace TNG_NAMESPACE {
 
                 std::vector<uint8_t> d(bytes, 0x00);
                 for (std::size_t i = 0u; i < bits; ++i)
-                    if (b[i + 1])                     // +1 because we don't use bit 0 of the BitSet
+                    if (b[i + 1])                     // +1 because we don't use bit 0 of dynamic_bitset
                         d[i >> 3] |= 0x80 >> i % 8;
                 if (bits > 64)
                     d[0] |= 0x80;

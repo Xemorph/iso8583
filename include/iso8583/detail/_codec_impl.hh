@@ -171,4 +171,91 @@ namespace TNG_NAMESPACE {
             "as<T,E>: T must be std::string or std::vector<uint8_t>");
     }
 
+    // -------------------------------------------------------------------------
+    // to<e, T>
+    // Exact inverse of as<T, e>().
+    // Writes the encoded representation of `value` into b[offset..].
+    // b must already be sized; only the bytes at [offset, offset+required) are written.
+    // -------------------------------------------------------------------------
+    template <Encoder e, typename T>
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset) {
+
+        if constexpr (std::is_same_v<T, std::string>) {
+            // ── String-Encoding ───────────────────────────────────────────────
+            if constexpr (Encoder::ASCII == e) {
+                // 1:1 copy – ASCII string bytes go directly into the buffer
+                for (std::size_t i = 0; i < value.size(); ++i)
+                    b[offset + i] = static_cast<uint8_t>(value[i]);
+            }
+            else if constexpr (Encoder::EBCDIC == e) {
+                // ASCII → EBCDIC: invert the kEbcdicToAscii lookup table.
+                // We build a reverse table lazily at compile-time (constexpr).
+                // For runtime use, a direct iconv call is more accurate for
+                // non-digit characters; for digits and common alphanumerics
+                // the reverse-table approach matches the decoder exactly.
+#if ENABLE_ICONV
+                std::string src(value);
+                iconv_wrapper::iconv enc;
+                enc.open("", "IBM-1047");   // ASCII → EBCDIC
+                std::string res(enc.convert(src));
+                enc.close();
+                for (std::size_t i = 0; i < res.size(); ++i)
+                    b[offset + i] = static_cast<uint8_t>(res[i]);
+#else
+                // Build a reverse ASCII→EBCDIC table from kEbcdicToAscii.
+                // kEbcdicToAscii[ebcdic_byte] = ascii_byte, so we invert it.
+                static const auto kAsciiToEbcdic = []() {
+                    std::array<uint8_t, 256> tbl{};
+                    tbl.fill(0x3F); // '?' as fallback for unmapped chars
+                    for (int i = 0; i < 256; ++i)
+                        if (static_cast<unsigned char>(kEbcdicToAscii[i]) != 0x2e || i == 0x2e)
+                            tbl[static_cast<unsigned char>(kEbcdicToAscii[i])] =
+                            static_cast<uint8_t>(i);
+                    return tbl;
+                    }();
+                for (std::size_t i = 0; i < value.size(); ++i)
+                    b[offset + i] = kAsciiToEbcdic[static_cast<unsigned char>(value[i])];
+#endif
+            }
+            else if constexpr (Encoder::BCD == e) {
+                // Digits → BCD packed (2 digits per byte).
+                // Mirrors as<string, BCD>: index i maps to nibble at byte i/2.
+                const std::size_t bytes = required_sz_for_as<e>(value.size());
+                for (std::size_t i = 0; i < bytes; ++i)
+                    b[offset + i] = 0x00;
+                for (std::size_t i = 0; i < value.size(); ++i) {
+                    const uint8_t digit = static_cast<uint8_t>(value[i] - '0');
+                    const int shift = (i & 1) == 0 ? 4 : 0; // MSN first (mirrors as<>)
+                    b[offset + (i >> 1)] |= static_cast<uint8_t>(digit << shift);
+                }
+            }
+            else static_assert(dependent_false<decltype(e)>::value,
+                "to<E, string>: unsupported encoder");
+        }
+        else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+            // ── Binary-Encoding ───────────────────────────────────────────────
+            if constexpr (Encoder::BINARY == e) {
+                // Raw copy – mirrors as<vector<uint8_t>, BINARY>
+                for (std::size_t i = 0; i < value.size(); ++i)
+                    b[offset + i] = value[i];
+            }
+            else if constexpr (Encoder::HEX_EBCDIC == e) {
+                // Each input byte → two EBCDIC hex-digit bytes.
+                // Mirrors as<vector<uint8_t>, HEX_EBCDIC>:
+                //   decode: (hi,lo) EBCDIC pair → nibbles → byte
+                //   encode: byte   → high nibble → HEX_EBCDIC_TABLE[h]
+                //                  → low  nibble → HEX_EBCDIC_TABLE[l]
+                for (std::size_t i = 0; i < value.size(); ++i) {
+                    const uint8_t byte = value[i];
+                    b[offset + i * 2] = HEX_EBCDIC_TABLE[(byte >> 4) & 0x0F];
+                    b[offset + i * 2 + 1] = HEX_EBCDIC_TABLE[byte & 0x0F];
+                }
+            }
+            else static_assert(dependent_false<decltype(e)>::value,
+                "to<E, vector<uint8_t>>: unsupported encoder");
+        }
+        else static_assert(dependent_false<T>::value,
+            "to<E,T>: T must be std::string or std::vector<uint8_t>");
+    }
+
 } // namespace TNG_NAMESPACE
