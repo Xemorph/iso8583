@@ -230,7 +230,18 @@ namespace TNG_NAMESPACE {
                 return std::vector<uint8_t>{};
             }
             else if constexpr (std::is_base_of_v< ISOBaseParser, T >) {
-                return c_->parse(c);
+                // NESTED: c_->parse() serialisiert die Kind-Felder in rohe Bytes.
+                // n_->parse() verpackt diese Bytes dann mit dem korrekten Längen-
+                // Prefix (identisch zu unparse(), nur in umgekehrter Richtung).
+                // c_ = innerer ISOBaseParser (kennt die Kind-Feld-Struktur)
+                // n_ = äußerer ISOBinaryFieldParser (trägt Prefix-Encoding + Länge)
+                auto inner_bytes = c_->parse(c);
+
+                // Temporäres ISOBinaryField für n_ erstellen und mit den inneren
+                // Bytes befüllen – n_->parse() fügt den korrekten Prefix hinzu.
+                auto wrapper = std::make_shared<ISOBinaryField>(c->key());
+                wrapper->value(inner_bytes);
+                return n_->parse(wrapper);
             }
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >) {
                 throw std::runtime_error(

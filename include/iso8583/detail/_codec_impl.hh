@@ -202,17 +202,7 @@ namespace TNG_NAMESPACE {
                 for (std::size_t i = 0; i < res.size(); ++i)
                     b[offset + i] = static_cast<uint8_t>(res[i]);
 #else
-                // Build a reverse ASCII→EBCDIC table from kEbcdicToAscii.
-                // kEbcdicToAscii[ebcdic_byte] = ascii_byte, so we invert it.
-                static const auto kAsciiToEbcdic = []() {
-                    std::array<uint8_t, 256> tbl{};
-                    tbl.fill(0x3F); // '?' as fallback for unmapped chars
-                    for (int i = 0; i < 256; ++i)
-                        if (static_cast<unsigned char>(kEbcdicToAscii[i]) != 0x2e || i == 0x2e)
-                            tbl[static_cast<unsigned char>(kEbcdicToAscii[i])] =
-                            static_cast<uint8_t>(i);
-                    return tbl;
-                    }();
+                // Use the class-level kAsciiToEbcdic table (defined in _codec.hh).
                 for (std::size_t i = 0; i < value.size(); ++i)
                     b[offset + i] = kAsciiToEbcdic[static_cast<unsigned char>(value[i])];
 #endif

@@ -86,6 +86,22 @@ namespace TNG_NAMESPACE {
         0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e,
     };
 
+    /// EBCDIC-Hex-Ziffern 0–F (für HEX_EBCDIC-Encoder)
+    /// ASCII → EBCDIC lookup table – inverse of kEbcdicToAscii.
+    /// Built as a class-level static to avoid C++23 requirement on
+    /// static locals inside constexpr functions (C++20 only allows it in C++2b).
+    static inline const std::array<uint8_t, 256> kAsciiToEbcdic = []() {
+        std::array<uint8_t, 256> tbl{};
+        tbl.fill(0x6F); // '?' in EBCDIC as fallback for unmapped chars
+        for (int i = 0; i < 256; ++i) {
+            const unsigned char ascii = static_cast<unsigned char>(kEbcdicToAscii[i]);
+            // Map ascii → ebcdic; for '.' (0x2e) only set if source is the canonical EBCDIC '.'
+            if (ascii != 0x2e || i == 0x4B)  // 0x4B = canonical EBCDIC '.'
+                tbl[ascii] = static_cast<uint8_t>(i);
+        }
+        return tbl;
+    }();
+
     // -- Enums -----------------------------------------------------------------
 
     /// Enum that defines the available encoding schemes for prefixing lengths.
