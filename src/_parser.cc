@@ -98,7 +98,7 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
                 for (std::size_t byte = 0; byte < bmp_sz; ++byte)
                     for (std::size_t bit = 0; bit < 8; ++bit)
                         if (bmp_buf[byte] & (0x80u >> bit))
-                            bits.set(byte * 8 + bit);
+                            bits.set(byte * 8 + bit + 1);
                 bmp_comp->value(bits);
                 auto encoded = p->parse(bmp_comp);
                 out.insert(out.end(), encoded.begin(), encoded.end());
