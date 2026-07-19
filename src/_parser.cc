@@ -93,14 +93,8 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
         if (l_.size() > 1) {
             auto p = l_.at(1);
             if (p && p->type() == ISOFieldParserType::BITMAP) {
-                auto bmp_comp = std::make_shared<ISOBitmap>(-1);
-                dynamic_bitset<> bits(bmp_sz * 8 +1);
-                for (std::size_t byte = 0; byte < bmp_sz; ++byte)
-                    for (std::size_t bit = 0; bit < 8; ++bit)
-                        if (bmp_buf[byte] & (0x80u >> bit))
-                            bits.set(byte * 8 + bit +1);
-                bmp_comp->value(bits);
-                auto encoded = p->parse(bmp_comp);
+                auto bmp_comp = m->tryGet<ISOBitmap>(-1);
+                auto encoded = p->parse(bmp_comp.value());
                 out.insert(out.end(), encoded.begin(), encoded.end());
                 TNG_LOG_TRACE("[ISOBaseParser::parse] Bitmap: {} bytes", encoded.size());
             }
