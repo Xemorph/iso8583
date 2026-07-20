@@ -11,6 +11,7 @@ add_executable(libiso8583_tests
     test_logging.cc
     test_preprocessor.cc
     test_remaining_field.cc
+    test_tlv_parser.cc
 )
 
 target_link_libraries(libiso8583_tests

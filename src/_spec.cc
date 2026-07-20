@@ -2,295 +2,365 @@
 
 // [stdc++]
 #include <algorithm>
+#include <cctype>
+#include <optional>
 #include <set>
-#include <stdexcept>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_set>
 #include <vector>
 // [yaml-cpp]
 #include <yaml-cpp/yaml.h>
-// [tng]
-#include "_preprocessor.hh"
-#include "_parser.hh"
-#include "fmt_types.hh"
+// [tng/internal]
 #include "_logger.hh"
-// [stdc++ string case conversion – ersetzt boost::to_lower / boost::to_upper]
-#include <algorithm>
-#include <cctype>
+#include "_parser.hh"
+#include "_preprocessor.hh"
+#include "_sourcemap.hh"
+#include "_tlv.hh"
+#include "fmt_types.hh"
 
 namespace TNG_NAMESPACE::spec {
 
+    // =============================================================================
+    // Interne Typen
+    // =============================================================================
+
     class SpecValidationError : public std::runtime_error {
     public:
+        /// Ohne SourceMap: zeigt prozessierte Zeile/Spalte
         SpecValidationError(const std::string& msg, const YAML::Mark& mark)
-            : std::runtime_error(buildMessage(msg, mark)) {}
+            : std::runtime_error(format(msg, mark, nullptr))
+        {
+        }
+
+        /// Mit SourceMap: schlägt Original-Position nach
+        SpecValidationError(const std::string& msg, const YAML::Mark& mark,
+            const SourceMap* smap)
+            : std::runtime_error(format(msg, mark, smap))
+        {
+        }
 
     private:
-        static std::string buildMessage(const std::string& msg, const YAML::Mark& mark) {
-            std::ostringstream oss;
-            oss << "Fehler in YAML bei Zeile " << (mark.line + 1)
-                << ", Spalte " << (mark.column + 1) << ": " << msg;
-            return oss.str();
+        static std::string format(const std::string& msg,
+            const YAML::Mark& mark,
+            const SourceMap* smap)
+        {
+            const int line = mark.line + 1;
+            const int col = mark.column + 1;
+            if (smap) {
+                // Alle Positionsinfos aus der SourceMap holen – nicht mischen
+                if (auto loc = smap->lookup(line))
+                    return loc->to_string() + ": " + msg;
+                if (auto loc = smap->lookup_nearest(line))
+                    return loc->to_string() + ": " + msg;
+            }
+            return "Zeile " + std::to_string(line) +
+                ", Spalte " + std::to_string(col) + ": " + msg;
         }
     };
 
-    enum class SpecFieldType {
-        UNKNOWN,
-        SCALAR,
-        NESTED,
-    };
-    // String switch paridgam   
-    struct SpecFieldTypeMap : public std::map<std::string, SpecFieldType> {
-        SpecFieldTypeMap() {
-            this->operator[]("scalar") = SpecFieldType::SCALAR;
-            this->operator[]("nested") = SpecFieldType::NESTED;
-            this->operator[]("") = SpecFieldType::UNKNOWN;
-        };
-        ~SpecFieldTypeMap() {}
+    enum class SpecFieldType { UNKNOWN, SCALAR, NESTED };
+
+    struct TLVOptions {
+        int         tag_bytes = 2;
+        int         len_bytes = 2;
+        bool        tcc = false;
+        std::string encoding; // leer = erbt von Elternfeld / globalem Encoding
     };
 
     struct SpecField {
-        SpecFieldType type;
-        std::string format;
-        std::string encoding; // "ebcdic" | "ascii" | "bcd" | "binary" | "" (= default)
-        int length = 0;
-        std::string description{ "<dummy>" };
-
-        std::vector<SpecField> children;
+        SpecFieldType            type = SpecFieldType::UNKNOWN;
+        std::string              format;
+        std::string              encoding;
+        std::size_t              length = 0;
+        std::string              description = "<dummy>";
+        std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
+        std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer)
+        std::optional<TLVOptions> tlv;
     };
 
-    // === PRIVATE ============================================================
+    // =============================================================================
+    // Kleine Hilfsfunktionen
+    // =============================================================================
 
-    static SpecFieldType specFieldTypeFromString(const std::string& s) {
-        static const std::unordered_map<std::string, SpecFieldType> map = {
-            {"scalar", SpecFieldType::SCALAR},
-            {"nested", SpecFieldType::NESTED},
-            {"",       SpecFieldType::UNKNOWN},
-        };
-        auto it = map.find(s);
-        return it != map.end() ? it->second : SpecFieldType::UNKNOWN;
+    static std::string toUpper(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return s;
     }
 
-    static void validateFieldKeys(const YAML::Node& node, const std::string& tag) {
-        static const std::set<std::string> allowedKeys = {
-            "type", "format", "encoding", "length", "description", "children"
-        };
+    static std::string toLower(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return s;
+    }
 
+    static SpecFieldType fieldTypeFromString(const std::string& s) {
+        if (s == "scalar") return SpecFieldType::SCALAR;
+        if (s == "nested") return SpecFieldType::NESTED;
+        return SpecFieldType::UNKNOWN;
+    }
+
+    /// Formate ohne Encoding-Konzept – ignorieren globales und Feld-Encoding.
+    static bool isEncodingNeutral(const std::string& fmt) {
+        static const std::unordered_set<std::string> neutral = {
+            "BINARY", "BITMAP", "NOP", "UNUSED", "REMAINING"
+        };
+        return neutral.count(fmt) > 0;
+    }
+
+    /// Löst das Encoding für ein Feld auf (Feld-Override > Default > leer).
+    static std::string resolveEncoding(const YAML::Node& node,
+        const std::string& fmt,
+        const std::string& defaultEncoding)
+    {
+        if (isEncodingNeutral(fmt)) return "";
+        return toUpper(node["encoding"].as<std::string>(defaultEncoding));
+    }
+
+    // =============================================================================
+    // Validierung
+    // =============================================================================
+
+    static void validateFieldKeys(const YAML::Node& node, const std::string& de,
+        const SourceMap* smap) {
+        static const std::set<std::string> allowed = {
+            "type", "format", "encoding", "length", "description", "children", "tlv"
+        };
         for (auto it = node.begin(); it != node.end(); ++it) {
-            std::string key = it->first.as<std::string>();
-            if (allowedKeys.find(key) == allowedKeys.end()) {
-                throw SpecValidationError("Unbekannter Schlüssel '" + key + "' im Feld " + tag, it->first.Mark());
-            }
+            const auto key = it->first.as<std::string>();
+            if (!allowed.count(key))
+                throw SpecValidationError(
+                    "Unbekannter Schlüssel '" + key + "' im Feld " + de,
+                    it->first.Mark(), smap);
         }
     }
 
-    static void validateSpecYaml(const YAML::Node& root) {
-        // Validierung läuft auf dem BEREITS PREPROCESSIERTEN YAML.
-        // !template, !merge, !use wurden bereits expandiert – daher:
-        //   - 'type' kann durch !template fehlen (produziert kein type-Feld)
-        //   - 'length' kann bei NOP fehlen (gültig)
-        //   - children-Kinder können NOP ohne length sein
+    static void validateSpecYaml(const YAML::Node& root, const SourceMap* smap = nullptr) {
+        // Läuft auf dem BEREITS PREPROCESSIERTEN YAML – !template, !merge, !use
+        // wurden bereits expandiert.
 
         if (!root["fields"])
-            throw std::runtime_error("Fehlender Abschnitt \'fields\' in YAML.");
+            throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");  // no mark available
 
-        const YAML::Node& fields = root["fields"];
-        for (const auto& fieldEntry : fields) {
-            const std::string key = fieldEntry.first.as<std::string>();
-            const YAML::Mark  mark = fieldEntry.first.Mark();
+        for (const auto& entry : root["fields"]) {
+            const auto key = entry.first.as<std::string>();
+            const auto mark = entry.first.Mark();
 
             if (!std::all_of(key.begin(), key.end(), ::isdigit))
-                throw SpecValidationError("Feldschlüssel \'" + key + "\' ist nicht numerisch", mark);
+                throw SpecValidationError(
+                    "Feldschlüssel '" + key + "' ist nicht numerisch", mark, smap);
 
-            const YAML::Node& field = fieldEntry.second;
-            if (!field.IsMap()) continue;  // z.B. Bitmap-Wert als Scalar
+            const YAML::Node& field = entry.second;
+            if (!field.IsMap()) continue;
 
-            // format ist das einzig zwingend nötige Feld nach dem Preprocessing
+            // Warnung wenn length für nicht-triviale Formate fehlt
             if (field["format"] && field["format"].IsScalar()) {
-                std::string fmt = field["format"].as<std::string>();
-                std::transform(fmt.begin(), fmt.end(), fmt.begin(),
-                    [](unsigned char c) { return std::tolower(c); });
-
-                // Nur bei nicht-NOP/nicht-BITMAP Feldern ist length erforderlich
+                const auto fmt = toLower(field["format"].as<std::string>());
                 const bool needsLength = (fmt != "nop" && fmt != "bitmap" &&
                     fmt != "unused" && fmt != "remaining");
-                if (needsLength && !field["length"]) {
-                    TNG_LOG_WARN("[SpecDecoder] Feld {} hat format='{}' aber kein 'length'", key, fmt);
-                }
+                if (needsLength && !field["length"])
+                    TNG_LOG_WARN("[SpecDecoder] Feld {} hat format='{}' aber kein 'length'",
+                        key, fmt);
             }
 
-            // Nested: children muss eine Sequence sein
-            if (field["type"] && field["type"].as<std::string>() == "nested") {
-                if (field["children"] && !field["children"].IsSequence())
+            // Nested: erkennbar durch 'children' (oder optionales type: nested)
+            const bool isNested = field["children"] ||
+                (field["type"] && field["type"].as<std::string>() == "nested");
+            if (isNested) {
+                if (field["children"] &&
+                    !field["children"].IsSequence() &&
+                    !field["children"].IsMap())
                     throw SpecValidationError(
-                        "\'children\' im nested-Feld " + key + " muss eine Liste sein",
-                        field.Mark());
+                        "'children' im nested-Feld " + key +
+                        " muss eine Liste (normal) oder Map (TLV) sein",
+                        field.Mark(), smap);
+
+                if (field["tlv"]) {
+                    const auto& tlv = field["tlv"];
+                    if (!tlv["tag_bytes"] || !tlv["len_bytes"])
+                        throw SpecValidationError(
+                            "TLV-Block im Feld " + key +
+                            " benötigt 'tag_bytes' und 'len_bytes'",
+                            tlv.Mark(), smap);
+                }
             }
         }
     }
 
-    // Formate die kein Encoding kennen – ignorieren globales und Feld-Encoding
-    static bool isEncodingNeutral(const std::string& format) {
-        static const std::unordered_set<std::string> neutral = {
-            "BINARY",
-            "BITMAP", "NOP", "UNUSED",
-            "REMAINING",  // kein Encoding – liest rohe Bytes
-        };
-        return neutral.count(format) > 0;
-    }
+    // =============================================================================
+    // YAML → SpecField
+    // =============================================================================
+
+    // Forward-Deklaration für rekursiven Aufruf
+    static SpecField parseSpecField(const YAML::Node& node,
+        const std::string& defaultEncoding,
+        const std::string& tag = "",
+        const SourceMap* smap = nullptr);
 
     static SpecField parseSpecField(const YAML::Node& node,
         const std::string& defaultEncoding,
-        const std::string& tag = "") {
+        const std::string& tag,
+        const SourceMap* smap)
+    {
         SpecField f;
-        std::string type = node["type"].as<std::string>("");
-        std::transform(type.begin(), type.end(), type.begin(),
-            [](unsigned char c) { return std::tolower(c); });
-        f.type = specFieldTypeFromString(type);
+        f.format = toUpper(node["format"].as<std::string>(""));
 
-        f.format = node["format"].as<std::string>("");
-        std::transform(f.format.begin(), f.format.end(), f.format.begin(),
-            [](unsigned char c) { return std::toupper(c); });
-
-        // Encoding-Auflösung: Feld-Encoding > globales Encoding > leer (für neutrale Formate)
-        if (isEncodingNeutral(f.format)) {
-            f.encoding = "";  // encoding-neutrale Formate ignorieren jede Vorgabe
+        // 'type' wird aus dem Kontext abgeleitet – kein explizites Pflichtfeld:
+        //   children vorhanden → NESTED
+        //   alles andere       → SCALAR
+        // Ein explizites 'type:' wird akzeptiert wenn vorhanden, aber nie gefordert.
+        if (node["type"]) {
+            f.type = fieldTypeFromString(toLower(node["type"].as<std::string>("")));
+        }
+        else if (node["children"]) {
+            f.type = SpecFieldType::NESTED;
         }
         else {
-            f.encoding = node["encoding"].as<std::string>(defaultEncoding);
-            std::transform(f.encoding.begin(), f.encoding.end(), f.encoding.begin(),
-                [](unsigned char c) { return std::toupper(c); });
+            f.type = SpecFieldType::SCALAR;
         }
 
-        f.length = node["length"] ? node["length"].as<int>() : 0;
+        // NOP-Felder: nur ein Index-Placeholder wegen des +1-Offsets im Parser.
+        // length und description sind bedeutungslos und müssen nicht angegeben werden.
+        if (f.format == "NOP" || f.format == "UNUSED") {
+            f.length = 0;
+            f.description = node["description"].as<std::string>("<nop>");
+            f.encoding = "";
+            return f;
+        }
+
+        f.encoding = resolveEncoding(node, f.format, defaultEncoding);
+
+        if (node["length"]) {
+            const int raw_length = node["length"].as<int>();
+            if (raw_length < 0) {
+                // node["length"] hat noch den originalen YAML::Mark aus der Quelldatei
+                // (weil processNode keine deepClone macht für Scalar-Nodes).
+                // Damit zeigt die Fehlermeldung direkt auf die richtige Datei + Zeile.
+                const YAML::Mark value_mark = node["length"].Mark();
+                throw SpecValidationError(
+                    "Feld '" + node["description"].as<std::string>("<unnamed>") +
+                    "' hat ungültige length=" + std::to_string(raw_length) +
+                    " (muss >= 0 sein)",
+                    value_mark, smap);
+            }
+            f.length = static_cast<std::size_t>(raw_length);
+        }
+
         f.description = node["description"]
             ? node["description"].as<std::string>()
             : (f.length == 0 ? "<dummy>" : "?");
 
+        // Warnung wenn length == 0 bei einem Feld das Daten erwartet
+        const bool expectsData = (f.format != "NOP" && f.format != "UNUSED" &&
+            f.format != "BITMAP" && f.format != "REMAINING" &&
+            f.type == SpecFieldType::SCALAR);
+        const bool hasVariablePrefix = (f.format.find('L') == 0); // LL, LLL etc.
+        if (expectsData && !hasVariablePrefix && f.length == 0)
+            TNG_LOG_WARN("[SpecDecoder] Feld '{}' (format={}) hat length=0",
+                f.description, f.format);
+
+        // Encoding das an Kinder vererbt wird: neutrale Formate geben global-Encoding weiter
+        const std::string& childEnc = isEncodingNeutral(f.format) ? defaultEncoding : f.encoding;
+
+        // ── TLV-Block ────────────────────────────────────────────────────────────
+        if (node["tlv"]) {
+            const YAML::Node& t = node["tlv"];
+            TLVOptions opts;
+            opts.tag_bytes = t["tag_bytes"].as<int>(2);
+            opts.len_bytes = t["len_bytes"].as<int>(2);
+            opts.tcc = t["tcc"].as<bool>(false);
+            opts.encoding = toUpper(t["encoding"].as<std::string>(childEnc));
+            f.tlv = opts;
+        }
+
+        // ── Children ─────────────────────────────────────────────────────────────
         if (node["children"]) {
-            // Encoding das an Kinder vererbt wird:
-            //   - Wenn das Elternfeld selbst encoding-neutral ist (z.B. format: binary
-            //     bei einem nested-Container), darf sein leeres f.encoding NICHT an
-            //     die Kinder weitergereicht werden – sonst erben Kinder fälschlicherweise
-            //     ein leeres Encoding und das globale defaultEncoding geht verloren.
-            //   - Nur wenn das Elternfeld selbst ein echtes Encoding trägt
-            //     (z.B. format: numeric mit encoding: bcd), erben Kinder dieses.
-            const std::string& inheritedEncoding =
-                isEncodingNeutral(f.format) ? defaultEncoding : f.encoding;
+            const std::string& seEnc = f.tlv ? f.tlv->encoding : childEnc;
 
-            for (const auto& child : node["children"]) {
-                SpecField childSpec;
-                childSpec.format = child["format"].as<std::string>("");
-                std::transform(childSpec.format.begin(), childSpec.format.end(), childSpec.format.begin(),
-                    [](unsigned char c) { return std::toupper(c); });
-
-                if (isEncodingNeutral(childSpec.format)) {
-                    childSpec.encoding = "";
+            if (node["children"].IsMap()) {
+                // TLV-Modus: Key = SE-Nummer, Wert = SpecField
+                for (const auto& entry : node["children"]) {
+                    const auto seKey = entry.first.as<std::string>();
+                    const int  seNum = std::stoi(seKey);
+                    f.tlv_children[seNum] = parseSpecField(entry.second, seEnc, seKey);
                 }
-                else {
-                    // Kinder erben das Encoding des Elternfeldes – oder, falls das
-                    // Elternfeld encoding-neutral ist, direkt das globale Encoding.
-                    childSpec.encoding = child["encoding"].as<std::string>(inheritedEncoding);
-                    std::transform(childSpec.encoding.begin(), childSpec.encoding.end(), childSpec.encoding.begin(),
-                        [](unsigned char c) { return std::toupper(c); });
-                }
-
-                childSpec.length = child["length"] ? child["length"].as<int>() : 0;
-                childSpec.description = child["description"]
-                    ? child["description"].as<std::string>()
-                    : (childSpec.length == 0 ? "<dummy>" : "?");
-                f.children.push_back(childSpec);
+            }
+            else {
+                // Normal-Modus: Sequence mit Index-Feldern
+                // Kinder rekursiv parsen – parseSpecField löst Encoding korrekt auf
+                for (const auto& child : node["children"])
+                    f.children.push_back(parseSpecField(child, childEnc));
             }
         }
 
         return f;
     }
 
-    // ── Parser-Fabrik ────────────────────────────────────────────────────────
-    //
-    // Einzige Lookup-Tabelle für alle Format/Encoding-Kombinationen.
-    // Schlüssel: "<FORMAT>|<ENCODING>"  (beide uppercase, Encoding darf leer sein)
-    //
-    // Wenn eine YAML-Spec kein `encoding` angibt, gilt folgende Konvention:
-    //   BITMAP / BINARY / NOP / UNUSED → encoding-unabhängig
-    //   Alle anderen                   → Fehler (encoding muss gesetzt sein)
-    //
-    // Neue Typen aus fmt_types.hh ergänzen: eine Zeile in der Tabelle genügt.
-    // Die if-else-Kaskade entfällt vollständig.
+    // =============================================================================
+    // SpecField → ISOFieldParser (Parser-Fabrik)
+    // =============================================================================
 
     using ParserFactory = std::function<
-        ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr(int len, const std::string& desc)
-    >;
+        ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr(
+            int len, const std::string& desc)>;
 
     static const std::unordered_map<std::string, ParserFactory>& parserTable() {
         using F = ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr;
-
-        // Lokale Makros um die Factory-Lambda-Redundanz zu reduzieren.
-        // #undef direkt nach der Tabelle – kein Einfluss auf andere TUs.
-#define MAKE(T) [](int len, const std::string& desc) -> F \
-            { return std::make_shared<T>(len, desc); }
-#define MAKE_NOP() [](int, const std::string&) -> F \
-            { return std::make_shared<IF_NOP>(); }
+#define MAKE(T)     [](int len, const std::string& d) -> F { return std::make_shared<T>(len, d); }
+#define MAKE_NOP()  [](int,     const std::string&  ) -> F { return std::make_shared<IF_NOP>(); }
 
         static const std::unordered_map<std::string, ParserFactory> table = {
-            // ── Encoding-unabhängige Sondertypen ──────────────────────────────
-            { "BITMAP|",          MAKE(IFB_BITMAP)      },
-            { "NOP|",             MAKE_NOP()             },
-            { "UNUSED|",          MAKE_NOP()             },
-            // Liest alle verbleibenden Bytes des Parent-Buffers.
-            // Fuer trailing variable-length Felder ohne eigenen Laengen-Prefix.
-            // Trailing variable-length Felder ohne Prefix.
-            // Encoding-neutral fuer binary, EBCDIC-Variante fuer EBCDIC-Specs.
-            { "REMAINING|",          MAKE(IF_REMAINING)   },
-            { "REMAINING|BINARY",    MAKE(IF_REMAINING)   },
-            { "REMAINING|EBCDIC",    MAKE(IFE_REMAINING)  },
-
-            // ── BINARY (rohe Bytes) ───────────────────────────────────────────
-            { "BINARY|",          MAKE(IF_BINARY)        },
-            { "LBINARY|",         MAKE(IF_LBINARY)       },
-            { "LLBINARY|",        MAKE(IF_LLBINARY)      },
-            { "LLLBINARY|",       MAKE(IF_LLLBINARY)     },
-            { "BINARY|BINARY",    MAKE(IF_BINARY)        },
-            { "LBINARY|BINARY",   MAKE(IF_LBINARY)       },
-            { "LLBINARY|BINARY",  MAKE(IF_LLBINARY)      },
-            { "LLLBINARY|BINARY", MAKE(IF_LLLBINARY)     },
-
-            // ── ASCII ─────────────────────────────────────────────────────────
-            { "NUMERIC|ASCII",    MAKE(IFA_NUMERIC)      },
-            { "CHAR|ASCII",       MAKE(IFA_CHAR)         },
-            { "NOPAD_CHAR|ASCII", MAKE(IFA_NOPAD_CHAR)   },
-            { "LCHAR|ASCII",      MAKE(IFA_LCHAR)        },
-            { "LLCHAR|ASCII",     MAKE(IFA_LLCHAR)       },
-            { "LLLCHAR|ASCII",    MAKE(IFA_LLLCHAR)      },
-            { "LLLLCHAR|ASCII",   MAKE(IFA_LLLLCHAR)     },
-            { "LNUM|ASCII",       MAKE(IFA_LNUM)         },
-            { "LLNUM|ASCII",      MAKE(IFA_LLNUM)        },
-            { "LBINARY|ASCII",    MAKE(IFA_LBINARY)      },
-            { "LLBINARY|ASCII",   MAKE(IFA_LLBINARY)     },
-            { "LLLBINARY|ASCII",  MAKE(IFA_LLLBINARY)    },
-
-            // ── BCD ───────────────────────────────────────────────────────────
-            { "NUMERIC|BCD",      MAKE(IFB_NUMERIC)      },
-            { "LCHAR|BCD",        MAKE(IFB_LCHAR)        },
-            { "LLCHAR|BCD",       MAKE(IFB_LLCHAR)       },
-            { "LLLCHAR|BCD",      MAKE(IFB_LLLCHAR)      },
-            { "LBINARY|BCD",      MAKE(IFB_LBINARY)      },
-            { "LLBINARY|BCD",     MAKE(IFB_LLBINARY)     },
-            { "LLLBINARY|BCD",    MAKE(IFB_LLLBINARY)    },
-
-            // ── EBCDIC ────────────────────────────────────────────────────────
-            { "BINARY|EBCDIC",       MAKE(IFE_BINARY)      },
-            { "LBINARY|EBCDIC",      MAKE(IFE_LBINARY)     },
-            { "LLBINARY|EBCDIC",     MAKE(IFE_LLBINARY)    },
-            { "LLLBINARY|EBCDIC",    MAKE(IFE_LLLBINARY)   },
-            { "LLLLBINARY|EBCDIC",   MAKE(IFE_LLLLBINARY)  },
-            { "NUMERIC|EBCDIC",      MAKE(IFE_NUMERIC)     },
-            { "LNUM|EBCDIC",         MAKE(IFE_LNUM)        },
-            { "CHAR|EBCDIC",         MAKE(IFE_CHAR)        },
-            { "NOPAD_CHAR|EBCDIC",   MAKE(IFE_NOPAD_CHAR)  },
-            { "LCHAR|EBCDIC",        MAKE(IFE_LCHAR)       },
-            { "LLCHAR|EBCDIC",       MAKE(IFE_LLCHAR)      },
-            { "LLLCHAR|EBCDIC",      MAKE(IFE_LLLCHAR)     },
+            // ── Encoding-unabhängig ──────────────────────────────────────────────
+            { "BITMAP|",           MAKE(IFB_BITMAP)     },
+            { "NOP|",              MAKE_NOP()            },
+            { "UNUSED|",           MAKE_NOP()            },
+            { "REMAINING|",        MAKE(IF_REMAINING)    },
+            { "REMAINING|BINARY",  MAKE(IF_REMAINING)    },
+            { "REMAINING|EBCDIC",  MAKE(IFE_REMAINING)   },
+            // ── BINARY ──────────────────────────────────────────────────────────
+            { "BINARY|",           MAKE(IF_BINARY)       },
+            { "LBINARY|",          MAKE(IF_LBINARY)      },
+            { "LLBINARY|",         MAKE(IF_LLBINARY)     },
+            { "LLLBINARY|",        MAKE(IF_LLLBINARY)    },
+            { "BINARY|BINARY",     MAKE(IF_BINARY)       },
+            { "LBINARY|BINARY",    MAKE(IF_LBINARY)      },
+            { "LLBINARY|BINARY",   MAKE(IF_LLBINARY)     },
+            { "LLLBINARY|BINARY",  MAKE(IF_LLLBINARY)    },
+            // ── ASCII ────────────────────────────────────────────────────────────
+            { "NUMERIC|ASCII",     MAKE(IFA_NUMERIC)     },
+            { "CHAR|ASCII",        MAKE(IFA_CHAR)        },
+            { "NOPAD_CHAR|ASCII",  MAKE(IFA_NOPAD_CHAR)  },
+            { "LCHAR|ASCII",       MAKE(IFA_LCHAR)       },
+            { "LLCHAR|ASCII",      MAKE(IFA_LLCHAR)      },
+            { "LLLCHAR|ASCII",     MAKE(IFA_LLLCHAR)     },
+            { "LLLLCHAR|ASCII",    MAKE(IFA_LLLLCHAR)    },
+            { "LNUM|ASCII",        MAKE(IFA_LNUM)        },
+            { "LLNUM|ASCII",       MAKE(IFA_LLNUM)       },
+            { "LBINARY|ASCII",     MAKE(IFA_LBINARY)     },
+            { "LLBINARY|ASCII",    MAKE(IFA_LLBINARY)    },
+            { "LLLBINARY|ASCII",   MAKE(IFA_LLLBINARY)   },
+            // ── BCD ──────────────────────────────────────────────────────────────
+            { "NUMERIC|BCD",       MAKE(IFB_NUMERIC)     },
+            { "LCHAR|BCD",         MAKE(IFB_LCHAR)       },
+            { "LLCHAR|BCD",        MAKE(IFB_LLCHAR)      },
+            { "LLLCHAR|BCD",       MAKE(IFB_LLLCHAR)     },
+            { "LBINARY|BCD",       MAKE(IFB_LBINARY)     },
+            { "LLBINARY|BCD",      MAKE(IFB_LLBINARY)    },
+            { "LLLBINARY|BCD",     MAKE(IFB_LLLBINARY)   },
+            // ── EBCDIC ───────────────────────────────────────────────────────────
+            { "BINARY|EBCDIC",     MAKE(IFE_BINARY)      },
+            { "LBINARY|EBCDIC",    MAKE(IFE_LBINARY)     },
+            { "LLBINARY|EBCDIC",   MAKE(IFE_LLBINARY)    },
+            { "LLLBINARY|EBCDIC",  MAKE(IFE_LLLBINARY)   },
+            { "LLLLBINARY|EBCDIC", MAKE(IFE_LLLLBINARY)  },
+            { "NUMERIC|EBCDIC",    MAKE(IFE_NUMERIC)     },
+            { "LNUM|EBCDIC",       MAKE(IFE_LNUM)        },
+            { "CHAR|EBCDIC",       MAKE(IFE_CHAR)        },
+            { "NOPAD_CHAR|EBCDIC", MAKE(IFE_NOPAD_CHAR)  },
+            { "LCHAR|EBCDIC",      MAKE(IFE_LCHAR)       },
+            { "LLCHAR|EBCDIC",     MAKE(IFE_LLCHAR)      },
+            { "LLLCHAR|EBCDIC",    MAKE(IFE_LLLCHAR)     },
         };
 
 #undef MAKE
@@ -299,75 +369,113 @@ namespace TNG_NAMESPACE::spec {
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
-        createScalarParser(const SpecField& f) {
-        const std::string key = f.format + "|" + f.encoding;
+        createScalarParser(const SpecField& f)
+    {
         const auto& table = parserTable();
+        const std::string key = f.format + "|" + f.encoding;
 
         auto it = table.find(key);
         if (it != table.end())
-            return it->second(f.length, f.description);
+            return it->second(static_cast<int>(f.length), f.description);
 
-        // Fallback: encoding weggelassen, Format-only-Lookup (für BITMAP, NOP, BINARY)
+        // Fallback: ohne Encoding (für BITMAP, NOP, BINARY)
         auto it2 = table.find(f.format + "|");
         if (it2 != table.end())
-            return it2->second(f.length, f.description);
+            return it2->second(static_cast<int>(f.length), f.description);
 
-        // Unbekannte Kombination – Exception mit klarer Fehlermeldung.
-        // Häufige Ursache: Tippfehler im encoding-Wert
         throw std::runtime_error(
             "Unbekannte Format/Encoding-Kombination in der Spec:\n"
-            "  format:   '" + f.format + "'\n"
-            "  encoding: '" + f.encoding + "'\n"
+            "  format:      '" + f.format + "'\n"
+            "  encoding:    '" + f.encoding + "'\n"
             "  description: '" + f.description + "'\n"
             "  Erlaubte Encodings: ASCII | BCD | BINARY | EBCDIC\n"
-            "  Prüfe auf Tippfehler im globalen 'encoding'-Schlüssel oder im Feld selbst."
-        );
+            "  Prüfe auf Tippfehler im globalen 'encoding'-Schlüssel oder im Feld selbst.");
     }
 
-    static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr buildFieldParser(const SpecField& f) {
-        if (f.type == SpecFieldType::SCALAR) {
-            return createScalarParser(f);
-        }
-        else if (f.type == SpecFieldType::NESTED) {
-            auto base = createScalarParser(f);
+    static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, Encoder enc)
+    {
+        using namespace ::TNG_NAMESPACE;
+        // tag_bytes == 2, len_bytes == 2
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, true, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, false, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, true, Encoder::ASCII, Encoder::ASCII>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, false, Encoder::ASCII, Encoder::ASCII>>();
+        // tag_bytes == 2, len_bytes == 1
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, true, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, false, Encoder::BCD, Encoder::BCD>>();
+        // tag_bytes == 1, len_bytes == 1
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, true, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, false, Encoder::BCD, Encoder::BCD>>();
+        // Fallback
+        TNG_LOG_WARN("[SpecDecoder] TLV tag_bytes={} len_bytes={} nicht unterstützt – "
+            "Mastercard-Default (2,2,false,EBCDIC)", tag_bytes, len_bytes);
+        return std::make_shared<ISOTLVParser<2, 2, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
+    }
 
-            auto nestedParser = std::make_shared<::TNG_NAMESPACE::ISONestedFieldParser<::TNG_NAMESPACE::ISOBaseParser>>(base, f.description);
-            auto subparser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
-            for (const auto& child : f.children) {
-                subparser->add(createScalarParser(child));
+    static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
+        buildFieldParser(const SpecField& f)
+    {
+        switch (f.type) {
+        case SpecFieldType::SCALAR:
+            return createScalarParser(f);
+
+        case SpecFieldType::NESTED: {
+            auto base = createScalarParser(f);
+            auto nested = std::make_shared<
+                ::TNG_NAMESPACE::ISONestedFieldParser<::TNG_NAMESPACE::ISOBaseParser>>(
+                    base, f.description);
+
+            if (f.tlv) {
+                const auto& opts = *f.tlv;
+                const auto enc = [&] {
+                    if (opts.encoding == "BCD")   return Encoder::BCD;
+                    if (opts.encoding == "ASCII")  return Encoder::ASCII;
+                    return Encoder::EBCDIC;
+                    }();
+                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc));
             }
-            nestedParser->subParser(subparser);
-            return nestedParser;
+            else {
+                auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
+                for (const auto& child : f.children)
+                    sub->add(createScalarParser(child));
+                nested->subParser(sub);
+            }
+            return nested;
         }
-        else {
+
+        default:
             return std::make_shared<IF_NOP>();
         }
     }
 
-    //=== PUBLIC ==============================================================
-    // ── SpecFieldFormat helper ────────────────────────────────────────────────
-    // Splits "LLCHAR" -> {type="CHAR", prefix_digits=2, max_length=N}
+    // =============================================================================
+    // SpecField → SpecFieldInfo (für ISOSpec Introspection)
+    // =============================================================================
+
     static SpecFieldFormat makeSpecFieldFormat(const SpecField& f) {
         SpecFieldFormat fmt;
-        fmt.max_length = f.length;
+        fmt.max_length = static_cast<int>(f.length);
 
-        // Count leading L's (format string is already uppercase)
-        const std::string& s = f.format;
         std::size_t prefix = 0;
-        while (prefix < s.size() && s[prefix] == 'L')
+        while (prefix < f.format.size() && f.format[prefix] == 'L')
             ++prefix;
 
         fmt.prefix_digits = static_cast<int>(prefix);
-        fmt.type = (prefix > 0) ? s.substr(prefix) : s;
+        fmt.type = prefix > 0 ? f.format.substr(prefix) : f.format;
 
-        // These formats carry no meaningful length
         if (fmt.type == "NOP" || fmt.type == "UNUSED" || fmt.type == "REMAINING")
             fmt.max_length = 0;
 
         return fmt;
     }
 
-    // Recursively converts internal SpecField -> public SpecFieldInfo
     static SpecFieldInfo makeSpecFieldInfo(TNG_KEY_TYPE key, const SpecField& f) {
         SpecFieldInfo info;
         info.key = key;
@@ -384,115 +492,113 @@ namespace TNG_NAMESPACE::spec {
         return info;
     }
 
-    // ── Shared YAML loading ───────────────────────────────────────────────────
-    // Preprocesses and validates once, returns the parsed SpecField map plus
-    // metadata so both loadFromYaml and loadBothFromYaml share the same logic.
+    // =============================================================================
+    // YAML laden und vorverarbeiten
+    // =============================================================================
+
     struct LoadedSpec {
         std::string              desc;
         std::string              defaultEncoding;
-        std::size_t              hdr_sz;
+        std::size_t              hdr_sz = 0;
         std::map<int, SpecField> fields;
     };
 
     static LoadedSpec loadAndParse(const std::string& path) {
-        auto processedYaml = SpecPreProcessor::preprocessFile(path);
-        validateSpecYaml(processedYaml);
+        // Preprocessor läuft und baut gleichzeitig die SourceMap auf.
+        // Die Sidecar (.smap) wird automatisch geschrieben/validiert.
+        auto [yaml, smap] = SpecPreProcessor::preprocessWithSourceMap(path);
+        validateSpecYaml(yaml, &smap);
 
         LoadedSpec result;
-        result.desc = processedYaml["spec"].as<std::string>("<unnamed>");
-        result.hdr_sz = processedYaml["header"]
-            ? processedYaml["header"].as<std::size_t>() : 0;
-        result.defaultEncoding = processedYaml["encoding"].as<std::string>("");
-        std::transform(result.defaultEncoding.begin(), result.defaultEncoding.end(),
-            result.defaultEncoding.begin(),
-            [](unsigned char c) { return std::toupper(c); });
+        result.desc = yaml["spec"].as<std::string>("<unnamed>");
+        result.hdr_sz = yaml["header"] ? yaml["header"].as<std::size_t>() : 0;
+        result.defaultEncoding = toUpper(yaml["encoding"].as<std::string>(""));
 
-        for (const auto& fieldEntry : processedYaml["fields"]) {
-            std::string de = fieldEntry.first.as<std::string>();
-            int         deNum = std::stoi(de);
+        for (const auto& entry : yaml["fields"]) {
+            const auto de = entry.first.as<std::string>();
+            const int  deNum = std::stoi(de);
             result.fields[deNum] = parseSpecField(
-                fieldEntry.second, result.defaultEncoding, de);
+                entry.second, result.defaultEncoding, de, &smap);
         }
         return result;
     }
 
-    // ── ISOSpec public methods
-
-    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-        SpecDecoder::loadFromYaml(const std::string& path) {
-        try {
-            auto loaded = loadAndParse(path);
-            auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(
-                loaded.desc, loaded.hdr_sz);
-            int hf = loaded.fields.rbegin()->first;
-            for (int i = 0; i <= hf; ++i) {
-                parser->add(loaded.fields.count(i)
-                    ? buildFieldParser(loaded.fields[i])
-                    : std::make_shared<IF_NOP>());
-            }
-            TNG_LOG_INFO("[SpecDecoder] Loaded '{}' - {} fields, header={}B",
-                loaded.desc, loaded.fields.size(), loaded.hdr_sz);
-            return parser;
+    /// Baut den ISOBaseParser aus einem LoadedSpec auf (geteilt von load* Funktionen).
+    static std::shared_ptr<::TNG_NAMESPACE::ISOBaseParser>
+        buildParser(const LoadedSpec& loaded)
+    {
+        auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(
+            loaded.desc, loaded.hdr_sz);
+        const int hf = loaded.fields.rbegin()->first;
+        for (int i = 0; i <= hf; ++i) {
+            parser->add(loaded.fields.count(i)
+                ? buildFieldParser(loaded.fields.at(i))
+                : std::make_shared<IF_NOP>());
         }
-        catch (const std::exception& e) {
-            TNG_LOG_ERROR("[SpecDecoder] loadFromYaml failed for '{}': {}", path, e.what());
-            throw;
-        }
+        return parser;
     }
+
+    // =============================================================================
+    // ISOSpec – öffentliche Methoden
+    // =============================================================================
 
     std::optional<SpecFieldInfo> ISOSpec::field(TNG_KEY_TYPE key) const {
         for (const auto& f : fields_)
-            if (f.key == key)
-                return f;
+            if (f.key == key) return f;
         return std::nullopt;
     }
 
     bool ISOSpec::has(TNG_KEY_TYPE key) const noexcept {
         for (const auto& f : fields_)
-            if (f.key == key)
-                return true;
+            if (f.key == key) return true;
         return false;
     }
 
-    // ── SpecDecoder::loadBothFromYaml ─────────────────────────────────────────
+    // =============================================================================
+    // SpecDecoder – öffentliche Methoden
+    // =============================================================================
 
-    std::pair<
-        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
-        ISOSpec::SmartPtr>
-        SpecDecoder::loadBothFromYaml(const std::string& path) {
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFromYaml(const std::string& path)
+    {
         try {
-            auto loaded = loadAndParse(path);
-
-            // Build parser (same logic as loadFromYaml)
-            auto parser = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(
-                loaded.desc, loaded.hdr_sz);
-            int hf = loaded.fields.rbegin()->first;
-            for (int i = 0; i <= hf; ++i) {
-                parser->add(loaded.fields.count(i)
-                    ? buildFieldParser(loaded.fields[i])
-                    : std::make_shared<IF_NOP>());
-            }
-
-            // Build ISOSpec
-            std::vector<SpecFieldInfo> fieldInfos;
-            fieldInfos.reserve(loaded.fields.size());
-            for (const auto& [key, f] : loaded.fields)
-                fieldInfos.push_back(makeSpecFieldInfo(
-                    static_cast<TNG_KEY_TYPE>(key), f));
-
-            auto spec = std::make_shared<ISOSpec>(
-                loaded.desc, loaded.defaultEncoding, std::move(fieldInfos));
-
-            TNG_LOG_INFO("[SpecDecoder] loadBothFromYaml '{}' - {} fields",
-                loaded.desc, loaded.fields.size());
-
-            return { parser, spec };
+            const auto loaded = loadAndParse(path);
+            auto parser = buildParser(loaded);
+            TNG_LOG_INFO("[SpecDecoder] loadFromYaml '{}' – {} Felder, header={}B",
+                loaded.desc, loaded.fields.size(), loaded.hdr_sz);
+            return parser;
         }
         catch (const std::exception& e) {
-            TNG_LOG_ERROR("[SpecDecoder] loadBothFromYaml failed for '{}': {}",
-                path, e.what());
+            TNG_LOG_ERROR("[SpecDecoder] loadFromYaml '{}' fehlgeschlagen: {}", path, e.what());
             throw;
         }
     }
 
-}
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadBothFromYaml(const std::string& path)
+    {
+        try {
+            const auto loaded = loadAndParse(path);
+            auto parser = buildParser(loaded);
+
+            std::vector<SpecFieldInfo> infos;
+            infos.reserve(loaded.fields.size());
+            for (const auto& [key, f] : loaded.fields)
+                infos.push_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(key), f));
+
+            auto spec = std::make_shared<ISOSpec>(
+                loaded.desc, loaded.defaultEncoding, std::move(infos));
+
+            TNG_LOG_INFO("[SpecDecoder] loadBothFromYaml '{}' – {} Felder",
+                loaded.desc, loaded.fields.size());
+            return { parser, spec };
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadBothFromYaml '{}' fehlgeschlagen: {}", path, e.what());
+            throw;
+        }
+    }
+
+} // namespace TNG_NAMESPACE::spec

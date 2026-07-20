@@ -53,7 +53,9 @@ set(ISO8583_SOURCES
     src/_padder.cc
     src/_parser.cc
     src/_preprocessor.cc
+    src/_sourcemap.cc
     src/_spec.cc
+    src/_tlv.cc
     src/_utils.cc
 )
 
@@ -64,7 +66,9 @@ set(ISO8583_PRIVATE_HEADERS
     src/_padder.hh
     src/_parser.hh          # ISOBaseParser, ISOFieldParser<> – bewusst NICHT öffentlich
     src/_preprocessor.hh
+    src/_sourcemap.hh
     src/_spec.hh
+    src/_tlv.hh
     src/_utils.hh
     src/fmt_types.hh        # IF_BINARY, IFE_CHAR usw. – nur intern für SpecDecoder
 )
