@@ -280,7 +280,8 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
     // processUse via ctx.root_context["definitions"][refKey] zugreifen kann.
     YAML::Node defsWrapper(YAML::NodeType::Map);
     defsWrapper["definitions"] = YAML::Node(YAML::NodeType::Map);
-    YAML::Node& globalDefs = defsWrapper["definitions"];
+    // Kein lvalue-Reference auf defsWrapper["definitions"] – GCC erlaubt das nicht.
+    // Stattdessen überall defsWrapper["definitions"] direkt verwenden.
 
     // ── Rekursive Ladefunktion ────────────────────────────────────────────────
     // Jede Datei wird SEPARAT geladen und prozessiert.
@@ -319,7 +320,7 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                         continue;
                     }
 
-                    // Rekursiv laden: Definitions landen in globalDefs,
+                    // Rekursiv laden: Definitions landen in defsWrapper["definitions"],
                     // andere Felder in root – jeweils mit korrekter current_file
                     loadAndProcess(fullStr, root);
                 }
@@ -330,7 +331,7 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                     if (docs[i]["definitions"] && docs[i]["definitions"].IsMap()) {
                         for (auto def : docs[i]["definitions"]) {
                             const std::string defName = def.first.as<std::string>();
-                            globalDefs[defName] = def.second;
+                            defsWrapper["definitions"][defName] = def.second;
                             defOrigins[defName] = absStr;
                         }
                     }
@@ -345,15 +346,15 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
             else {
                 // Keine !include_files: alle docs direkt prozessieren
                 for (auto& doc : docs) {
-                    // Definitions zuerst in globalDefs aufnehmen (mit korrekter Datei)
+                    // Definitions zuerst in defsWrapper["definitions"] aufnehmen (mit korrekter Datei)
                     if (doc["definitions"] && doc["definitions"].IsMap()) {
                         for (auto def : doc["definitions"]) {
                             const std::string defName = def.first.as<std::string>();
-                            globalDefs[defName] = def.second;
+                            defsWrapper["definitions"][defName] = def.second;
                             defOrigins[defName] = absStr;
                         }
                     }
-                    // Felder prozessieren – globalDefs als root_context für !use
+                    // Felder prozessieren – defsWrapper als root_context für !use
                     ProcessContext ctx{ defsWrapper, abs.parent_path(),
                                        visitedFiles, &smap, absStr, &defOrigins };
                     YAML::Node processed = processNode(doc, ctx);
