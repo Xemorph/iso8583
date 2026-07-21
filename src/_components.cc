@@ -97,7 +97,7 @@ template < typename IntegerType, typename T >
 void TNG_NAMESPACE::ISOComponent<IntegerType, T>::print(bool nested) const {
     if constexpr (std::is_same_v< T, dynamic_bitset<> >)
         fmt::print("{}BMP## {:.<48} [{}] =vorhandene Datenfelder\n",
-            nested ? "\u2500\u2574" : "\u251C\u2574", desc_, tng::utils::getSetBMPFieldsCSV((static_cast<dynamic_bitset<>>(d_)))); //(static_cast<dynamic_bitset<>>(d_)).to_string('0', '1'));//
+            nested ? "\u2500\u2574" : "\u251C\u2574", desc_, ::TNG_NAMESPACE::utils::getSetBMPFieldsCSV((static_cast<dynamic_bitset<>>(d_)))); //(static_cast<dynamic_bitset<>>(d_)).to_string('0', '1'));//
     else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
         fmt::print("{}DE{:03} {:.<48} [0x{:X}]\n",
             nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, fmt::join(d_, ""));
@@ -291,13 +291,13 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
         case ISOFieldParserType::EXCEPTIONAL:
         case ISOFieldParserType::REMAINING:
         case ISOFieldParserType::UNUSED: {
-            auto f = std::make_shared<ISOOpaqueField>(key);
+            auto f = std::make_shared<::TNG_NAMESPACE::OpaqueField>(key);
             f->value(std::move(data));
             f->description(fieldParser->description());
             return f;
         }
         case ISOFieldParserType::BINARY: {
-            auto f = std::make_shared<ISOBinaryField>(key);
+            auto f = std::make_shared<::TNG_NAMESPACE::BinaryField>(key);
             std::vector<uint8_t> bytes;
             bytes.reserve(data.size() / 2);
             for (std::size_t i = 0; i + 1 < data.size(); i += 2) {
@@ -504,7 +504,7 @@ void TNG_NAMESPACE::ISOMessage::recalcBitmap() {
         if (d_.count(static_cast<TNG_KEY_TYPE>(i)))
             bmap.set(static_cast<std::size_t>(i));
 
-    auto bitmap = std::make_shared<ISOBitmap>(-1);
+    auto bitmap = std::make_shared<::TNG_NAMESPACE::Bitmap>(-1);
     bitmap->value(bmap);
     set(bitmap);
 
@@ -561,7 +561,7 @@ nonstd::string_view TNG_NAMESPACE::ISOMessage::mti() {
         throw std::logic_error("MTI cannot be in inner data elements");
     if (!has(0))
         throw std::logic_error("No MTI data element found");
-    return (get<ISOOpaqueField>(0)->value());
+    return (get<::TNG_NAMESPACE::OpaqueField>(0)->value());
 }
 
 bool TNG_NAMESPACE::ISOMessage::isRequest() {

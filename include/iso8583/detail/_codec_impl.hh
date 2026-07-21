@@ -7,7 +7,7 @@
 //
 // Direkt einbinden ist nicht vorgesehen.
 
-namespace TNG_NAMESPACE {
+namespace TNG_NAMESPACE::codec {
 
     // -------------------------------------------------------------------------
     // parsed_length<encoding, digits>

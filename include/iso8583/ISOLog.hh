@@ -10,22 +10,22 @@
 ///
 /// **Option 1 – Level only (suppress noise):**
 /// @code
-///   tng::log::setLevel(tng::log::Level::DEBUG);   // see library internals
-///   tng::log::setLevel(tng::log::Level::OFF);      // silence all output
+///   iso8583::log::setLevel(iso8583::log::Level::DEBUG);   // see library internals
+///   iso8583::log::setLevel(iso8583::log::Level::OFF);      // silence all output
 /// @endcode
 ///
 /// **Option 2 – Custom logger (no Quill dependency):**
 /// @code
-///   class MyLogger : public tng::log::ISOLogger {
+///   class MyLogger : public iso8583::log::ISOLogger {
 ///   public:
-///       void log(tng::log::Level level,
+///       void log(iso8583::log::Level level,
 ///                std::string_view file, int line,
 ///                std::string_view message) override {
 ///           fmt::print("[iso8583] {}\n", message);
 ///       }
 ///   };
 ///   static MyLogger g_iso_logger;   // must outlive all library calls
-///   tng::log::setLogger(&g_iso_logger);
+///   iso8583::log::setLogger(&g_iso_logger);
 /// @endcode
 ///
 /// **Option 3 – Quill bridge (recommended for Quill users):**
@@ -47,14 +47,14 @@
 ///   quill::Backend::start();
 ///   auto* myLog = quill::Frontend::create_or_get_logger("myapp", mySink);
 ///
-///   static tng::log::QuillBridge bridge(myLog);
-///   tng::log::setLogger(&bridge);
-///   tng::log::setLevel(tng::log::Level::DEBUG);
+///   static iso8583::log::QuillBridge bridge(myLog);
+///   iso8583::log::setLogger(&bridge);
+///   iso8583::log::setLevel(iso8583::log::Level::DEBUG);
 /// @endcode
 ///
 /// **Option 4 – Silence:**
 /// @code
-///   tng::log::setLevel(tng::log::Level::OFF);
+///   iso8583::log::setLevel(iso8583::log::Level::OFF);
 /// @endcode
 ///
 /// @note The caller is responsible for the lifetime of any injected logger.
@@ -72,13 +72,13 @@ namespace TNG_NAMESPACE::log {
     /// Only messages at or above the level set via @ref setLevel are forwarded
     /// to the active @ref ISOLogger.  The numeric values mirror Quill's ordering.
     enum class TNG_EXPORT Level {
-        TRACE    = 0, ///< Very verbose internal tracing (parsing loops, byte offsets).
-        DEBUG    = 1, ///< Useful for integration debugging (field values, parser decisions).
-        INFO     = 2, ///< Normal operational events (spec loaded, connection established).
-        WARN     = 3, ///< Recoverable anomalies (unknown format/encoding combination). **Default.**
-        ERR      = 4, ///< Errors that affect correctness (parse failure, null component).
+        TRACE = 0, ///< Very verbose internal tracing (parsing loops, byte offsets).
+        DEBUG = 1, ///< Useful for integration debugging (field values, parser decisions).
+        INFO = 2, ///< Normal operational events (spec loaded, connection established).
+        WARN = 3, ///< Recoverable anomalies (unknown format/encoding combination). **Default.**
+        ERR = 4, ///< Errors that affect correctness (parse failure, null component).
         CRITICAL = 5, ///< Unrecoverable errors.
-        OFF      = 6, ///< Disables all output.
+        OFF = 6, ///< Disables all output.
     };
 
     // ── Logger interface ─────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ namespace TNG_NAMESPACE::log {
     ///
     /// Cast your `quill::Logger*` to `void*` at the call site:
     /// @code
-    ///   tng::log::setQuillLogger(static_cast<void*>(myQuillLogger));
+    ///   iso8583::log::setQuillLogger(static_cast<void*>(myQuillLogger));
     /// @endcode
     ///
     /// @warning Due to Quill's DLL-boundary singleton problem this function
@@ -180,9 +180,9 @@ namespace TNG_NAMESPACE::log {
     ///   #include <quill/LogMacros.h>
     ///   #include <iso8583/ISOLog.hh>
     ///
-    ///   static tng::log::QuillBridge bridge(myQuillLogger);
-    ///   tng::log::setLogger(&bridge);
-    ///   tng::log::setLevel(tng::log::Level::DEBUG);
+    ///   static iso8583::log::QuillBridge bridge(myQuillLogger);
+    ///   iso8583::log::setLogger(&bridge);
+    ///   iso8583::log::setLevel(iso8583::log::Level::DEBUG);
     /// @endcode
     class QuillBridge final : public ISOLogger {
         quill::Logger* logger_;

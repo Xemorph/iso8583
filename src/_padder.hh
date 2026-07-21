@@ -5,7 +5,7 @@
 // [tng]
 #include <iso8583/config.h>
 
-namespace TNG_NAMESPACE {
+namespace TNG_NAMESPACE::codec {
 
 /// Enum defining various padding methods.
 /// These padding methods can be used to fill or truncate strings.

@@ -118,7 +118,7 @@ namespace TNG_NAMESPACE {
     /// @brief Abstract base class for message-level parsers.
     ///
     /// A parser knows the full layout of a message type (MTI, bitmap, all DEs).
-    /// Obtain a concrete instance via @ref tng::spec::SpecDecoder::loadFromYaml.
+    /// Obtain a concrete instance via @ref iso8583::spec::SpecDecoder::loadFromYaml.
     ///
     /// @see ISOMessage::parser(ISOParserPtrBaseSmartPtr)
     /// @see ISOMessage::unparse
@@ -163,8 +163,8 @@ namespace TNG_NAMESPACE {
         ///                    original network buffer.
         /// @return Number of bytes consumed from `b`.
         virtual std::size_t unparse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c,
-                                    const std::vector<uint8_t>& b,
-                                    std::size_t base_offset) {
+            const std::vector<uint8_t>& b,
+            std::size_t base_offset) {
             return unparse(c, b);  // Default: Offset wird ignoriert
         }
 
@@ -226,7 +226,7 @@ namespace TNG_NAMESPACE {
 
     /// @brief Abstract base class for message headers prepended to the ISO 8583 payload.
     ///
-    /// Concrete implementations: @ref tng::BaseHeader, @ref tng::BASE1Header.
+    /// Concrete implementations: @ref iso8583::BaseHeader, @ref iso8583::BASE1Header.
     class TNG_EXPORT ISOHeader {
     public:
         /// @brief Shared-pointer alias.

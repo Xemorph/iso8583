@@ -13,10 +13,10 @@
 
 /// @brief The C++ namespace used by libiso8583.
 ///
-/// All public types live in this namespace (`tng::ISOMessage`, `tng::log::Level`, …).
+/// All public types live in this namespace (`iso8583::ISOMessage`, `iso8583::log::Level`, …).
 /// The macro allows downstream consumers to rename the namespace if required,
 /// though the default `tng` is strongly recommended.
-#define TNG_NAMESPACE tng
+#define TNG_NAMESPACE iso8583
 
 /// @brief Library version string in `MAJOR.MINOR.PATCH-STAGE` format.
 #define TNG_CORE_VERSION   "0.1.1-alpha"

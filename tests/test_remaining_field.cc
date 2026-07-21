@@ -47,7 +47,7 @@ TEST_CASE("IFE_REMAINING - liest alle verbleibenden Bytes", "[remaining][direct]
                    0xC1, 0xC2, 0xC3 });        // 3 Bytes verbleibend
 
     IFE_REMAINING parser(10, "Trailing Field");
-    auto component = std::make_shared<ISOOpaqueField>(14);
+    auto component = std::make_shared< OpaqueField >(14);
 
     std::size_t consumed = parser.unparse(component, buf, 4);  // Offset = 4
 
@@ -134,12 +134,12 @@ TEST_CASE("BMP_061 - ohne Postal Code (16 Bytes Payload)", "[remaining][bmp061]"
     });
 
     auto sub = make_bmp061_parser();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     sub->unparse(msg, buf);
 
     // SF14 (Postal Code) sollte leer sein - kein Crash
     // (key = 14, 0-basiert in der Subparser-Liste)
-    auto sf14 = msg->get<ISOOpaqueField>(14);
+    auto sf14 = msg->get< OpaqueField >(14);
     CHECK(sf14 == nullptr);
 }
 
@@ -161,16 +161,16 @@ TEST_CASE("BMP_061 - mit vollem Postal Code (26 Bytes Payload)", "[remaining][bm
     });
 
     auto sub = make_bmp061_parser();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     sub->unparse(msg, buf);
 
     // SF13 Country Code
-    auto sf13 = msg->get<ISOOpaqueField>(13);
+    auto sf13 = msg->get< OpaqueField >(13);
     REQUIRE(sf13 != nullptr);
     CHECK(sf13->value() == "492");
 
     // SF14 Postal Code: 10 Bytes remaining
-    auto sf14 = msg->get<ISOOpaqueField>(14);
+    auto sf14 = msg->get< OpaqueField >(14);
     REQUIRE(sf14 != nullptr);
     //CHECK(sf14->wire_length() == 10);
     CHECK(sf14->value() == "6900      ");
@@ -188,10 +188,10 @@ TEST_CASE("BMP_061 - mit kurzem Postal Code (19 Bytes Payload)", "[remaining][bm
     });
 
     auto sub = make_bmp061_parser();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     sub->unparse(msg, buf);
 
-    auto sf14 = msg->get<ISOOpaqueField>(14);
+    auto sf14 = msg->get< OpaqueField >(14);
     REQUIRE(sf14 != nullptr);
     //CHECK(sf14->wire_length() == 3);
     CHECK(sf14->value() == "690");

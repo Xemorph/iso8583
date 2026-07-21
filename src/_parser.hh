@@ -129,16 +129,16 @@ namespace TNG_NAMESPACE {
         }
     };
 
-    template < typename T, Length l_, PrefixEncoder pe_, Encoder e_, Padder p_ >
+    template < typename T, codec::Length l_, codec::PrefixEncoder pe_, codec::Encoder e_, codec::Padder p_ >
     class TNG_EXPORT ISOFieldParser
         : public ISOFieldParserPtrBase
     {
 
-        static_assert(l_ == Length::FIX ? (pe_ != PrefixEncoder::NONE ? false : true) : true, "Length::FIX must be used with PrefixEncoder::NONE");
-        static_assert(l_ == Length::UNKNOWN ? (pe_ != PrefixEncoder::NONE ? false : true) : true, "Length::UNKNOWN must be used with PrefixEncoder::NONE");
+        static_assert(l_ == codec::Length::FIX ? (pe_ != codec::PrefixEncoder::NONE ? false : true) : true, "Length::FIX must be used with PrefixEncoder::NONE");
+        static_assert(l_ == codec::Length::UNKNOWN ? (pe_ != codec::PrefixEncoder::NONE ? false : true) : true, "Length::UNKNOWN must be used with PrefixEncoder::NONE");
         // Consumer
-        static_assert(l_ == Length::CONSUME ? (pe_ != PrefixEncoder::NONE ? false : true) : true, "Length::CONSUMER must be used with PrefixEncoder::NONE");
-        static_assert(l_ == Length::CONSUME ? (e_ != Encoder::BINARY ? false : true) : true, "Length::CONSUMER must be used with Encoder::BINARY");
+        static_assert(l_ == codec::Length::CONSUME ? (pe_ != codec::PrefixEncoder::NONE ? false : true) : true, "Length::CONSUMER must be used with PrefixEncoder::NONE");
+        static_assert(l_ == codec::Length::CONSUME ? (e_ != codec::Encoder::BINARY ? false : true) : true, "Length::CONSUMER must be used with Encoder::BINARY");
 
         // Maximum allowed DE length
         std::size_t de_l_;
@@ -150,7 +150,7 @@ namespace TNG_NAMESPACE {
         // Sub Element parser
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr c_ = nullptr;
         // Data container
-        std::shared_ptr< ISOBinaryField > b_ = nullptr;
+        std::shared_ptr< ::TNG_NAMESPACE::BinaryField > b_ = nullptr;
         
     public:
         // [Destrutcor]
@@ -209,9 +209,9 @@ namespace TNG_NAMESPACE {
                 return ::TNG_NAMESPACE::ISOFieldParserType::UNUSED;
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >)
                 return ::TNG_NAMESPACE::ISOFieldParserType::EXCEPTIONAL;
-            else if constexpr (l_ == Length::UNKNOWN) // Special case, but required
+            else if constexpr (l_ == codec::Length::UNKNOWN) // Special case, but required
                 return ::TNG_NAMESPACE::ISOFieldParserType::REMAINING;
-            else if constexpr (l_ == Length::CONSUME) // Special case, but required
+            else if constexpr (l_ == codec::Length::CONSUME) // Special case, but required
                 return ::TNG_NAMESPACE::ISOFieldParserType::REMAINING;
             else if constexpr (std::is_same_v< T, std::string >)
                 return ::TNG_NAMESPACE::ISOFieldParserType::OPAQUE;
@@ -239,7 +239,7 @@ namespace TNG_NAMESPACE {
 
                 // Temporäres ISOBinaryField für n_ erstellen und mit den inneren
                 // Bytes befüllen – n_->parse() fügt den korrekten Prefix hinzu.
-                auto wrapper = std::make_shared<ISOBinaryField>(c->key());
+                auto wrapper = std::make_shared< ::TNG_NAMESPACE::BinaryField >(c->key());
                 wrapper->value(inner_bytes);
                 return n_->parse(wrapper);
             }
@@ -256,24 +256,24 @@ namespace TNG_NAMESPACE {
                 std::string data = nonstd::to_string((nonstd::string_view)std::dynamic_pointer_cast< ISOOpaqueField >(c)->value());
                 if (data.size() > de_l_)
                     return std::vector<uint8_t>{};
-                pad<p_>(data, de_l_); // Padding data
-                std::vector<uint8_t> b_img(parsed_length<pe_, l_>() + required_sz_for_as<e_>(data.size()), 0);
-                encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                to<e_>(data, b_img, parsed_length<pe_, l_>());
+                codec::pad<p_>(data, de_l_); // Padding data
+                std::vector<uint8_t> b_img(codec::parsed_length<pe_, l_>() + codec::required_sz_for_as<e_>(data.size()), 0);
+                codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
+                codec::to<e_>(data, b_img, codec::parsed_length<pe_, l_>());
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
-                std::vector<uint8_t> data = std::dynamic_pointer_cast< ISOBinaryField >(c)->value();
-                std::size_t pl = parsed_length<pe_, l_>();
+                std::vector<uint8_t> data = std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value();
+                std::size_t pl = codec::parsed_length<pe_, l_>();
                 if (pl == 0 && data.size() != de_l_)
                     return std::vector<uint8_t>{};
-                std::vector<uint8_t> b_img(pl + required_sz_for_as<e_>(data.size()), 0);
-                encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                to<e_>(data, b_img, pl);
+                std::vector<uint8_t> b_img(pl + codec::required_sz_for_as<e_>(data.size()), 0);
+                codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
+                codec::to<e_>(data, b_img, pl);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, dynamic_bitset<> >) {
-                dynamic_bitset<> b = std::dynamic_pointer_cast< ISOBitmap >(c)->value();
+                dynamic_bitset<> b = std::dynamic_pointer_cast< ::TNG_NAMESPACE::Bitmap >(c)->value();
                 std::size_t bytes = de_l_ >= 8 ? ((b.size() + 62) >> 6) << 3 : de_l_;
                 std::size_t bits = bytes * 8;
 
@@ -341,17 +341,17 @@ namespace TNG_NAMESPACE {
                 }
                 
                 std::size_t l = 0u;
-                if constexpr (l_ == Length::UNKNOWN || l_ == Length::CONSUME)
+                if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME)
                     l /* remaining */ = b.size() - o;
                 else
-                    l = decode_length<pe_, l_>(b, o); // Something like this?
+                    l = codec::decode_length<pe_, l_>(b, o); // Something like this?
 
                 // Checks for length are different between types
-                if constexpr (l_ != Length::CONSUME)
+                if constexpr (l_ != codec::Length::CONSUME)
                     if (l == 0 || l > de_l_)
                         l = de_l_;
 
-                std::size_t ll = parsed_length<pe_, l_>();
+                std::size_t ll = codec::parsed_length<pe_, l_>();
 
                 // Truncation:
                 // -----------
@@ -365,10 +365,10 @@ namespace TNG_NAMESPACE {
                 //    (6 Bytes = 12 BCD-Ziffern, aber 6 < 12 würde fälschlicherweise truncaten).
                 if (o + ll <= b.size()) { // 4+0 <= 7
                     const std::size_t available_bytes = b.size() - (o + ll);
-                    const std::size_t needed_bytes = required_sz_for_as<e_>(l);
+                    const std::size_t needed_bytes = codec::required_sz_for_as<e_>(l);
                     if (available_bytes < needed_bytes) {
                         // Wie viele vollständige logische Einheiten passen in available_bytes?
-                        if constexpr (TNG_NAMESPACE::Encoder::BCD == e_)
+                        if constexpr (TNG_NAMESPACE::codec::Encoder::BCD == e_)
                             l = available_bytes * 2;  // 1 Byte = 2 BCD-Ziffern
                         else
                             l = available_bytes;
@@ -379,13 +379,13 @@ namespace TNG_NAMESPACE {
                 }
 
                 // Skip allocation of temporary function stack variable
-                if constexpr (l_ != Length::CONSUME)
+                if constexpr (l_ != codec::Length::CONSUME)
                     if constexpr (std::is_same_v< T, std::string >)
-                        (void)std::dynamic_pointer_cast<ISOOpaqueField>(c)->value(as< T, e_ >(b, o + ll, l));
+                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l));
                     else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
-                        (void)std::dynamic_pointer_cast<ISOBinaryField>(c)->value(as< T, e_ >(b, o + ll, l));
+                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l));
 
-                const std::size_t total = ll + required_sz_for_as<e_>(l); // l= 3 ---> 3
+                const std::size_t total = ll + codec::required_sz_for_as<e_>(l); // l= 3 ---> 3
                 // wire_length: hier gesetzt, da erst jetzt die tatsächliche Byte-Länge bekannt ist.
                 // wire_offset: wird vom aufrufenden ISOBaseParser mit dem absoluten Offset gesetzt,
                 //              da ISOFieldParser nur den lokalen Offset o im aktuellen Sub-Buffer kennt.
@@ -411,7 +411,7 @@ namespace TNG_NAMESPACE {
                     if (de_l_ > 16 && bmp[1] && bmp[65])
                         len = 192;
 
-                    (void)std::dynamic_pointer_cast< ISOBitmap >(c)->value(bmp);
+                    (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::Bitmap >(c)->value(bmp);
                     return std::min(de_l_, len >> 3);
                 }
             }
@@ -419,7 +419,7 @@ namespace TNG_NAMESPACE {
 
         virtual ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr create_component(TNG_KEY_TYPE key) const override {
             if constexpr (std::is_same_v< T, std::nullptr_t >)
-                return std::make_shared<ISOOpaqueField>(key);
+                return std::make_shared< ISOOpaqueField >(key);
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >) {
                 throw std::runtime_error(
                     (std::ostringstream()
@@ -430,30 +430,30 @@ namespace TNG_NAMESPACE {
                 );
             }
             else if constexpr (std::is_same_v< T, std::string >)
-                return std::make_shared<ISOOpaqueField>(key);
+                return std::make_shared< ::TNG_NAMESPACE::OpaqueField >(key);
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
-                return std::make_shared<ISOBinaryField>(key);
+                return std::make_shared< ::TNG_NAMESPACE::BinaryField >(key);
             else if constexpr (std::is_same_v< T, int32_t >)
-                return std::make_shared<ISOCodeField>(key);
+                return std::make_shared< ::TNG_NAMESPACE::CodeField >(key);
             else if constexpr (std::is_same_v< T, dynamic_bitset<> >)
-                return std::make_shared<ISOBitmap>(key);
+                return std::make_shared< ::TNG_NAMESPACE::Bitmap >(key);
             else if constexpr (std::is_base_of_v<ISOBaseParser, T>)
-                return std::make_shared<ISOMessage>(key);
+                return std::make_shared< ::TNG_NAMESPACE::ISOMessage >(key);
             else
                 static_assert(::TNG_NAMESPACE::dependent_false<T>::value, "don't know how to create component");
         }
     };
 
-    template < Length l, PrefixEncoder pe, Encoder e, Padder p = Padder::NONE >
+    template < codec::Length l, codec::PrefixEncoder pe, codec::Encoder e, codec::Padder p = codec::Padder::NONE >
     using ISOBinaryFieldParser = ISOFieldParser< std::vector<uint8_t>, l, pe, e, p >;
-    template < Length l, PrefixEncoder pe, Encoder e, Padder p = Padder::NONE >
+    template < codec::Length l, codec::PrefixEncoder pe, codec::Encoder e, codec::Padder p = codec::Padder::NONE >
     using ISOOpaqueFieldParser = ISOFieldParser< std::string, l, pe, e, p >;
-    template < Length l, PrefixEncoder pe, Encoder e, Padder p = Padder::NONE >
+    template < codec::Length l, codec::PrefixEncoder pe, codec::Encoder e, codec::Padder p = codec::Padder::NONE >
     using ISOCodeFieldParser = ISOFieldParser< int32_t, l, pe, e, p >;
 
-    using ISOBitmapFieldParser = ISOFieldParser< dynamic_bitset<>, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+    using ISOBitmapFieldParser = ISOFieldParser< dynamic_bitset<>, codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::BINARY, codec::Padder::NONE >;
     template < typename ISOField >
-    using ISONestedFieldParser = ISOFieldParser< ISOField, Length::FIX, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+    using ISONestedFieldParser = ISOFieldParser< ISOField, codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::BINARY, codec::Padder::NONE >;
 
     // ── ISORemainderFieldParser ───────────────────────────────────────────────
     // Template-Alias für trailing variable-length Felder ohne eigenen Prefix.
@@ -466,9 +466,9 @@ namespace TNG_NAMESPACE {
     //
     // Maximale Länge (de_l_) wird aus der Spec übernommen und als Obergrenze
     // angewendet – laut Mastercard-Spec ist BMP_061 Subfeld 15 max. 10 Bytes.
-    template < typename T, Encoder e, Padder p = Padder::NONE >
-    using ISORemainderFieldParser = ISOFieldParser< T, Length::UNKNOWN, PrefixEncoder::NONE, e, p>;
-    using ISOConsumer = ISOFieldParser< std::vector<uint8_t>, Length::CONSUME, PrefixEncoder::NONE, Encoder::BINARY, Padder::NONE >;
+    template < typename T, codec::Encoder e, codec::Padder p = codec::Padder::NONE >
+    using ISORemainderFieldParser = ISOFieldParser< T, codec::Length::UNKNOWN, codec::PrefixEncoder::NONE, e, p>;
+    using ISOConsumer = ISOFieldParser< std::vector<uint8_t>, codec::Length::CONSUME, codec::PrefixEncoder::NONE, codec::Encoder::BINARY, codec::Padder::NONE >;
 
 
 }

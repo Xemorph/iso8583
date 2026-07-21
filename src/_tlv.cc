@@ -26,7 +26,7 @@ namespace TNG_NAMESPACE::tlv_detail {
     }
 
     void log_error_se_overflow(std::size_t se_num, std::size_t se_len,
-                               std::size_t pos,    std::size_t buf_sz)
+        std::size_t pos, std::size_t buf_sz)
     {
         TNG_LOG_ERROR("[ISOTLVParser] SE{} Länge {} überschreitet Payload "
                       "(pos={} buf={})", se_num, se_len, pos, buf_sz);
@@ -55,15 +55,12 @@ namespace TNG_NAMESPACE::tlv_detail {
     }
 
     void store_se(
-        const std::shared_ptr<ISOMessage>& msg,
-        std::size_t  se_num,
-        const std::vector<uint8_t>& buf,
-        std::size_t  data_offset,
-        std::size_t  data_len,
-        std::size_t  wire_offset,
-        std::size_t  wire_len)
+        const std::shared_ptr< ::TNG_NAMESPACE::Message >& msg,
+        std::size_t se_num, const std::vector<uint8_t>& buf,
+        std::size_t data_offset, std::size_t data_len,
+        std::size_t wire_offset, std::size_t wire_len)
     {
-        auto se = std::make_shared<ISOBinaryField>(
+        auto se = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
             static_cast<TNG_KEY_TYPE>(se_num));
         se->value(std::vector<uint8_t>(
             buf.begin() + static_cast<std::ptrdiff_t>(data_offset),

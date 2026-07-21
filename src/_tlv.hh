@@ -18,12 +18,12 @@ namespace TNG_NAMESPACE {
 
         // ── Compile-Zeit: read/write numerischer Felder ───────────────────────
 
-        template <Encoder ENC, std::size_t N>
+        template <codec::Encoder e_, std::size_t N>
         static constexpr std::size_t read_num(
             const std::vector<uint8_t>& buf, std::size_t offset)
         {
             static_assert(N >= 1 && N <= 4, "N must be 1..4");
-            if constexpr (ENC == Encoder::BCD) {
+            if constexpr (e_ == codec::Encoder::BCD) {
                 std::size_t val = 0;
                 for (std::size_t i = 0; i < N; ++i) {
                     const uint8_t b = buf[offset + i];
@@ -34,7 +34,7 @@ namespace TNG_NAMESPACE {
                 return val;
             }
             else {
-                const auto s = ::tng::as<std::string, ENC>(buf, offset, N);
+                const auto s = ::TNG_NAMESPACE::codec::as<std::string, e_>(buf, offset, N);
                 std::size_t val = 0;
                 for (char c : s) {
                     if (c < '0' || c > '9') return 0;
@@ -44,12 +44,12 @@ namespace TNG_NAMESPACE {
             }
         }
 
-        template <Encoder ENC, std::size_t N>
+        template <codec::Encoder e_, std::size_t N>
         static constexpr void write_num(
             std::vector<uint8_t>& buf, std::size_t offset, std::size_t value)
         {
             static_assert(N >= 1 && N <= 4, "N must be 1..4");
-            if constexpr (ENC == Encoder::BCD) {
+            if constexpr (e_ == codec::Encoder::BCD) {
                 std::size_t v = value;
                 for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(N) - 1;
                     i >= 0; --i)
@@ -70,7 +70,7 @@ namespace TNG_NAMESPACE {
                         static_cast<char>('0' + (v % 10));
                     v /= 10;
                 }
-                ::tng::to<ENC>(s, buf, offset);
+                ::TNG_NAMESPACE::codec::to<e_>(s, buf, offset);
             }
         }
 
@@ -88,8 +88,7 @@ namespace TNG_NAMESPACE {
         TNG_EXPORT void log_debug_se_read(std::size_t se_num, std::size_t se_len);
         TNG_EXPORT void log_debug_se_write(std::size_t se_num, std::size_t data_sz);
 
-        TNG_EXPORT std::vector<TNG_KEY_TYPE>
-            sorted_se_keys(const ISO_MAP& fields);
+        TNG_EXPORT std::vector<TNG_KEY_TYPE> sorted_se_keys(const ISO_MAP& fields);
 
         TNG_EXPORT void store_se(
             const std::shared_ptr<ISOMessage>& msg,
@@ -108,8 +107,8 @@ namespace TNG_NAMESPACE {
         std::size_t TAG_BYTES,
         std::size_t LEN_BYTES,
         bool HAS_TCC,
-        Encoder TAG_ENC,
-        Encoder LEN_ENC
+        codec::Encoder TAG_ENC,
+        codec::Encoder LEN_ENC
     >
     class TNG_EXPORT ISOTLVParser : public ISOBaseParser {
         static_assert(TAG_BYTES >= 1 && TAG_BYTES <= 4, "TAG_BYTES must be 1..4");
@@ -117,7 +116,7 @@ namespace TNG_NAMESPACE {
 
     public:
         static constexpr TNG_KEY_TYPE TCC_KEY = -2;
-        using DataEncodingMap = std::unordered_map<std::size_t, Encoder>;
+        using DataEncodingMap = std::unordered_map<std::size_t, codec::Encoder>;
 
         explicit ISOTLVParser(DataEncodingMap data_enc_map = {})
             : ISOBaseParser("<tlv>", 0)
@@ -139,17 +138,17 @@ namespace TNG_NAMESPACE {
         std::size_t unparse(
             ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c,
             const std::vector<uint8_t>& b,
-            std::size_t                 base_offset) override
+            std::size_t base_offset) override
         {
-            auto msg = std::dynamic_pointer_cast<ISOMessage>(c);
+            auto msg = std::dynamic_pointer_cast< ::TNG_NAMESPACE::ISOMessage >(c);
             if (!msg) { tlv_detail::log_error_not_composite(); return 0; }
 
             std::size_t pos = 0;
 
             if constexpr (HAS_TCC) {
                 if (b.empty()) { tlv_detail::log_warn_tcc_missing(); return 0; }
-                const auto tcc_str = ::tng::as<std::string, TAG_ENC>(b, pos, 1);
-                auto tcc = std::make_shared<ISOOpaqueField>(TCC_KEY);
+                const auto tcc_str = ::TNG_NAMESPACE::codec::as<std::string, TAG_ENC>(b, pos, 1);
+                auto tcc = std::make_shared< ::TNG_NAMESPACE::OpaqueField> (TCC_KEY);
                 tcc->value(tcc_str);
                 tcc->description("TCC");
                 tcc->wire_offset(base_offset + pos);
@@ -184,7 +183,7 @@ namespace TNG_NAMESPACE {
         }
 
         std::vector<uint8_t> parse(ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) const override {
-            auto msg = std::dynamic_pointer_cast<ISOMessage>(c);
+            auto msg = std::dynamic_pointer_cast< ::TNG_NAMESPACE::ISOMessage >(c);
             if (!msg) { 
                 tlv_detail::log_error_not_composite(); return {}; 
             }
@@ -192,16 +191,16 @@ namespace TNG_NAMESPACE {
             std::vector<uint8_t> out;
 
             if constexpr (HAS_TCC) {
-                auto tcc_comp = msg->get<ISOOpaqueField>(TCC_KEY);
+                auto tcc_comp = msg->get< ::TNG_NAMESPACE::OpaqueField >(TCC_KEY);
                 if (!tcc_comp) {
                     tlv_detail::log_warn_tcc_not_set();
-                    if constexpr (TAG_ENC == Encoder::ASCII)      out.push_back(0x20u);
-                    else if constexpr (TAG_ENC == Encoder::BCD)   out.push_back(0x00u);
+                    if constexpr (TAG_ENC == codec::Encoder::ASCII)      out.push_back(0x20u);
+                    else if constexpr (TAG_ENC == codec::Encoder::BCD)   out.push_back(0x00u);
                     else                                           out.push_back(0x40u);
                 }
                 else {
                     std::vector<uint8_t> tcc_buf(1, 0x00);
-                    ::tng::to<TAG_ENC>(tcc_comp->value(), tcc_buf, 0);
+                    ::TNG_NAMESPACE::codec::to<TAG_ENC>(tcc_comp->value(), tcc_buf, 0);
                     out.insert(out.end(), tcc_buf.begin(), tcc_buf.end());
                 }
             }
@@ -209,7 +208,7 @@ namespace TNG_NAMESPACE {
             const auto se_keys = tlv_detail::sorted_se_keys(msg->value());
 
             for (const TNG_KEY_TYPE se_key : se_keys) {
-                auto se = msg->get<ISOBinaryField>(se_key);
+                auto se = msg->get< ::TNG_NAMESPACE::BinaryField >(se_key);
                 if (!se) continue;
 
                 const auto& data = se->value();
@@ -230,7 +229,7 @@ namespace TNG_NAMESPACE {
             return out;
         }
 
-        std::optional<Encoder> data_encoding_for(std::size_t se_num) const {
+        std::optional<codec::Encoder> data_encoding_for(std::size_t se_num) const {
             auto it = data_enc_map_.find(se_num);
             if (it != data_enc_map_.end()) return it->second;
             return std::nullopt;
@@ -242,7 +241,7 @@ namespace TNG_NAMESPACE {
 
     // ── Vordefinierte Aliases ─────────────────────────────────────────────────
 
-    using ISOTLVParser_MC = ISOTLVParser<2, 2, true, Encoder::EBCDIC, Encoder::EBCDIC>;
-    using ISOTLVParser_VI = ISOTLVParser<2, 1, false, Encoder::BCD, Encoder::BCD>;
+    using ISOTLVParser_MC = ISOTLVParser<2, 2, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>;
+    using ISOTLVParser_VI = ISOTLVParser<2, 1, false, codec::Encoder::BCD, codec::Encoder::BCD>;
 
 } // namespace TNG_NAMESPACE

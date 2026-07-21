@@ -42,8 +42,7 @@ namespace TNG_NAMESPACE::spec {
 
     private:
         static std::string format(const std::string& msg,
-            const YAML::Mark& mark,
-            const SourceMap* smap)
+            const YAML::Mark& mark, const SourceMap* smap)
         {
             const int line = mark.line + 1;
             const int col = mark.column + 1;
@@ -62,9 +61,9 @@ namespace TNG_NAMESPACE::spec {
     enum class SpecFieldType { UNKNOWN, SCALAR, NESTED };
 
     struct TLVOptions {
-        int         tag_bytes = 2;
-        int         len_bytes = 2;
-        bool        tcc = false;
+        int tag_bytes = 2;
+        int len_bytes = 2;
+        bool tcc = false;
         std::string encoding; // leer = erbt von Elternfeld / globalem Encoding
     };
 
@@ -393,30 +392,30 @@ namespace TNG_NAMESPACE::spec {
     }
 
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, Encoder enc)
+        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc)
     {
         using namespace ::TNG_NAMESPACE;
         // tag_bytes == 2, len_bytes == 2
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, true, Encoder::BCD, Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, false, Encoder::BCD, Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, true, Encoder::ASCII, Encoder::ASCII>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, false, Encoder::ASCII, Encoder::ASCII>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::ASCII, codec::Encoder::ASCII>>();
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::ASCII, codec::Encoder::ASCII>>();
         // tag_bytes == 2, len_bytes == 1
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, true, Encoder::BCD, Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, false, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
         // tag_bytes == 1, len_bytes == 1
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, true, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, true, Encoder::BCD, Encoder::BCD>>();
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, false, Encoder::BCD, Encoder::BCD>>();
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
         // Fallback
         TNG_LOG_WARN("[SpecDecoder] TLV tag_bytes={} len_bytes={} nicht unterstützt – "
             "Mastercard-Default (2,2,false,EBCDIC)", tag_bytes, len_bytes);
-        return std::make_shared<ISOTLVParser<2, 2, false, Encoder::EBCDIC, Encoder::EBCDIC>>();
+        return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
@@ -435,9 +434,9 @@ namespace TNG_NAMESPACE::spec {
             if (f.tlv) {
                 const auto& opts = *f.tlv;
                 const auto enc = [&] {
-                    if (opts.encoding == "BCD")   return Encoder::BCD;
-                    if (opts.encoding == "ASCII")  return Encoder::ASCII;
-                    return Encoder::EBCDIC;
+                    if (opts.encoding == "BCD")   return codec::Encoder::BCD;
+                    if (opts.encoding == "ASCII")  return codec::Encoder::ASCII;
+                    return codec::Encoder::EBCDIC;
                     }();
                 nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc));
             }

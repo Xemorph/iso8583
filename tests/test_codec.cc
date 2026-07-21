@@ -3,7 +3,7 @@
 // [tng]
 #include <iso8583/_codec.hh>
 
-using namespace TNG_NAMESPACE;
+using namespace TNG_NAMESPACE::codec;
 
 static std::vector<uint8_t> B(std::initializer_list<uint8_t> il) {
     return std::vector<uint8_t>(il);

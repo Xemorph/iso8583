@@ -69,7 +69,7 @@ namespace TNG_NAMESPACE {
 
     public:
         ~ISOComponent() = default;
-        
+
         /// @brief Constructs a component with the given DE number and a default-initialised value.
         explicit ISOComponent(const IntegerType& key);
 
@@ -149,21 +149,6 @@ typedef TNG_NAMESPACE::detail::flat_map<
     std::shared_ptr<::TNG_NAMESPACE::ISOComponentPtrBase>
 > ISO_MAP;
 
-/// @brief Alphanumeric / text data element (EBCDIC, ASCII, BCD decoded to string).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::string> ISOOpaqueField;
-
-/// @brief Raw binary data element (e.g. PIN block, ICC/EMV data, cryptograms).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<uint8_t>> ISOBinaryField;
-
-/// @brief Fast binary data element using `std::byte` storage.
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<std::byte>> ISOFastBinaryField;
-
-/// @brief Bitmap data element (primary + optional secondary bitmap).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, dynamic_bitset<>> ISOBitmap;
-
-/// @brief Integer code data element (e.g. response codes stored as int32_t).
-typedef TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, int32_t> ISOCodeField;
-
 // Without this, GCC/Clang with -fvisibility=hidden emits local hidden-
 // visibility copies in each TU, causing undefined-reference link errors
 // when the tests try to resolve symbols from the shared library.
@@ -184,10 +169,10 @@ namespace TNG_NAMESPACE {
     /// **Receiving a message (unparse = wire bytes → fields):**
     /// @code
     ///   // 1. Load the spec once (expensive – cache the result)
-    ///   auto parser = tng::spec::SpecDecoder::loadFromYaml("mastercard.yml");
+    ///   auto parser = iso8583::spec::SpecDecoder::loadFromYaml("mastercard.yml");
     ///
     ///   // 2. Create a message and attach the parser
-    ///   auto msg = std::make_shared<tng::ISOMessage>();
+    ///   auto msg = std::make_shared<iso8583::ISOMessage>();
     ///   msg->parser(parser);
     ///
     ///   // 3. Decode the wire bytes
@@ -198,12 +183,12 @@ namespace TNG_NAMESPACE {
     ///   if (auto pan = msg->tryGet<ISOOpaqueField>(2))
     ///       std::cout << "PAN: " << (*pan)->value() << "\n";
     ///
-    ///   auto amount = tng::ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 4, "000000000000");
+    ///   auto amount = iso8583::ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 4, "000000000000");
     /// @endcode
     ///
     /// **Building a message (parse = fields → wire bytes):**
     /// @code
-    ///   auto msg = std::make_shared<tng::ISOMessage>("0200");
+    ///   auto msg = std::make_shared<iso8583::ISOMessage>("0200");
     ///   msg->parser(parser);
     ///   msg->set(2, "4111111111111111");        // PAN
     ///   msg->set(3, "000000");                  // Processing code
@@ -468,7 +453,7 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns the number of fields currently stored.
         const std::size_t size() const noexcept;
-    
+
         // ── Parser attachment ────────────────────────────────────────────────
 
         /// @brief Attaches a parser to this message.
@@ -476,7 +461,7 @@ namespace TNG_NAMESPACE {
         /// The parser is used by @ref unparse to decode wire bytes and by the
         /// type-aware @ref set overloads to select the correct field type.
         ///
-        /// @param p Parser obtained from @ref tng::spec::SpecDecoder::loadFromYaml.
+        /// @param p Parser obtained from @ref iso8583::spec::SpecDecoder::loadFromYaml.
         void parser(const ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr& p);
 
         /// @brief Returns the currently attached parser, or `nullptr`.
@@ -737,7 +722,7 @@ namespace TNG_NAMESPACE {
         /// Use when the field **must** be present according to the spec.
         ///
         /// @code
-        ///   std::string pan = tng::ISOUtils::getOrThrow<ISOOpaqueField>(msg, 2);
+        ///   std::string pan = iso8583::ISOUtils::getOrThrow<ISOOpaqueField>(msg, 2);
         /// @endcode
         ///
         /// @tparam T   Concrete field type.
@@ -761,7 +746,7 @@ namespace TNG_NAMESPACE {
         /// Use for optional fields where a sensible default exists.
         ///
         /// @code
-        ///   auto currency = tng::ISOUtils::getOrDefault<ISOOpaqueField>(msg, 49, "978");
+        ///   auto currency = iso8583::ISOUtils::getOrDefault<ISOOpaqueField>(msg, 49, "978");
         /// @endcode
         ///
         /// @tparam T            Concrete field type.
@@ -786,7 +771,7 @@ namespace TNG_NAMESPACE {
         /// Avoids the nested `if (auto opt = ...) { ... }` pattern.
         ///
         /// @code
-        ///   tng::ISOUtils::ifPresent<ISOOpaqueField>(msg, 11, [](const std::string& stan) {
+        ///   iso8583::ISOUtils::ifPresent<ISOOpaqueField>(msg, 11, [](const std::string& stan) {
         ///       log("STAN: {}", stan);
         ///   });
         /// @endcode
@@ -809,3 +794,37 @@ namespace TNG_NAMESPACE {
     } // namespace ISOUtils
 
 }
+
+// =============================================================================
+// iso8583:: Typ-Aliase (neue, bevorzugte Namen)
+// =============================================================================
+
+namespace TNG_NAMESPACE {
+    /// @brief Alphanumeric / text data element (EBCDIC, ASCII, BCD decoded to string).
+    using OpaqueField = ::TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::string>;
+    /// @brief Raw binary data element (e.g. PIN block, ICC/EMV data, cryptograms).
+    using BinaryField = ::TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<uint8_t>>;
+    /// @brief Fast binary data element using `std::byte` storage.
+    using FastBinaryField = ::TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, std::vector<std::byte>>;
+    /// @brief Bitmap data element (primary + optional secondary bitmap).
+    using Bitmap = ::TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, dynamic_bitset<>>;
+    /// @brief Integer code data element (e.g. response codes stored as int32_t).
+    using CodeField = ::TNG_NAMESPACE::ISOComponent<TNG_KEY_TYPE, int32_t>;
+    /// @brief Composite message (root or nested sub-message).
+    using Message = ::TNG_NAMESPACE::ISOMessage;
+} // namespace iso8583
+
+// =============================================================================
+// Deprecated Aliase (Rückwärtskompatibilität – ein Release-Zyklus)
+// =============================================================================
+
+/// @deprecated Verwende iso8583::OpaqueField
+typedef ::TNG_NAMESPACE::OpaqueField ISOOpaqueField;
+/// @deprecated Verwende iso8583::BinaryField
+typedef ::TNG_NAMESPACE::BinaryField ISOBinaryField;
+/// @deprecated Verwende iso8583::FastBinaryField
+typedef ::TNG_NAMESPACE::FastBinaryField ISOFastBinaryField;
+/// @deprecated Verwende iso8583::Bitmap
+typedef ::TNG_NAMESPACE::Bitmap ISOBitmap;
+/// @deprecated Verwende iso8583::CodeField
+typedef ::TNG_NAMESPACE::CodeField ISOCodeField;

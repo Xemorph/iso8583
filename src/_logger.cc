@@ -22,8 +22,8 @@ namespace TNG_NAMESPACE::log {
         // Verwende stattdessen setLogger() mit einer QuillBridge:
         //
         //   #include <iso8583/ISOLog.hh>  // enthält QuillBridge
-        //   static tng::log::QuillBridge bridge(myQuillLogger);
-        //   tng::log::setLogger(&bridge);
+        //   static iso8583::log::QuillBridge bridge(myQuillLogger);
+        //   iso8583::log::setLogger(&bridge);
         //
         // QuillBridge ruft Quill-Makros im Kontext der tng.exe auf –
         // damit im korrekten Singleton, nicht im DLL-Singleton.

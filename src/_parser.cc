@@ -93,7 +93,7 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
         if (l_.size() > 1) {
             auto p = l_.at(1);
             if (p && p->type() == ISOFieldParserType::BITMAP) {
-                auto bmp_comp = m->tryGet<ISOBitmap>(-1);
+                auto bmp_comp = m->tryGet< ::TNG_NAMESPACE::Bitmap >(-1);
                 auto encoded = p->parse(bmp_comp.value());
                 out.insert(out.end(), encoded.begin(), encoded.end());
                 TNG_LOG_TRACE("[ISOBaseParser::parse] Bitmap: {} bytes", encoded.size());
@@ -214,7 +214,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         TNG_LOG_TRACE("[ISOBaseParser] BMAP1 '{}' offset={}",
             l_.at(1)->description(), base_offset + consumed);
 
-        auto bitmap = std::make_shared<ISOBitmap>(-1);
+        auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(-1);
         bitmap->description(l_.at(1)->description());
         bitmap->wire_offset(base_offset + consumed);
         const std::size_t bmp_bytes = l_.at(1)->unparse(bitmap, b, consumed);

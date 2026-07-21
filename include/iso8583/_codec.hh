@@ -25,7 +25,7 @@
 // ausschließlich diesen Header ein.
 // -----------------------------------------------------------------------------
 
-namespace TNG_NAMESPACE {
+namespace TNG_NAMESPACE::codec {
 
     // -- Lookup-Tabellen -------------------------------------------------------
 
@@ -197,6 +197,9 @@ namespace TNG_NAMESPACE {
     template <typename T, Encoder e>
     static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length);
 
+    template <Encoder e, typename T>
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset);
+
     // Returns the number of bytes required to convert a std::vector<uint8_t>
     // Mainly used in cooperation with function 'as<T, Encoder>()'
     template <Encoder e>
@@ -219,3 +222,6 @@ namespace TNG_NAMESPACE {
 
 // Implementierungen (werden in _codec.cc explizit instanziiert)
 #include "detail/_codec_impl.hh"
+
+/// @deprecated Verwende iso8583::codec:: statt ISOCodec::
+namespace ISOCodec = ::TNG_NAMESPACE::codec;

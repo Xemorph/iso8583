@@ -1,6 +1,6 @@
 #include "_padder.hh"
 
-namespace TNG_NAMESPACE {
+namespace TNG_NAMESPACE::codec {
 
     /// Adds padding characters to the left side of the string `s` until it reaches length `n`.
     /// \param s The string to be padded.

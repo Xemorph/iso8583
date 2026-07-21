@@ -217,22 +217,3 @@ TEST_CASE("Log level - ordering is correct", "[logging][level]") {
     CHECK(Level::ERR   < Level::CRITICAL);
     CHECK(Level::CRITICAL < Level::OFF);
 }
-
-// =============================================================================
-// Quill-Direktinjektion (nur wenn verfuegbar)
-// =============================================================================
-
-#if defined(ISO8583_ENABLE_QUILL_INJECTION) && defined(QUILL_VERSION)
-TEST_CASE("setQuillLogger - accepts nullptr", "[logging][quill]") {
-    LoggerGuard guard;
-    REQUIRE_NOTHROW(setQuillLogger(nullptr));
-}
-
-TEST_CASE("setQuillLogger - accepts valid logger", "[logging][quill]") {
-    LoggerGuard guard;
-    // Quill-Backend muss bereits laufen (wird von getLogger() gestartet)
-    auto* internal = tng::log::getLogger();
-    REQUIRE_NOTHROW(setQuillLogger(internal));  // internen Logger re-injizieren
-    setQuillLogger(nullptr);                     // aufraumen
-}
-#endif

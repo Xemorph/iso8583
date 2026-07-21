@@ -49,7 +49,7 @@ TEST_CASE("Full unparse - MTI only, no bitmap", "[unparse][mti]") {
     // EBCDIC "0200" = 0xF0 0xF2 0xF0 0xF0
     auto buf = B({ 0xF0, 0xF2, 0xF0, 0xF0 });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
@@ -78,7 +78,7 @@ TEST_CASE("Full unparse - MTI + bitmap + DE2 (PAN)", "[unparse][field]") {
         0x41, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11   // DE2: PAN
     });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
@@ -87,7 +87,7 @@ TEST_CASE("Full unparse - MTI + bitmap + DE2 (PAN)", "[unparse][field]") {
     CHECK(msg->isAuthorization());
     CHECK(msg->isRequest());
 
-    auto de2 = msg->get<ISOOpaqueField>(2);
+    auto de2 = msg->get< OpaqueField >(2);
     REQUIRE(de2 != nullptr);
     CHECK(de2->value() == "4111111111111111");
     CHECK(de2->wire_offset() == 12);  // 4 (MTI) + 8 (Bitmap)
@@ -132,7 +132,7 @@ TEST_CASE("Full unparse - authorization request with amount and STAN", "[unparse
         0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF1,
     });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
@@ -140,25 +140,25 @@ TEST_CASE("Full unparse - authorization request with amount and STAN", "[unparse
     CHECK(msg->mti() == "0100");
 
     // DE2: PAN
-    auto de2 = msg->get<ISOOpaqueField>(2);
+    auto de2 = msg->get< OpaqueField >(2);
     REQUIRE(de2 != nullptr);
     CHECK(de2->value() == "4111111111111111");
     CHECK(de2->wire_offset() == 12);
 
     // DE3: Processing Code
-    auto de3 = msg->get<ISOOpaqueField>(3);
+    auto de3 = msg->get< OpaqueField >(3);
     REQUIRE(de3 != nullptr);
     CHECK(de3->value() == "000000");
     CHECK(de3->wire_offset() == 20);  // 4+8+8
 
     // DE4: Amount
-    auto de4 = msg->get<ISOOpaqueField>(4);
+    auto de4 = msg->get< OpaqueField >(4);
     REQUIRE(de4 != nullptr);
     CHECK(de4->value() == "000000010000");
     CHECK(de4->wire_offset() == 26);  // 4+8+8+6
 
     // DE11: STAN
-    auto de11 = msg->get<ISOOpaqueField>(11);
+    auto de11 = msg->get< OpaqueField >(11);
     REQUIRE(de11 != nullptr);
     CHECK(de11->value() == "000001");
     CHECK(de11->wire_offset() == 32); // 4+8+8+6+6
@@ -193,13 +193,13 @@ TEST_CASE("Full unparse - variable length field LLCHAR", "[unparse][variable]") 
         0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6,
     });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
     CHECK(consumed == buf.size());
 
-    auto de35 = msg->get<ISOOpaqueField>(35);
+    auto de35 = msg->get< OpaqueField >(35);
     REQUIRE(de35 != nullptr);
     CHECK(de35->value() == "123456");
     CHECK(de35->wire_offset() == 12);
@@ -227,13 +227,13 @@ TEST_CASE("Full unparse - wire offsets accumulate correctly", "[unparse][wire]")
         0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF1, 0xF0, 0xF0, 0xF0, 0xF0,  // DE4 (12 Bytes)
     });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     msg->unparse(msg, buf);
 
-    auto de2 = msg->get<ISOOpaqueField>(2);
-    auto de3 = msg->get<ISOOpaqueField>(3);
-    auto de4 = msg->get<ISOOpaqueField>(4);
+    auto de2 = msg->get< OpaqueField >(2);
+    auto de3 = msg->get< OpaqueField >(3);
+    auto de4 = msg->get< OpaqueField >(4);
 
     REQUIRE(de2); REQUIRE(de3); REQUIRE(de4);
 
@@ -255,7 +255,7 @@ TEST_CASE("Full unparse - empty buffer returns 0", "[unparse][error]") {
     auto parser = std::make_shared<ISOBaseParser>("EmptyParser", 0);
     parser->add(std::make_shared<IFE_NUMERIC>(4, "MTI"));
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
 
     std::vector<uint8_t> empty;
@@ -263,7 +263,7 @@ TEST_CASE("Full unparse - empty buffer returns 0", "[unparse][error]") {
 }
 
 TEST_CASE("Full unparse - no parser set returns SIZE_MAX", "[unparse][error]") {
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     auto buf = std::vector<uint8_t>({ 0xF0, 0xF1, 0xF0, 0xF0 });
 
     // Kein Parser gesetzt -> SIZE_MAX

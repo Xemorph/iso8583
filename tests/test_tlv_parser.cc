@@ -10,7 +10,7 @@ using namespace TNG_NAMESPACE;
 // Hilfsfunktionen
 static std::vector<uint8_t> ebcdic(const std::string& s) {
     std::vector<uint8_t> buf(s.size());
-    ::tng::to<Encoder::EBCDIC>(s, buf, 0);
+    codec::to<codec::Encoder::EBCDIC>(s, buf, 0);
     return buf;
 }
 static std::vector<uint8_t> concat(std::initializer_list<std::vector<uint8_t>> parts) {
@@ -26,10 +26,10 @@ static std::vector<uint8_t> concat(std::initializer_list<std::vector<uint8_t>> p
 
 TEST_CASE("ISOTLVParser_MC - unparse TCC only", "[tlv][mc][unparse]") {
     auto tlv = std::make_shared<ISOTLVParser_MC>();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     auto consumed = tlv->unparse(msg, ebcdic("P"));
     CHECK(consumed == 1);
-    auto tcc = msg->get<ISOOpaqueField>(ISOTLVParser_MC::TCC_KEY);
+    auto tcc = msg->get< OpaqueField >(ISOTLVParser_MC::TCC_KEY);
     REQUIRE(tcc != nullptr);
     CHECK(tcc->value() == "P");
 }
@@ -40,10 +40,10 @@ TEST_CASE("ISOTLVParser_MC - unparse TCC + single SE", "[tlv][mc][unparse]") {
         ebcdic("P"),
         ebcdic("48"), ebcdic("06"), ebcdic("ABCDEF"),
         });
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     CHECK(tlv->unparse(msg, payload) == 1 + 2 + 2 + 6);
-    CHECK(msg->get<ISOOpaqueField>(ISOTLVParser_MC::TCC_KEY)->value() == "P");
-    auto se48 = msg->get<ISOBinaryField>(48);
+    CHECK(msg->get< OpaqueField> (ISOTLVParser_MC::TCC_KEY)->value() == "P");
+    auto se48 = msg->get< BinaryField >(48);
     REQUIRE(se48 != nullptr);
     CHECK(se48->value() == ebcdic("ABCDEF"));
 }
@@ -55,11 +55,11 @@ TEST_CASE("ISOTLVParser_MC - unparse multiple SEs", "[tlv][mc][unparse]") {
         ebcdic("60"), ebcdic("03"), ebcdic("AAA"),
         ebcdic("72"), ebcdic("04"), ebcdic("BBBB"),
         });
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     tlv->unparse(msg, payload);
-    CHECK(msg->get<ISOOpaqueField>(ISOTLVParser_MC::TCC_KEY)->value() == "R");
-    CHECK(msg->get<ISOBinaryField>(60)->value() == ebcdic("AAA"));
-    CHECK(msg->get<ISOBinaryField>(72)->value() == ebcdic("BBBB"));
+    CHECK(msg->get< OpaqueField >(ISOTLVParser_MC::TCC_KEY)->value() == "R");
+    CHECK(msg->get< BinaryField >(60)->value() == ebcdic("AAA"));
+    CHECK(msg->get< BinaryField >(72)->value() == ebcdic("BBBB"));
 }
 
 TEST_CASE("ISOTLVParser_MC - wire_offset tracked with base_offset", "[tlv][mc][wire]") {
@@ -68,27 +68,27 @@ TEST_CASE("ISOTLVParser_MC - wire_offset tracked with base_offset", "[tlv][mc][w
         ebcdic("P"),
         ebcdic("48"), ebcdic("04"), ebcdic("TEST"),
         });
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     tlv->unparse(msg, payload, 10);
 
-    auto tcc = msg->get<ISOOpaqueField>(ISOTLVParser_MC::TCC_KEY);
+    auto tcc = msg->get< OpaqueField >(ISOTLVParser_MC::TCC_KEY);
     CHECK(tcc->wire_offset() == 10);
     CHECK(tcc->wire_length() == 1);
 
-    auto se48 = msg->get<ISOBinaryField>(48);
+    auto se48 = msg->get< BinaryField >(48);
     CHECK(se48->wire_offset() == 11);
     CHECK(se48->wire_length() == 2 + 2 + 4);
 }
 
 TEST_CASE("ISOTLVParser_MC - parse single SE", "[tlv][mc][parse]") {
     auto tlv = std::make_shared<ISOTLVParser_MC>();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
 
-    auto tcc = std::make_shared<ISOOpaqueField>(ISOTLVParser_MC::TCC_KEY);
+    auto tcc = std::make_shared< OpaqueField >(ISOTLVParser_MC::TCC_KEY);
     tcc->value("P");
     msg->set(tcc);
 
-    auto se72 = std::make_shared<ISOBinaryField>(72);
+    auto se72 = std::make_shared< BinaryField >(72);
     se72->value(ebcdic("HELLO"));
     msg->set(se72);
 
@@ -102,12 +102,12 @@ TEST_CASE("ISOTLVParser_MC - parse single SE", "[tlv][mc][parse]") {
 
 TEST_CASE("ISOTLVParser_MC - parse SEs sorted ascending", "[tlv][mc][parse]") {
     auto tlv = std::make_shared<ISOTLVParser_MC>();
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
 
     // Umgekehrt einfügen – Ausgabe muss aufsteigend sein
-    auto se72 = std::make_shared<ISOBinaryField>(72);
+    auto se72 = std::make_shared< BinaryField >(72);
     se72->value(ebcdic("BB")); msg->set(se72);
-    auto se48 = std::make_shared<ISOBinaryField>(48);
+    auto se48 = std::make_shared< BinaryField >(48);
     se48->value(ebcdic("AA")); msg->set(se48);
 
     auto out = tlv->parse(msg);
@@ -124,7 +124,7 @@ TEST_CASE("ISOTLVParser_MC - full roundtrip", "[tlv][mc][roundtrip]") {
         ebcdic("48"), ebcdic("06"), {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE},
         ebcdic("72"), ebcdic("02"), {0xAB, 0xCD},
         });
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     tlv->unparse(msg, payload);
     CHECK(tlv->parse(msg) == payload);
 }
@@ -145,15 +145,15 @@ TEST_CASE("ISOTLVParser_VI - unparse BCD tag and length", "[tlv][vi][unparse]") 
         0xCA, 0xFE,
     };
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     CHECK(tlv->unparse(msg, payload) == payload.size());
     CHECK_FALSE(msg->has(ISOTLVParser_VI::TCC_KEY));
 
-    auto se21 = msg->get<ISOBinaryField>(21);
+    auto se21 = msg->get< BinaryField >(21);
     REQUIRE(se21 != nullptr);
     CHECK(se21->value() == std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
 
-    auto se60 = msg->get<ISOBinaryField>(60);
+    auto se60 = msg->get< BinaryField >(60);
     REQUIRE(se60 != nullptr);
     CHECK(se60->value() == std::vector<uint8_t>{0xCA, 0xFE});
 }
@@ -164,7 +164,7 @@ TEST_CASE("ISOTLVParser_VI - full roundtrip BCD", "[tlv][vi][roundtrip]") {
         0x00, 0x21, 0x02, 0xAB, 0xCD,
         0x00, 0x60, 0x04, 0x01, 0x02, 0x03, 0x04,
     };
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     tlv->unparse(msg, payload);
     CHECK(tlv->parse(msg) == payload);
 }
@@ -175,7 +175,7 @@ TEST_CASE("ISOTLVParser_VI - full roundtrip BCD", "[tlv][vi][roundtrip]") {
 
 TEST_CASE("ISOTLVParser custom - 1 byte ASCII tag no TCC", "[tlv][custom]") {
     // Hypothetisches Format: TAG=1 Byte ASCII, LEN=2 Byte ASCII, kein TCC
-    using MyParser = ISOTLVParser<1, 2, false, Encoder::ASCII, Encoder::ASCII>;
+    using MyParser = ISOTLVParser<1, 2, false, codec::Encoder::ASCII, codec::Encoder::ASCII>;
     auto tlv = std::make_shared<MyParser>();
 
     std::vector<uint8_t> payload;
@@ -185,11 +185,11 @@ TEST_CASE("ISOTLVParser custom - 1 byte ASCII tag no TCC", "[tlv][custom]") {
     payload.push_back(0x01); payload.push_back(0x02);
     payload.push_back(0x03); payload.push_back(0x04);
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     CHECK(tlv->unparse(msg, payload) == payload.size());
 
     // '5' = ASCII 5
-    auto se5 = msg->get<ISOBinaryField>(5);
+    auto se5 = msg->get< BinaryField >(5);
     REQUIRE(se5 != nullptr);
     CHECK(se5->value() == std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04});
     CHECK(tlv->parse(msg) == payload);
@@ -198,12 +198,12 @@ TEST_CASE("ISOTLVParser custom - 1 byte ASCII tag no TCC", "[tlv][custom]") {
 TEST_CASE("ISOTLVParser - data_encoding_map hint", "[tlv][data_enc]") {
     // data_encoding_map ist ein Runtime-Hinweis für höhere Schichten
     ISOTLVParser_MC::DataEncodingMap enc_map;
-    enc_map[72] = Encoder::BCD;   // SE72-Daten sind BCD
-    enc_map[48] = Encoder::EBCDIC;
+    enc_map[72] = codec::Encoder::BCD;   // SE72-Daten sind BCD
+    enc_map[48] = codec::Encoder::EBCDIC;
 
     auto tlv = std::make_shared<ISOTLVParser_MC>(std::move(enc_map));
 
-    CHECK(tlv->data_encoding_for(72) == std::optional<Encoder>{Encoder::BCD});
-    CHECK(tlv->data_encoding_for(48) == std::optional<Encoder>{Encoder::EBCDIC});
+    CHECK(tlv->data_encoding_for(72) == std::optional<codec::Encoder>{codec::Encoder::BCD});
+    CHECK(tlv->data_encoding_for(48) == std::optional<codec::Encoder>{codec::Encoder::EBCDIC});
     CHECK(tlv->data_encoding_for(99) == std::nullopt);
 }

@@ -14,7 +14,7 @@
 #define CODEC_IMPL_SOURCE
 #include <iso8583/_codec.hh>
 
-namespace TNG_NAMESPACE {
+namespace TNG_NAMESPACE::codec {
 
 // -----------------------------------------------------------------------------
 // parsed_length
@@ -106,5 +106,23 @@ INST_AS_BIN(HEX_EBCDIC)
 
 #undef INST_AS_STR
 #undef INST_AS_BIN
+
+// -----------------------------------------------------------------------------
+// to<Encoder, T>
+// -----------------------------------------------------------------------------
+#define INST_STR_TO(E) \
+    template void to<Encoder::E, std::string>(const std::string& value, std::vector<uint8_t>& b, std::size_t offset);
+#define INST_BIN_TO(E) \
+    template void to<Encoder::E, std::vector<uint8_t>>(const std::vector<uint8_t>& value, std::vector<uint8_t>& b, std::size_t offset);
+
+INST_STR_TO(ASCII)
+INST_STR_TO(EBCDIC)
+INST_STR_TO(BCD)
+
+INST_BIN_TO(BINARY)
+INST_BIN_TO(HEX_EBCDIC)
+
+#undef INST_STR_TO
+#undef INST_BIN_TO
 
 } // namespace TNG_NAMESPACE

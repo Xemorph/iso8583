@@ -7,15 +7,15 @@
  * Dieser Header enthält alle Typen, mit denen ein normaler Anwender
  * direkt arbeitet:
  *
- *  - @ref tng::ISOMessage        – die ISO 8583-Nachricht selbst
+ *  - @ref iso8583::ISOMessage        – die ISO 8583-Nachricht selbst
  *  - @ref ISOOpaqueField         – alphanumerisches Datenfeld (std::string)
  *  - @ref ISOBinaryField         – binäres Datenfeld (std::vector<uint8_t>)
  *  - @ref ISOBitmap              – Bitmap-Feld
  *  - @ref ISOCodeField           – numerisches Code-Feld (int32_t)
- *  - @ref tng::BaseHeader        – einfacher Rohdaten-Header
- *  - @ref tng::BASE1Header       – Visa/BASE1-Header
- *  - @ref tng::WLP_FOHeader      – WLP FO-Header
- *  - @ref tng::ISOUtils          – Hilfsfunktionen (z. B. flatten)
+ *  - @ref iso8583::BaseHeader        – einfacher Rohdaten-Header
+ *  - @ref iso8583::BASE1Header       – Visa/BASE1-Header
+ *  - @ref iso8583::WLP_FOHeader      – WLP FO-Header
+ *  - @ref iso8583::ISOUtils          – Hilfsfunktionen (z. B. flatten)
  *
  * Typischer Anwendungsfall:
  * @code
@@ -23,10 +23,10 @@
  *   #include <iso8583/ISOSpec.hh>
  *
  *   // Spezifikation laden
- *   auto parser = tng::spec::SpecDecoder::loadFromYaml("visa.yaml");
+ *   auto parser = iso8583::spec::SpecDecoder::loadFromYaml("visa.yaml");
  *
  *   // Nachricht entpacken (unparse = Bytes → Felder)
- *   auto msg = std::make_shared<tng::ISOMessage>();
+ *   auto msg = std::make_shared<iso8583::ISOMessage>();
  *   msg->parser(parser);
  *   msg->unparse(msg, rawBytes);
  *

@@ -7,12 +7,12 @@
 ///
 /// @par Option 1 – Parser only (no introspection needed):
 ///
-///     auto parser = tng::spec::SpecDecoder::loadFromYaml("mastercard.yml");
+///     auto parser = iso8583::spec::SpecDecoder::loadFromYaml("mastercard.yml");
 ///     msg->parser(parser);
 ///
 /// @par Option 2 – Parser AND introspectable spec (preferred):
 ///
-///     auto [parser, spec] = tng::spec::SpecDecoder::loadBothFromYaml("mastercard.yml");
+///     auto [parser, spec] = iso8583::spec::SpecDecoder::loadBothFromYaml("mastercard.yml");
 ///     msg->parser(parser);
 ///
 ///     // Query field structure at runtime
@@ -59,7 +59,7 @@ namespace TNG_NAMESPACE {
             ///   - `CHAR` / `NUMERIC`: number of characters or digits
             ///   - `BINARY`:           number of bytes
             ///   - `BITMAP` / `NOP` / `REMAINING`: 0 (no meaningful length)
-            int max_length = 0;
+            int         max_length = 0;  ///< kept as int for API compatibility; always >= 0
 
             /// @brief Number of length-prefix digits (ISO 8583 L/LL/LLL convention).
             ///
@@ -79,7 +79,7 @@ namespace TNG_NAMESPACE {
         ///
         /// Returned by @ref ISOSpec::field and iterated via @ref ISOSpec::fields.
         struct TNG_EXPORT SpecFieldInfo {
-            /// @brief DE number – same key used in @ref tng::ISOMessage.
+            /// @brief DE number – same key used in @ref iso8583::ISOMessage.
             TNG_KEY_TYPE key = 0;
 
             /// @brief Human-readable field name from the YAML `description:` key.
@@ -119,7 +119,7 @@ namespace TNG_NAMESPACE {
         /// re-reading the YAML file.  Obtain via
         /// @ref SpecDecoder::loadBothFromYaml.
         ///
-        ///     auto [parser, spec] = tng::spec::SpecDecoder::loadBothFromYaml("mc.yml");
+        ///     auto [parser, spec] = iso8583::spec::SpecDecoder::loadBothFromYaml("mc.yml");
         ///
         ///     // Check existence
         ///     spec->has(2);       // true if DE002 is defined
@@ -208,7 +208,7 @@ namespace TNG_NAMESPACE {
             ///
             /// Use this when you only need parsing/building and no introspection.
             ///
-            ///     auto parser = tng::spec::SpecDecoder::loadFromYaml("mc.yml");
+            ///     auto parser = iso8583::spec::SpecDecoder::loadFromYaml("mc.yml");
             ///     msg->parser(parser);
             ///
             /// @param path Path to the root YAML spec file.
@@ -223,7 +223,7 @@ namespace TNG_NAMESPACE {
             /// objects from the same in-memory representation.  Always prefer
             /// this over calling `loadFromYaml` + a separate spec builder.
             ///
-            ///     auto [parser, spec] = tng::spec::SpecDecoder::loadBothFromYaml("mc.yml");
+            ///     auto [parser, spec] = iso8583::spec::SpecDecoder::loadBothFromYaml("mc.yml");
             ///     msg->parser(parser);
             ///
             ///     // Introspect the loaded spec

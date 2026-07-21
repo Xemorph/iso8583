@@ -439,18 +439,18 @@ fields:
         0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF1,
     });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
     CHECK(consumed == buf.size());
     CHECK(msg->mti() == "0100");
 
-    auto de2 = msg->get<ISOOpaqueField>(2);
+    auto de2 = msg->get< OpaqueField >(2);
     REQUIRE(de2 != nullptr);
     CHECK(de2->value() == "4111111111111111");
 
-    auto de11 = msg->get<ISOOpaqueField>(11);
+    auto de11 = msg->get< OpaqueField >(11);
     REQUIRE(de11 != nullptr);
     CHECK(de11->value() == "000001");
 }

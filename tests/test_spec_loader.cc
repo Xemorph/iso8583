@@ -145,7 +145,7 @@ TEST_CASE("SpecDecoder - end-to-end unparse with EBCDIC fields", "[spec][unparse
         0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF1,
         });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     std::size_t consumed = msg->unparse(msg, buf);
 
@@ -154,11 +154,11 @@ TEST_CASE("SpecDecoder - end-to-end unparse with EBCDIC fields", "[spec][unparse
     CHECK(msg->isAuthorization());
     CHECK(msg->isRequest());
 
-    auto de2 = msg->get<ISOOpaqueField>(2);
+    auto de2 = msg->get< OpaqueField >(2);
     REQUIRE(de2 != nullptr);
     CHECK(de2->value() == "4111111111111111");
 
-    auto de11 = msg->get<ISOOpaqueField>(11);
+    auto de11 = msg->get< OpaqueField >(11);
     REQUIRE(de11 != nullptr);
     CHECK(de11->value() == "000001");
 }
@@ -204,15 +204,15 @@ fields:
         0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF1, 0xF0, 0xF0, 0xF0, 0xF0,
         });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     msg->unparse(msg, buf);
 
-    auto de2 = msg->get<ISOOpaqueField>(2);
+    auto de2 = msg->get< OpaqueField >(2);
     REQUIRE(de2 != nullptr);
     CHECK(de2->value() == "4111111111111111");  // BCD-kodiert
 
-    auto de4 = msg->get<ISOOpaqueField>(4);
+    auto de4 = msg->get< OpaqueField >(4);
     REQUIRE(de4 != nullptr);
     CHECK(de4->value() == "000000010000");  // EBCDIC-kodiert
 }
@@ -248,11 +248,11 @@ fields:
         0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, // DE52: 8 raw bytes
         });
 
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     msg->unparse(msg, buf);
 
-    auto de52 = msg->get<ISOBinaryField>(52);
+    auto de52 = msg->get< BinaryField >(52);
     REQUIRE(de52 != nullptr);
     CHECK(de52->value() == std::vector<uint8_t>({ 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE }));
 }
@@ -294,7 +294,7 @@ fields:
 
     auto ebcdic_b = [](const std::string& s) {
         std::vector<uint8_t> buf(s.size());
-        ::tng::to<Encoder::EBCDIC>(s, buf, 0);
+        codec::to<codec::Encoder::EBCDIC>(s, buf, 0);
         return buf;
         };
 
@@ -336,22 +336,22 @@ fields:
     REQUIRE(raw.size() == 24);
 
     // ── Dekodieren ───────────────────────────────────────────────────────────
-    auto msg = std::make_shared<ISOMessage>();
+    auto msg = std::make_shared< Message >();
     msg->parser(parser);
     REQUIRE_NOTHROW(msg->unparse(msg, raw));
 
     // DE048 muss als ISOMessage (composite) vorhanden sein
-    auto de48 = msg->get<ISOMessage>(48);
+    auto de48 = msg->get< Message >(48);
     REQUIRE(de48 != nullptr);
 
     // TCC prüfen (gespeichert unter TCC_KEY = -2)
     constexpr TNG_KEY_TYPE TCC_KEY = -2;
-    auto tcc_field = de48->get<ISOOpaqueField>(TCC_KEY);
+    auto tcc_field = de48->get< OpaqueField >(TCC_KEY);
     REQUIRE(tcc_field != nullptr);
     CHECK(tcc_field->value() == "P");
 
     // SE72 prüfen
-    auto se72 = de48->get<ISOBinaryField>(72);
+    auto se72 = de48->get< BinaryField >(72);
     REQUIRE(se72 != nullptr);
     CHECK(se72->value() == data);
 }
