@@ -42,6 +42,29 @@ TEST_CASE("ISOMessage - construction with MTI", "[message][construction]") {
     CHECK(msg->mti() == "0200");
 }
 
+TEST_CASE("ISOMessage - reserved sentinel key constants", "[message][constants]") {
+    // Regressionsschutz: diese Werte sind über den gesamten Codec verteilt
+    // (unparse()/parse() in _parser.cc, ISOUtils.hh, ...) relevant - eine
+    // versehentliche Änderung hier würde an vielen Stellen still brechen.
+    CHECK(ISOMessage::ROOT_KEY == -1);
+    CHECK(ISOMessage::BITMAP_KEY == -1);
+    CHECK(ISOMessage::MTI_KEY == 0);
+
+    // ROOT_KEY: k_ einer nicht eingebetteten (Root-)Nachricht
+    auto root = std::make_shared< Message >();
+    CHECK(root->key() == ISOMessage::ROOT_KEY);
+    CHECK_FALSE(root->isInner());
+
+    auto inner = std::make_shared< Message >(TNG_KEY_TYPE(48));
+    CHECK(inner->key() == 48);
+    CHECK(inner->isInner());
+
+    // MTI_KEY: MTI liegt exakt unter diesem Schlüssel in der Feld-Map
+    auto withMti = std::make_shared< Message >("0200");
+    CHECK(withMti->has(ISOMessage::MTI_KEY));
+    CHECK(withMti->get<OpaqueField>(ISOMessage::MTI_KEY)->value() == "0200");
+}
+
 // =============================================================================
 // ISOMessage: set / has / get / unset
 // =============================================================================
@@ -54,6 +77,38 @@ TEST_CASE("ISOMessage - set and has field", "[message][crud]") {
     CHECK(msg->set(pan));
     CHECK(msg->has(2));
     CHECK(msg->size() == 1);
+}
+
+TEST_CASE("ISOMessage - has() is protected against concurrent set() calls", "[message][crud][concurrency]") {
+    // Regressionstest für den fehlenden Read-Lock in has(): anders als
+    // get()/tryGet()/set()/unset()/keys() nahm has() bisher kein d_lock_ -
+    // eine Data Race gegen gleichzeitige set()-Aufrufe auf anderen Threads
+    // (nur unter ThreadSanitizer zuverlässig nachweisbar, hier zumindest als
+    // Stresstest: darf nicht crashen/hängen und muss am Ende konsistent
+    // sein).
+    auto msg = std::make_shared< Message >();
+    std::atomic<bool> stop{ false };
+
+    std::thread writer([&] {
+        for (TNG_KEY_TYPE k = 2; k < 50 && !stop; ++k) {
+            msg->set(k, std::string("x"));
+            std::this_thread::yield();
+        }
+        });
+
+    std::thread reader([&] {
+        for (int i = 0; i < 5000 && !stop; ++i) {
+            for (TNG_KEY_TYPE k = 2; k < 50; ++k)
+                (void)msg->has(k); // darf nie crashen/UB sein
+        }
+        });
+
+    writer.join();
+    stop = true;
+    reader.join();
+
+    for (TNG_KEY_TYPE k = 2; k < 50; ++k)
+        CHECK(msg->has(k));
 }
 
 TEST_CASE("ISOMessage - get returns correct field", "[message][crud]") {
@@ -348,6 +403,23 @@ TEST_CASE("MTI 0801 - Network Management Retransmission", "[message][mti]") {
 TEST_CASE("MTI - mti() throws without MTI field", "[message][mti][error]") {
     auto msg = std::make_shared< Message >();
     REQUIRE_THROWS_AS(msg->mti(), std::logic_error);
+}
+
+TEST_CASE("MTI - isRequest/isResponse return false (not throw) without MTI", "[message][mti]") {
+    // Regressionstest: isRequest()/isResponse() riefen früher ungeschützt
+    // mti() auf und warfen dadurch std::logic_error, während alle anderen
+    // is*()-Klassifizierer (isAuthorization(), isFinancial(), ...) bereits
+    // vorher has(0) prüften und sicher false lieferten - inkonsistentes
+    // Verhalten. Beide sind jetzt konsistent: false statt throw.
+    auto msg = std::make_shared< Message >();
+    CHECK_FALSE(msg->hasMTI());
+    CHECK_NOTHROW(msg->isRequest());
+    CHECK_NOTHROW(msg->isResponse());
+    CHECK_FALSE(msg->isRequest());
+    CHECK_FALSE(msg->isResponse());
+    // Wichtig: isResponse() ist bewusst NICHT einfach "!isRequest()" -
+    // sonst würde "MTI fehlt" (isRequest()==false) fälschlich zu
+    // isResponse()==true.
 }
 
 TEST_CASE("MTI - isRequest/isResponse are mutually exclusive", "[message][mti]") {

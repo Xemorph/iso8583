@@ -20,7 +20,7 @@
 /// @par Implementing a custom parser
 ///
 /// Derive from @ref iso8583::ISOParserPtrBase and implement the three pure virtual
-/// methods.  The parser can then be attached to an `ISOMessage` just like one
+/// methods.  The parser can then be attached to an @ref `iso8583::Message` just like one
 /// returned by @ref iso8583::spec::SpecDecoder::loadFromYaml.
 ///
 /// @code
@@ -36,7 +36,7 @@
 ///           const std::vector<uint8_t>& b) override
 ///       {
 ///           // Decode MTI, bitmap and all DEs from b into c.
-///           // Use ISOMessage::set() to populate fields.
+///           // Use iso8583::Message::set() to populate fields.
 ///           return b.size();
 ///       }
 ///
@@ -50,7 +50,7 @@
 ///
 ///   // Usage:
 ///   auto parser = std::make_shared<FixedLayoutParser>();
-///   auto msg    = std::make_shared<iso8583::ISOMessage>();
+///   auto msg    = std::make_shared<iso8583::Message>();
 ///   msg->parser(parser);
 ///   msg->unparse(msg, rawBytes);
 /// @endcode

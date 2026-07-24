@@ -1,6 +1,6 @@
 ISOSpec — YAML loader
 =====================
 
-.. doxygenclass:: tng::spec::SpecDecoder
+.. doxygenclass:: iso8583::spec::SpecDecoder
    :project: libiso8583
    :members:

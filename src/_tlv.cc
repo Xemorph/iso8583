@@ -32,6 +32,26 @@ namespace TNG_NAMESPACE::tlv_detail {
                       "(pos={} buf={})", se_num, se_len, pos, buf_sz);
     }
 
+    void log_error_se_length_missing(std::size_t se_num, std::size_t pos, std::size_t buf_sz) {
+        TNG_LOG_ERROR("[ISOTLVParser] SE{} - kein Platz mehr für Length-Feld "
+                      "(pos={} buf={})", se_num, pos, buf_sz);
+    }
+
+    void log_error_ber_tag_overflow(std::size_t offset, std::size_t buf_sz) {
+        TNG_LOG_ERROR("[BerTag] Tag-Feld überschreitet Payload (offset={} buf={})",
+            offset, buf_sz);
+    }
+
+    void log_error_ber_length_overflow(std::size_t offset, std::size_t buf_sz) {
+        TNG_LOG_ERROR("[BerLength] Length-Feld überschreitet Payload (offset={} buf={})",
+            offset, buf_sz);
+    }
+
+    void log_error_ber_length_indefinite() {
+        TNG_LOG_ERROR("[BerLength] Indefinite-Form (0x80) wird nicht unterstützt - "
+                      "TLV-Kontext benötigt eine feste SE-Länge");
+    }
+
     void log_debug_tcc(const std::string& tcc) {
         TNG_LOG_DEBUG("[ISOTLVParser] TCC='{}'", tcc);
     }

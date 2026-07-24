@@ -1,6 +1,6 @@
 #pragma once
 
-// [tng]
+// [iso8583]
 #include "../config.h"
 // [stdc++]
 #include <memory>
@@ -36,13 +36,15 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns the numeric key (DE number) of this component.
         ///
-        /// The key is an `int16_t` (`TNG_KEY_TYPE`).  Special value `-1` is
-        /// used for the root `ISOMessage` that is not itself a sub-field.
+        /// The key is `TNG_KEY_TYPE` (`int16_t` by default, `int32_t` when
+        /// `ISO8583_BERTLV` is defined - see config.h). Special value `-1`
+        /// (`ISOMessage::ROOT_KEY`) is used for the root `ISOMessage` that is
+        /// not itself a sub-field.
         virtual TNG_KEY_TYPE key() const = 0;
 
         /// @brief Byte offset of this field inside the original wire buffer.
         ///
-        /// Set by the parser after a successful @ref ISOMessage::unparse call.
+        /// Set by the parser after a successful @ref iso8583::Message::unparse call.
         /// A value of `0` means "not set" (the MTI field also starts at 0).
         /// Use `std::numeric_limits<std::size_t>::max()` to signal "unknown".
         virtual std::size_t wire_offset() const noexcept = 0;
@@ -64,8 +66,8 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns a human-readable string representation of the value.
         ///
-        /// For `ISOOpaqueField` this is the raw string. For `ISOBinaryField`
-        /// it is an uppercase hex string. For `ISOMessage` (composite) it
+        /// For `iso8583::OpaqueField` this is the raw string. For `iso8583::BinaryField`
+        /// it is an uppercase hex string. For `iso8583::Message` (composite) it
         /// returns an empty string – iterate the child fields instead.
         virtual std::string readable_value() const = 0;
 
@@ -85,12 +87,25 @@ namespace TNG_NAMESPACE {
         /// @brief Returns `true` if this component is a composite (ISOMessage).
         ///
         /// Composite components hold child components and have no direct value.
-        /// Leaf components (ISOOpaqueField, ISOBinaryField, …) return `false`.
+        /// Leaf components (iso8583::OpaqueField, iso8583::BinaryField, …) return `false`.
         virtual bool is_composite() const = 0;
 
-        /// @brief Prints a debug representation to stdout.
-        /// @param nested `true` when called recursively for a sub-field.
-        virtual void print(bool nested) const = 0;
+        /// @brief Writes a human-readable debug representation of this
+        /// component (and, for composites, its children) into `os`.
+        ///
+        /// Replaces the former `print(bool nested)`, which always wrote
+        /// directly to stdout via `fmt::print` - the caller had no way to
+        /// redirect it. Use `operator<<` (below) for the common case;
+        /// `nested` is an internal recursion flag (adjusts the box-drawing
+        /// connector/indentation for nested fields) that callers outside the
+        /// library should leave at its default (`false`).
+        ///
+        /// @param os     Destination stream - `std::cout`, a
+        ///               `std::ostringstream` to capture the output as a
+        ///               string, a log file stream, etc.
+        /// @param nested `true` when called recursively for a child of a
+        ///               composite.
+        virtual void dump(std::ostream& os, bool nested = false) const = 0;
 
         /// @brief Serialises the component to a JSON object.
         ///
@@ -100,16 +115,34 @@ namespace TNG_NAMESPACE {
         virtual json to_json() const = 0;
     };
 
+    /// @brief Writes `c`'s debug representation into `os` (see @ref
+    /// ISOComponentPtrBase::dump).
+    ///
+    /// ```cpp
+    /// std::cout << *msg;                    // straight to stdout
+    ///
+    /// std::ostringstream oss;
+    /// oss << *msg;                          // capture as a string
+    /// const std::string dump = oss.str();
+    ///
+    /// std::ofstream log("message.log");
+    /// log << *msg;                          // into a file
+    /// ```
+    inline std::ostream& operator<<(std::ostream& os, const ISOComponentPtrBase& c) {
+        c.dump(os);
+        return os;
+    }
+
     /// @brief Classifies the data type handled by an @ref ISOFieldParserPtrBase.
     ///
-    /// Used by @ref ISOMessage::set(key, data) to decide which concrete
+    /// Used by @ref iso8583::Message::set(key, data) to decide which concrete
     /// `ISOComponent` subtype to create, and to reject invalid operations
     /// (e.g. manually setting a BITMAP or NESTED field).
     enum class ISOFieldParserType {
         UNUSED,      ///< Placeholder / skip field (no data consumed).
         EXCEPTIONAL, ///< Reserved / error sentinel.
-        OPAQUE,      ///< String field → `ISOOpaqueField`.
-        BINARY,      ///< Raw binary field → `ISOBinaryField` (hex string input).
+        OPAQUE,      ///< String field → `iso8583::OpaqueField`.
+        BINARY,      ///< Raw binary field → `iso8583::BinaryField` (hex string input).
         BITMAP,      ///< Bitmap – computed automatically, cannot be set manually.
         NESTED,      ///< Composite sub-message – use dot-notation set() to populate.
         REMAINING,   ///< Consumes all remaining bytes of the parent buffer (no prefix).
@@ -120,8 +153,8 @@ namespace TNG_NAMESPACE {
     /// A parser knows the full layout of a message type (MTI, bitmap, all DEs).
     /// Obtain a concrete instance via @ref iso8583::spec::SpecDecoder::loadFromYaml.
     ///
-    /// @see ISOMessage::parser(ISOParserPtrBaseSmartPtr)
-    /// @see ISOMessage::unparse
+    /// @see iso8583::Message::parser(ISOParserPtrBaseSmartPtr)
+    /// @see iso8583::Message::unparse
     class TNG_EXPORT ISOParserPtrBase
     {
     public:
@@ -146,7 +179,7 @@ namespace TNG_NAMESPACE {
         /// @brief Deserialises a full message from a wire buffer (top-level).
         ///
         /// Reads MTI, bitmap and all active DEs from `b` and populates `c`.
-        /// @param c  Root `ISOMessage` that receives all decoded fields.
+        /// @param c  Root `iso8583::Message` that receives all decoded fields.
         /// @param b  Raw bytes received from the network.
         /// @return   Total number of bytes consumed.
         virtual std::size_t unparse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c, const std::vector<uint8_t>& b) = 0;
@@ -201,7 +234,7 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns the inner parser for NESTED fields, `nullptr` otherwise.
         ///
-        /// Used by @ref ISOMessage::set(dot_key, data) to validate sub-field
+        /// Used by @ref iso8583::Message::set(dot_key, data) to validate sub-field
         /// types without requiring a downcast to the concrete parser class.
         virtual ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
             subParser() const noexcept { return nullptr; }

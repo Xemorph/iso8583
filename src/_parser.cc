@@ -2,6 +2,54 @@
 // [tng]
 #include "_logger.hh"
 
+namespace {
+
+    // Fallback-Bitmap-Berechnung für ISOBaseParser::parse(): wird nur
+    // erreicht, wenn KEIN "format: bitmap"-Feldparser an Position 1 der Spec
+    // deklariert ist (ein Custom-Protokoll ohne regulären Bitmap-Typ) - bei
+    // jeder normalen ISO-8583-Spec läuft stattdessen der Zweig, der die
+    // bereits korrekte Bitmap-Komponente (m->tryGet<Bitmap>(-1)) über den
+    // Bitmap-Feldparser encodiert (siehe ISOBaseParser::parse() unten).
+    //
+    // Bit-Platzierung folgt derselben Standard-Konvention wie überall sonst
+    // in der Bibliothek (bmp[N], 1-indiziert, = DE N - siehe byte2bitset()
+    // weiter unten in dieser Datei und ISOBitmapFieldParser::parse() in
+    // _parser.hh): DE1/65/129 sind reservierte Extension-Indikator-
+    // Positionen und werden deshalb übersprungen statt als reguläre Felder
+    // behandelt; die Secondary-/Tertiary-Präsenzbits werden automatisch aus
+    // der höchsten tatsächlich gesetzten DE abgeleitet.
+    std::vector<uint8_t> buildFallbackBitmap(
+        const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+        std::size_t field_count)
+    {
+        const TNG_KEY_TYPE max_de = std::min<TNG_KEY_TYPE>(
+            static_cast<TNG_KEY_TYPE>(field_count) - 1, 192);
+
+        std::vector<uint8_t> bmp(24, 0x00);
+        std::size_t bmp_sz = 8;
+
+        for (TNG_KEY_TYPE i = 2; i <= max_de; ++i) {
+            if (i == 65 || i == 129) continue; // reservierte Indikator-Slots
+            if (!m->has(i)) continue;
+
+            if (i > 128)      bmp_sz = 24;
+            else if (i > 64)  bmp_sz = std::max(bmp_sz, std::size_t{ 16 });
+
+            const std::size_t p = static_cast<std::size_t>(i) - 1;
+            const std::size_t byte_idx = p / 8;
+            const std::size_t bit_idx = 7 - (p % 8);
+            bmp[byte_idx] |= static_cast<uint8_t>(1u << bit_idx);
+        }
+
+        if (bmp_sz >= 16) bmp[0] |= 0x80u; // Secondary Bitmap Present
+        if (bmp_sz >= 24) bmp[8] |= 0x80u; // Tertiary Bitmap Present
+
+        bmp.resize(bmp_sz);
+        return bmp;
+    }
+
+} // namespace
+
 // ─── ISOBaseParser::parse ─────────────────────────────────────────────────────
 // Serialisiert eine ISOMessage in einen Wire-Buffer.
 // Inverse Logik zu unparse():
@@ -44,12 +92,12 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 
     // ── 2. MTI ───────────────────────────────────────────────────────────────
     {
-        auto p = l_.at(0);
+        auto p = l_.at(::TNG_NAMESPACE::ISOMessage::MTI_KEY);
         if (p &&
             p->type() != ISOFieldParserType::BITMAP &&
             p->type() != ISOFieldParserType::UNUSED)
         {
-            auto mti_comp = m->get<ISOComponentPtrBase>(0);
+            auto mti_comp = m->get<ISOComponentPtrBase>(::TNG_NAMESPACE::Message::MTI_KEY);
             if (mti_comp) {
                 auto mti_bytes = p->parse(mti_comp);
                 out.insert(out.end(), mti_bytes.begin(), mti_bytes.end());
@@ -63,44 +111,28 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 
     // ── 3. Bitmap berechnen ───────────────────────────────────────────────────
     const TNG_KEY_TYPE ff = first_field();
-    const TNG_KEY_TYPE max_de = static_cast<TNG_KEY_TYPE>(l_.size()) - 1;
 
-    // Bitmap-Puffer (Byte-Array, Big-Endian bit ordering)
-    std::vector<uint8_t> bmp_buf;
-
-    if (emit_bitmap()) {
-        // Single-Pass: Bits setzen und bmp_sz gleichzeitig bestimmen.
-        // Worst-case 24 Bytes vorab allozieren, am Ende kürzen.
-        bmp_buf.assign(24, 0x00);
-        std::size_t bmp_sz = 8;
-
-        for (TNG_KEY_TYPE i = ff; i <= max_de; ++i) {
-            if (!m->has(i)) continue;
-            const std::size_t bit_pos = static_cast<std::size_t>(i - ff);
-            if (bit_pos >= 128) bmp_sz = 24;
-            else if (bit_pos >= 64)  bmp_sz = std::max(bmp_sz, std::size_t{ 16 });
-            const std::size_t byte_idx = bit_pos / 8;
-            const std::size_t bit_idx = 7 - (bit_pos % 8);
-            bmp_buf[byte_idx] |= static_cast<uint8_t>(1u << bit_idx);
+    if (emit_bitmap() && l_.size() > 1) {
+        auto p = l_.at(1);
+        if (p && p->type() == ISOFieldParserType::BITMAP) {
+            // Regulärer Pfad (praktisch immer aktiv, sobald eine Spec ein
+            // "format: bitmap"-Feld deklariert): die Bitmap-Komponente wurde
+            // bereits korrekt befüllt - entweder 1:1 aus der Original-Wire
+            // beim Dekodieren (siehe unparse(); erhält dabei auch Bits für
+            // undeklarierte/private Felder) oder frisch via
+            // ISOMessage::recalcBitmap() beim Aufbau einer neuen Nachricht.
+            // Hier wird sie nur noch encodiert - kein erneutes Bit-Setzen.
+            auto bmp_comp = m->tryGet< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
+            auto encoded = p->parse(bmp_comp.value());
+            out.insert(out.end(), encoded.begin(), encoded.end());
+            TNG_LOG_TRACE("[ISOBaseParser::parse] Bitmap: {} bytes", encoded.size());
         }
-        bmp_buf.resize(bmp_sz);
-
-        // Extension-Bits: Bit 0 (MSB) von Block 2/3 zeigt Secondary/Tertiary an
-        if (bmp_sz >= 16) bmp_buf[8] |= 0x80u;
-        if (bmp_sz >= 24) bmp_buf[16] |= 0x80u;
-
-        // Bitmap encodieren via Bitmap-FieldParser (trägt das richtige Encoding)
-        if (l_.size() > 1) {
-            auto p = l_.at(1);
-            if (p && p->type() == ISOFieldParserType::BITMAP) {
-                auto bmp_comp = m->tryGet< ::TNG_NAMESPACE::Bitmap >(-1);
-                auto encoded = p->parse(bmp_comp.value());
-                out.insert(out.end(), encoded.begin(), encoded.end());
-                TNG_LOG_TRACE("[ISOBaseParser::parse] Bitmap: {} bytes", encoded.size());
-            }
-            else {
-                out.insert(out.end(), bmp_buf.begin(), bmp_buf.end());
-            }
+        else {
+            // Fallback: kein deklarierter BITMAP-Feldparser an Position 1
+            // (Custom-Protokoll ohne "format: bitmap"-Feld) - siehe
+            // buildFallbackBitmap() oben für Details zur Bit-Konvention.
+            const auto bmp_buf = buildFallbackBitmap(m, l_.size());
+            out.insert(out.end(), bmp_buf.begin(), bmp_buf.end());
         }
     }
 
@@ -112,7 +144,7 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 
     TNG_KEY_TYPE i = ff;
     std::for_each(_begin, _end,
-        [&i, &m, &out, &bmp_buf, this]
+        [&i, &m, &out, this]
         (const std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase>& ptr) -> void
         {
             // Bitmap-Extension-Slots überspringen (DE65, DE129 als Bitmap-Indikator)
@@ -170,7 +202,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         return 0u;
     }
     if (c == nullptr || !c->is_composite()) {
-        fmt::println("WARNING: Invalid component or null-pointer.");
+        TNG_LOG_WARN("[ISOBaseParser] Invalid component or null-pointer");
         return 0u;
     }
 
@@ -188,7 +220,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     }
 
     // -- MTI ------------------------------------------------------------------
-    std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase> p = l_.at(0);
+    std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase> p = l_.at(::TNG_NAMESPACE::Message::MTI_KEY);
     if (p && (
         p->type() != ::TNG_NAMESPACE::ISOFieldParserType::BITMAP &&
         p->type() != ::TNG_NAMESPACE::ISOFieldParserType::UNUSED))
@@ -196,7 +228,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         TNG_LOG_TRACE("[ISOBaseParser] [  MTI] '{}' offset={} use_count={}",
             p->description(), base_offset + consumed, p.use_count());
 
-        auto mti = p->create_component(0);
+        auto mti = p->create_component(::TNG_NAMESPACE::Message::MTI_KEY);
         mti->description(p->description());
         mti->wire_offset(base_offset + consumed);
         const std::size_t mti_bytes = p->unparse(mti, b, consumed);
@@ -214,7 +246,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         TNG_LOG_TRACE("[ISOBaseParser] BMAP1 '{}' offset={}",
             l_.at(1)->description(), base_offset + consumed);
 
-        auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(-1);
+        auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
         bitmap->description(l_.at(1)->description());
         bitmap->wire_offset(base_offset + consumed);
         const std::size_t bmp_bytes = l_.at(1)->unparse(bitmap, b, consumed);

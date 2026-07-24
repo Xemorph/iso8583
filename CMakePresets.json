@@ -34,6 +34,14 @@
         "ISO8583_BUILD_TESTS": "OFF"
       }
     },
+    {
+      "name": "debug-bertlv",
+      "displayName": "Debug (Ninja) - BER-TLV/int32_t-Keys",
+      "inherits": "debug",
+      "cacheVariables": {
+        "ISO8583_BERTLV": "ON"
+      }
+    },
 
     {
       "name": "msvc-debug",
@@ -54,6 +62,22 @@
         "CMAKE_BUILD_TYPE":    "Release",
         "ISO8583_BUILD_TESTS": "OFF"
       }
+    },
+    {
+      "name": "msvc-debug-static",
+      "displayName": "Debug (MSVC) - fmt/yaml-cpp/... statisch in iso8583.dll",
+      "inherits": "msvc-debug",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
+    },
+    {
+      "name": "msvc-release-static",
+      "displayName": "Release (MSVC) - fmt/yaml-cpp/... statisch in iso8583.dll",
+      "inherits": "msvc-release",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
     }
   ],
 
@@ -61,6 +85,10 @@
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "debug-bertlv",
+      "configurePreset": "debug-bertlv"
     },
     {
       "name": "release",
@@ -74,6 +102,16 @@
     {
       "name": "msvc-release",
       "configurePreset": "msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-debug-static",
+      "configurePreset": "msvc-debug-static",
+      "configuration": "Debug"
+    },
+    {
+      "name": "msvc-release-static",
+      "configurePreset": "msvc-release-static",
       "configuration": "Release"
     }
   ],
@@ -92,9 +130,28 @@
       }
     },
     {
+      "name": "debug-bertlv",
+      "displayName": "Alle Tests (Debug, int32_t-Keys)",
+      "configurePreset": "debug-bertlv",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "filter": {
+        "exclude": { "label": "slow" }
+      }
+    },
+    {
       "name": "msvc-debug",
       "displayName": "Alle Tests (MSVC Debug)",
       "configurePreset": "msvc-debug",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-debug-static",
+      "displayName": "Alle Tests (MSVC Debug, statische vcpkg-Libs)",
+      "configurePreset": "msvc-debug-static",
       "configuration": "Debug",
       "output": { "outputOnFailure": true }
     }

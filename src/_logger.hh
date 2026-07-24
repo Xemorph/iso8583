@@ -2,6 +2,8 @@
 
 // [tng/public]
 #include <iso8583/ISOLog.hh>
+// [fmt]
+#include <fmt/format.h>
 
 namespace TNG_NAMESPACE::log {
     ISOLogger* getExternalLogger();

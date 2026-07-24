@@ -14,6 +14,9 @@
 /// │    ISOMessage.hh  – Message object and field types              │
 /// │    ISOSpec.hh     – Loading YAML-Specification                  │
 /// |    ISOLog.hh      -                                             |
+/// │    ISOUtils.hh    – makeBitmap() and other small helpers        │
+/// │    POSDataCode.hh – pos::POSDataCode (POS capability decoding)  │
+/// │    Currency.hh    – currency::Currency (ISO 4217 lookup table)  │
 /// ├-----------------------------------------------------------------┤
 /// │  Advanced users (custom parser)                                 │
 /// │    ISOParser.hh   – only ISOParserPtrBase (astract)             │
@@ -24,7 +27,10 @@
 /// │    src/fmt_types.hh   – IF_BINARY, IFE_CHAR, … (Type-Alias)     │
 /// └-----------------------------------------------------------------┘
 #include "config.h"
-#include "ISOMessage.hh"    // ISOMessage, ISOOpaqueField, ISOBinaryField, …
+#include "ISOMessage.hh"    // Message, OpaqueField, BinaryField, ...
 #include "ISOSpec.hh"       // SpecDecoder::loadFromYaml()
 #include "ISOLog.hh"        // setLevel(), setLogger(), ISOLogger
 #include "ISOParser.hh"     // ISOParserPtrBase (für eigene Parser-Implementierungen)
+#include "ISOUtils.hh"      // utils::makeBitmap()
+#include "POSDataCode.hh"   // pos::POSDataCode
+#include "Currency.hh"      // currency::Currency, findByAlpha()/findByNumeric()

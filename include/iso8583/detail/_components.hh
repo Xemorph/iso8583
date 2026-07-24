@@ -1,6 +1,6 @@
 #pragma once
 
-// [tng/config]
+// [ios8583/config]
 #include "../config.h"
 // [stdc++]
 #include <cassert>
@@ -31,7 +31,7 @@ namespace TNG_NAMESPACE {
 }
 // [nonstd]
 #include "extern/string_view.hpp"
-// [tng]
+// [iso8583]
 #include "_interfaces.hh"
 
 using json = nlohmann::json;
@@ -45,12 +45,13 @@ namespace TNG_NAMESPACE {
     ///
     /// | Typedef             | T                         | Purpose                    |
     /// |---------------------|---------------------------|----------------------------|
-    /// | `ISOOpaqueField`    | `std::string`             | Alphanumeric / EBCDIC / BCD text fields |
-    /// | `ISOBinaryField`    | `std::vector<uint8_t>`    | Raw binary fields (e.g. PIN block, ICC data) |
-    /// | `ISOBitmap`         | `dynamic_bitset<>`        | Primary / secondary bitmap  |
-    /// | `ISOCodeField`      | `int32_t`                 | Integer code fields         |
+    /// | `OpaqueField`    | `std::string`             | Alphanumeric / EBCDIC / BCD text fields |
+    /// | `BinaryField`    | `std::vector<uint8_t>`    | Raw binary fields (e.g. PIN block, ICC data) |
+    /// | `Bitmap`         | `dynamic_bitset<>`        | Primary / secondary bitmap  |
+    /// | `CodeField`      | `int32_t`                 | Integer code fields         |
     ///
-    /// @tparam IntegerType  Must be an integer type no wider than `TNG_KEY_TYPE` (int16_t).
+    /// @tparam IntegerType  Must be an integer type no wider than `TNG_KEY_TYPE`
+    ///                      (`int16_t` by default, `int32_t` with `ISO8583_BERTLV`).
     /// @tparam T            Value type stored in this component.
     template < typename IntegerType, typename T >
     class TNG_EXPORT ISOComponent
@@ -58,7 +59,7 @@ namespace TNG_NAMESPACE {
     {
         static_assert(std::is_integral<IntegerType>::value, "IntegerType must be integral");
         static_assert(sizeof(IntegerType) <= sizeof(TNG_KEY_TYPE),
-            "IntegerType must not be wider than TNG_KEY_TYPE (int16_t).");
+            "IntegerType must not be wider than TNG_KEY_TYPE (int16_t by default, int32_t with ISO8583_BERTLV).");
     protected:
         IntegerType         k_;             ///< DE number (key).
         T                   d_;             ///< Stored value.
@@ -79,7 +80,8 @@ namespace TNG_NAMESPACE {
         /// @brief Sets the DE number.
         void key(IntegerType k);
 
-        /// @brief Returns the DE number as `TNG_KEY_TYPE` (int16_t).
+        /// @brief Returns the DE number as `TNG_KEY_TYPE` (`int16_t` by default,
+        /// `int32_t` when `ISO8583_BERTLV` is defined).
         TNG_KEY_TYPE key() const override;
 
         /// @brief Sets the stored value by copy.
@@ -118,7 +120,7 @@ namespace TNG_NAMESPACE {
         /// @brief Returns `false` – leaf components are not composites.
         virtual bool is_composite() const override;
 
-        virtual void print(bool nested) const override;
+        virtual void dump(std::ostream& os, bool nested = false) const override;
     };
 
     class TNG_EXPORT ISOTaggedField final
@@ -143,7 +145,8 @@ namespace TNG_NAMESPACE {
 // Concrete field typedefs
 // ---------------------------------------------------------------------------
 
-/// @brief Container map type: `int16_t` → `shared_ptr<ISOComponentPtrBase>`.
+/// @brief Container map type: `TNG_KEY_TYPE` (`int16_t` by default, `int32_t`
+/// with `ISO8583_BERTLV`) → `shared_ptr<ISOComponentPtrBase>`.
 typedef TNG_NAMESPACE::detail::flat_map<
     TNG_KEY_TYPE,
     std::shared_ptr<::TNG_NAMESPACE::ISOComponentPtrBase>
@@ -214,6 +217,27 @@ namespace TNG_NAMESPACE {
             OUTGOING = 2, ///< To be sent over the network.
         };
 
+        // ── Reservierte Sentinel-Keys ────────────────────────────────────────
+        //
+        // Drei verschiedene Bedeutungen, die zufällig denselben (ROOT_KEY/
+        // BITMAP_KEY) bzw. einen benachbarten (siehe ISOTLVParser::TCC_KEY,
+        // src/_tlv.hh) Zahlenwert teilen - deshalb bewusst als eigene
+        // Konstanten benannt statt als rohe Literale verstreut:
+        //
+        //   ROOT_KEY   - der eigene `k_` einer ISOMessage, die NICHT als
+        //                Sub-Feld in eine Elternnachricht eingebettet ist
+        //                (siehe isInner()). Property der Nachricht selbst.
+        //   BITMAP_KEY - der Schlüssel, unter dem eine Nachricht IHRE EIGENE
+        //                Bitmap-Komponente in ihrer eigenen Feld-Map (d_)
+        //                ablegt. Property eines Eintrags INNERHALB der
+        //                Nachricht - eine andere Sache als ROOT_KEY, auch
+        //                wenn beide zufällig -1 sind.
+        //   MTI_KEY    - der Schlüssel, unter dem die MTI-Komponente in der
+        //                Feld-Map der Root-Nachricht abgelegt wird.
+        static constexpr TNG_KEY_TYPE ROOT_KEY = -1;
+        static constexpr TNG_KEY_TYPE BITMAP_KEY = -1;
+        static constexpr TNG_KEY_TYPE MTI_KEY = 0;
+
     private:
         ISO_MAP::key_type   hf_;        ///< Highest DE number currently set.
         bool                recalc_;    ///< Bitmap recalculation required flag.
@@ -246,7 +270,7 @@ namespace TNG_NAMESPACE {
 
         std::string readable_value() const override;
         bool is_composite() const override;
-        virtual void print(bool nested) const override;
+        virtual void dump(std::ostream& os, bool nested = false) const override;
         virtual json to_json() const override {
             json j;
             if (k_ == -1)
@@ -275,6 +299,23 @@ namespace TNG_NAMESPACE {
         /// @brief Returns `true` if DE `key` is present in this message.
         /// @param key  DE number to check.
         bool has(const ISO_MAP::key_type& key);
+
+        /// @brief Returns the DE/SE keys currently present in this message,
+        /// sorted ascending.
+        ///
+        /// Internal sentinel keys are excluded: `-1` (the key under which
+        /// this message's own `Bitmap` component is stored in its field map)
+        /// and `-2` (TLV TCC byte) never represent a real DE/SE number and
+        /// would only confuse callers that want to e.g. rebuild a wire
+        /// bitmap from the result (see `iso8583::ISOUtils::makeBitmap()` in
+        /// `<iso8583/ISOUtils.hh>`).
+        ///
+        /// @return Ascending vector of DE/SE numbers with `key >= 0`.
+        ///
+        /// Not `const` for the same reason as @ref get / @ref tryGet: taking
+        /// the internal read-lock (`d_lock_`) requires a non-const `this`
+        /// since `d_lock_` isn't declared `mutable`.
+        std::vector<TNG_KEY_TYPE> keys();
 
         /// @brief Inserts or replaces a field component.
         ///
@@ -661,6 +702,17 @@ namespace TNG_NAMESPACE {
         std::string getRejectCode() const;
 
         friend std::ostream& operator<<(std::ostream& os, const BASE1Header& hdr);
+
+    private:
+        // Cache für source()/destination(): bcd2str() liefert eine frisch
+        // dekodierte std::string (keine View in `header` hinein, sondern echte
+        // neue Zeichen), daher braucht der zurückgegebene string_view einen
+        // Speicher, der mindestens so lange lebt wie das Rückgabeobjekt beim
+        // Aufrufer - hier an die Objektlebensdauer gebunden, statt (fälschlich)
+        // auf ein Funktions-lokales Temporary zu zeigen (siehe bcd2str()-
+        // Implementierung in _components.cc für die ausführliche Erklärung).
+        mutable std::string src_cache_;
+        mutable std::string dst_cache_;
     };
 
     /// @brief WLP Financial Operations (FO) header.
@@ -702,97 +754,6 @@ namespace TNG_NAMESPACE {
         std::unique_ptr<ISOHeader> clone() const override;
     };
 
-    // ── ISOUtils ────────────────────────────────────────────────────────────
-
-    /// @brief Utility functions for working with `ISOMessage` objects.
-    namespace ISOUtils {
-
-        /// @brief Flattens all leaf fields of a message into a `string → string` map.
-        ///
-        /// Keys use dot-notation (`"2"`, `"48.72.1"`).  Values are
-        /// `readable_value()` strings.  Composite fields (nested messages) are
-        /// not included; only their leaf children appear.
-        ///
-        /// @param msg  The message to flatten.
-        /// @return     Map from dot-notation DE key to string value.
-        TNG_EXPORT std::map<std::string, std::string> flatten(const ISOMessage& msg);
-
-        /// @brief Returns the field value or throws if the field is absent or wrong type.
-        ///
-        /// Use when the field **must** be present according to the spec.
-        ///
-        /// @code
-        ///   std::string pan = iso8583::ISOUtils::getOrThrow<ISOOpaqueField>(msg, 2);
-        /// @endcode
-        ///
-        /// @tparam T   Concrete field type.
-        /// @param  msg Reference to the message.
-        /// @param  key DE number.
-        /// @return     The field's value (by copy).
-        /// @throws std::out_of_range if the field is missing or has the wrong type.
-        template <typename T>
-        auto getOrThrow(ISOMessage& msg, TNG_KEY_TYPE key)
-            -> decltype(std::declval<T>().value())
-        {
-            auto opt = msg.tryGet<T>(key);
-            if (!opt)
-                throw std::out_of_range(
-                    "DE" + std::to_string(key) + " missing or wrong type");
-            return (*opt)->value();
-        }
-
-        /// @brief Returns the field value or a caller-supplied default.
-        ///
-        /// Use for optional fields where a sensible default exists.
-        ///
-        /// @code
-        ///   auto currency = iso8583::ISOUtils::getOrDefault<ISOOpaqueField>(msg, 49, "978");
-        /// @endcode
-        ///
-        /// @tparam T            Concrete field type.
-        /// @param  msg          Reference to the message.
-        /// @param  key          DE number.
-        /// @param  defaultValue Value to return when the field is absent.
-        /// @return              The field's value, or `defaultValue`.
-        template <typename T, typename Default>
-        auto getOrDefault(ISOMessage& msg, TNG_KEY_TYPE key, Default&& defaultValue)
-            -> std::decay_t<decltype(std::declval<T>().value())>
-        {
-            using ValueType = std::decay_t<decltype(std::declval<T>().value())>;
-            auto opt = msg.tryGet<T>(key);
-            if (!opt) return ValueType(std::forward<Default>(defaultValue));
-            return (*opt)->value();
-        }
-
-
-        /// @brief Calls `fn` with the field value if the field is present.
-        ///
-        /// Returns `true` when the field was found and `fn` was called.
-        /// Avoids the nested `if (auto opt = ...) { ... }` pattern.
-        ///
-        /// @code
-        ///   iso8583::ISOUtils::ifPresent<ISOOpaqueField>(msg, 11, [](const std::string& stan) {
-        ///       log("STAN: {}", stan);
-        ///   });
-        /// @endcode
-        ///
-        /// @tparam T   Concrete field type.
-        /// @tparam Fn  Callable with signature `void(const ValueType&)`.
-        /// @param  msg Reference to the message.
-        /// @param  key DE number.
-        /// @param  fn  Callback invoked with the field value.
-        /// @return     `true` if the field was found, `false` otherwise.
-        template <typename T, typename Fn>
-        bool ifPresent(ISOMessage& msg, TNG_KEY_TYPE key, Fn&& fn)
-        {
-            auto opt = msg.tryGet<T>(key);
-            if (!opt) return false;
-            std::forward<Fn>(fn)((*opt)->value());
-            return true;
-        }
-
-    } // namespace ISOUtils
-
 }
 
 // =============================================================================
@@ -818,13 +779,13 @@ namespace TNG_NAMESPACE {
 // Deprecated Aliase (Rückwärtskompatibilität – ein Release-Zyklus)
 // =============================================================================
 
-/// @deprecated Verwende iso8583::OpaqueField
+/// @deprecated Verwende `iso8583::OpaqueField`
 typedef ::TNG_NAMESPACE::OpaqueField ISOOpaqueField;
-/// @deprecated Verwende iso8583::BinaryField
+/// @deprecated Verwende `iso8583::BinaryField`
 typedef ::TNG_NAMESPACE::BinaryField ISOBinaryField;
-/// @deprecated Verwende iso8583::FastBinaryField
+/// @deprecated Verwende `iso8583::FastBinaryField`
 typedef ::TNG_NAMESPACE::FastBinaryField ISOFastBinaryField;
-/// @deprecated Verwende iso8583::Bitmap
+/// @deprecated Verwende `iso8583::Bitmap`
 typedef ::TNG_NAMESPACE::Bitmap ISOBitmap;
-/// @deprecated Verwende iso8583::CodeField
+/// @deprecated Verwende `iso8583::CodeField`
 typedef ::TNG_NAMESPACE::CodeField ISOCodeField;

@@ -22,7 +22,7 @@ Field types
 ISOMessage class
 ----------------
 
-.. doxygenclass:: tng::ISOMessage
+.. doxygenclass:: iso8583::ISOMessage
    :project: libiso8583
    :members:
    :undoc-members:
@@ -30,21 +30,17 @@ ISOMessage class
 ISOUtils
 --------
 
-.. doxygennamespace:: tng::ISOUtils
+.. doxygennamespace:: iso8583::ISOUtils
    :project: libiso8583
    :members:
 
 Header classes
 --------------
 
-.. doxygenclass:: tng::BaseHeader
+.. doxygenclass:: iso8583::BaseHeader
    :project: libiso8583
    :members:
 
-.. doxygenclass:: tng::BASE1Header
-   :project: libiso8583
-   :members:
-
-.. doxygenclass:: tng::WLP_FOHeader
+.. doxygenclass:: iso8583::BASE1Header
    :project: libiso8583
    :members:

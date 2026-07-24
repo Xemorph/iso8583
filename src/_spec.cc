@@ -3,10 +3,14 @@
 // [stdc++]
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <shared_mutex>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 // [yaml-cpp]
@@ -64,6 +68,8 @@ namespace TNG_NAMESPACE::spec {
         int tag_bytes = 2;
         int len_bytes = 2;
         bool tcc = false;
+        bool ber = false;    // true = BER-TLV (ISO/IEC 8825-1): variable Tag-/
+                             // Length-Länge, tag_bytes/len_bytes werden ignoriert
         std::string encoding; // leer = erbt von Elternfeld / globalem Encoding
     };
 
@@ -163,6 +169,27 @@ namespace TNG_NAMESPACE::spec {
                         key, fmt);
             }
 
+            // 'format: ...bertlv' ist eine reine Kurzschreibweise für scalare
+            // Felder (siehe parseSpecField) - BER-TLV-Tags sind dynamisch, eine
+            // vorab deklarierte Kinderliste ergibt keinen Sinn. Explizites
+            // 'type: nested', 'children' oder ein eigener 'tlv:'-Block wären
+            // daher widersprüchlich und werden hier abgelehnt.
+            if (field["format"] && field["format"].IsScalar()) {
+                const auto fmtUpper = toUpper(field["format"].as<std::string>());
+                std::size_t p = 0;
+                while (p < fmtUpper.size() && fmtUpper[p] == 'L') ++p;
+                if (fmtUpper.substr(p) == "BERTLV") {
+                    const bool explicitNested = field["type"] &&
+                        toLower(field["type"].as<std::string>()) == "nested";
+                    if (field["children"] || field["tlv"] || explicitNested)
+                        throw SpecValidationError(
+                            "Feld " + key + ": 'format: ...bertlv' ist nur bei "
+                            "scalaren Feldern gültig - 'children', 'tlv' und "
+                            "'type: nested' dürfen nicht zusätzlich gesetzt sein",
+                            field.Mark(), smap);
+                }
+            }
+
             // Nested: erkennbar durch 'children' (oder optionales type: nested)
             const bool isNested = field["children"] ||
                 (field["type"] && field["type"].as<std::string>() == "nested");
@@ -177,10 +204,12 @@ namespace TNG_NAMESPACE::spec {
 
                 if (field["tlv"]) {
                     const auto& tlv = field["tlv"];
-                    if (!tlv["tag_bytes"] || !tlv["len_bytes"])
+                    const bool isBer = tlv["ber"] && tlv["ber"].as<bool>(false);
+                    if (!isBer && (!tlv["tag_bytes"] || !tlv["len_bytes"]))
                         throw SpecValidationError(
                             "TLV-Block im Feld " + key +
-                            " benötigt 'tag_bytes' und 'len_bytes'",
+                            " benötigt 'tag_bytes' und 'len_bytes' "
+                            "(oder 'ber: true' für BER-TLV mit variabler Länge)",
                             tlv.Mark(), smap);
                 }
             }
@@ -205,11 +234,36 @@ namespace TNG_NAMESPACE::spec {
         SpecField f;
         f.format = toUpper(node["format"].as<std::string>(""));
 
+        // ── format: ...BERTLV - Kurzschreibweise für ein BER-TLV-Feld ─────────────
+        // Nur bei scalaren Feldern gültig (siehe validateSpecYaml für die
+        // entsprechende Exklusivitätsprüfung gegen type/children/tlv). Anders
+        // als bei Mastercard/Visa-TLV (fixe, vorab bekannte SE-Liste über
+        // 'children') sind BER-TLV/EMV-Tags dynamisch - eine Kinderliste ergibt
+        // hier keinen Sinn. Es genügt also z.B.:
+        //   "055": { format: lllbertlv, length: 999, description: "ICC Data" }
+        // ohne 'type: nested', 'children:' oder 'tlv:'.
+        bool isBerTlvShorthand = false;
+        {
+            std::size_t p = 0;
+            while (p < f.format.size() && f.format[p] == 'L') ++p;
+            if (f.format.substr(p) == "BERTLV") {
+                isBerTlvShorthand = true;
+                // Auf dem Wire ist das Feld identisch zu einem L(L(L(L)))BINARY-
+                // Container (Längen-Prefix + Binärdaten) - die BER-TLV-Dekodierung
+                // des extrahierten Payloads übernimmt anschließend BERTLVParser.
+                f.format = f.format.substr(0, p) + "BINARY";
+            }
+        }
+
         // 'type' wird aus dem Kontext abgeleitet – kein explizites Pflichtfeld:
+        //   format: ...bertlv  → NESTED (BER-TLV, siehe oben)
         //   children vorhanden → NESTED
         //   alles andere       → SCALAR
         // Ein explizites 'type:' wird akzeptiert wenn vorhanden, aber nie gefordert.
-        if (node["type"]) {
+        if (isBerTlvShorthand) {
+            f.type = SpecFieldType::NESTED;
+        }
+        else if (node["type"]) {
             f.type = fieldTypeFromString(toLower(node["type"].as<std::string>("")));
         }
         else if (node["children"]) {
@@ -263,13 +317,26 @@ namespace TNG_NAMESPACE::spec {
         const std::string& childEnc = isEncodingNeutral(f.format) ? defaultEncoding : f.encoding;
 
         // ── TLV-Block ────────────────────────────────────────────────────────────
-        if (node["tlv"]) {
+        if (isBerTlvShorthand) {
+            // Kein 'tlv:'-Knoten im YAML nötig - 'format: ...bertlv' impliziert
+            // bereits BER-TLV ohne TCC (siehe Kommentar bei isBerTlvShorthand oben).
+            TLVOptions opts;
+            opts.ber = true;
+            f.tlv = opts;
+        }
+        else if (node["tlv"]) {
             const YAML::Node& t = node["tlv"];
             TLVOptions opts;
-            opts.tag_bytes = t["tag_bytes"].as<int>(2);
-            opts.len_bytes = t["len_bytes"].as<int>(2);
+            opts.ber = t["ber"].as<bool>(false);
+            if (!opts.ber) {
+                opts.tag_bytes = t["tag_bytes"].as<int>(2);
+                opts.len_bytes = t["len_bytes"].as<int>(2);
+            }
             opts.tcc = t["tcc"].as<bool>(false);
             opts.encoding = toUpper(t["encoding"].as<std::string>(childEnc));
+            if (opts.ber && opts.tcc)
+                TNG_LOG_WARN("[SpecDecoder] Feld '{}': 'tcc' wird bei BER-TLV "
+                    "ignoriert (BER-TLV kennt kein TCC-Feld)", f.description);
             f.tlv = opts;
         }
 
@@ -392,30 +459,50 @@ namespace TNG_NAMESPACE::spec {
     }
 
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc)
+        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber = false)
     {
         using namespace ::TNG_NAMESPACE;
+
+        // ── BER-TLV: variable Tag-/Length-Länge, kein TCC ─────────────────────
+        if (ber)
+            return std::make_shared<BERTLVParser>();
+
+        // ── Feste Byte-Anzahl (bisheriges Verhalten, jetzt über
+        //    FixedNumericTag/FixedNumericLength statt der ursprünglichen
+        //    4 Template-Parameter TAG_BYTES/LEN_BYTES/TAG_ENC/LEN_ENC) ────────
+#define MAKE_FIXED_TLV(TB, LB, HAS_TCC, ENC) \
+        std::make_shared<ISOTLVParser< \
+            FixedNumericTag<TB, codec::Encoder::ENC>, \
+            FixedNumericLength<LB, codec::Encoder::ENC>, \
+            HAS_TCC, codec::Encoder::ENC>>()
+
         // tag_bytes == 2, len_bytes == 2
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, true, codec::Encoder::ASCII, codec::Encoder::ASCII>>();
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::ASCII)  return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::ASCII, codec::Encoder::ASCII>>();
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, true, EBCDIC);
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, false, EBCDIC);
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 2, true, BCD);
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 2, false, BCD);
+        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::ASCII)  return MAKE_FIXED_TLV(2, 2, true, ASCII);
+        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::ASCII)  return MAKE_FIXED_TLV(2, 2, false, ASCII);
         // tag_bytes == 2, len_bytes == 1
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<2, 1, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<2, 1, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 1, true, EBCDIC);
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 1, false, EBCDIC);
+        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 1, true, BCD);
+        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 1, false, BCD);
         // tag_bytes == 1, len_bytes == 1
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, true, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return std::make_shared<ISOTLVParser<1, 1, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, true, codec::Encoder::BCD, codec::Encoder::BCD>>();
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return std::make_shared<ISOTLVParser<1, 1, false, codec::Encoder::BCD, codec::Encoder::BCD>>();
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(1, 1, true, EBCDIC);
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(1, 1, false, EBCDIC);
+        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(1, 1, true, BCD);
+        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(1, 1, false, BCD);
+
+#undef MAKE_FIXED_TLV
+
         // Fallback
         TNG_LOG_WARN("[SpecDecoder] TLV tag_bytes={} len_bytes={} nicht unterstützt – "
             "Mastercard-Default (2,2,false,EBCDIC)", tag_bytes, len_bytes);
-        return std::make_shared<ISOTLVParser<2, 2, false, codec::Encoder::EBCDIC, codec::Encoder::EBCDIC>>();
+        return std::make_shared<ISOTLVParser<
+            FixedNumericTag<2, codec::Encoder::EBCDIC>,
+            FixedNumericLength<2, codec::Encoder::EBCDIC>,
+            false, codec::Encoder::EBCDIC>>();
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
@@ -438,7 +525,7 @@ namespace TNG_NAMESPACE::spec {
                     if (opts.encoding == "ASCII")  return codec::Encoder::ASCII;
                     return codec::Encoder::EBCDIC;
                     }();
-                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc));
+                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber));
             }
             else {
                 auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
@@ -502,10 +589,11 @@ namespace TNG_NAMESPACE::spec {
         std::map<int, SpecField> fields;
     };
 
-    static LoadedSpec loadAndParse(const std::string& path) {
-        // Preprocessor läuft und baut gleichzeitig die SourceMap auf.
+    static LoadedSpec loadAndParse(const std::string& path, bool trackSourceMap) {
+        // Preprocessor läuft und baut gleichzeitig die SourceMap auf (sofern
+        // trackSourceMap - siehe Kommentar bei preprocessWithSourceMap()).
         // Die Sidecar (.smap) wird automatisch geschrieben/validiert.
-        auto [yaml, smap] = SpecPreProcessor::preprocessWithSourceMap(path);
+        auto [yaml, smap] = SpecPreProcessor::preprocessWithSourceMap(path, trackSourceMap);
         validateSpecYaml(yaml, &smap);
 
         LoadedSpec result;
@@ -538,6 +626,58 @@ namespace TNG_NAMESPACE::spec {
     }
 
     // =============================================================================
+    // In-Prozess-Cache für loadFromYamlCached()/loadBothFromYamlCached()
+    // =============================================================================
+    // Gecached wird das FERTIGE Ergebnis (Parser bzw. Parser+ISOSpec), nicht nur
+    // die YAML-Zwischenrepräsentation - ein Cache-Treffer kostet dadurch nur
+    // noch einen mutex-geschützten Map-Lookup + einen last_write_time()-Aufruf,
+    // statt jedes Mal neu zu parsen/prozessieren/aufzubauen. Invalidierung über
+    // die Datei-Modifikationszeit (kein Datei-Inhalts-Hash - last_write_time()
+    // ist praktisch kostenlos, ein Hash würde die Datei erneut lesen).
+    //
+    // Zwei getrennte Caches (statt einem gemeinsamen): vermeidet den Sonderfall
+    // "für denselben Pfad wurde vorher nur der Parser gecacht, jetzt wird aber
+    // auch das ISOSpec gebraucht" - beide Cache-Varianten sind unabhängig
+    // voneinander bef üllt, auf Kosten von im Edge-Case doppelt gecachten Daten
+    // für Pfade, die über BEIDE Funktionen geladen werden.
+    struct ParserCacheEntry {
+        std::filesystem::file_time_type mtime;
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser;
+    };
+    struct BothCacheEntry {
+        std::filesystem::file_time_type mtime;
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser;
+        ISOSpec::SmartPtr spec;
+    };
+
+    static std::shared_mutex& parserCacheMutex() {
+        static std::shared_mutex m;
+        return m;
+    }
+    static std::unordered_map<std::string, ParserCacheEntry>& parserCache() {
+        static std::unordered_map<std::string, ParserCacheEntry> cache;
+        return cache;
+    }
+    static std::shared_mutex& bothCacheMutex() {
+        static std::shared_mutex m;
+        return m;
+    }
+    static std::unordered_map<std::string, BothCacheEntry>& bothCache() {
+        static std::unordered_map<std::string, BothCacheEntry> cache;
+        return cache;
+    }
+
+    /// Anführungspfad->last_write_time(); wirft NICHT bei fehlender Datei -
+    /// gibt stattdessen einen "immer ungültigen" Zeitstempel zurück, damit der
+    /// eigentliche (aussagekräftige) Dateifehler beim normalen Ladepfad auftritt,
+    /// statt hier eine zweite, redundante Fehlermeldung zu produzieren.
+    static std::filesystem::file_time_type tryGetMTime(const std::string& absPath) {
+        std::error_code ec;
+        auto t = std::filesystem::last_write_time(absPath, ec);
+        return ec ? std::filesystem::file_time_type::min() : t;
+    }
+
+    // =============================================================================
     // ISOSpec – öffentliche Methoden
     // =============================================================================
 
@@ -558,10 +698,10 @@ namespace TNG_NAMESPACE::spec {
     // =============================================================================
 
     ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-        SpecDecoder::loadFromYaml(const std::string& path)
+        SpecDecoder::loadFromYaml(const std::string& path, bool trackSourceMap)
     {
         try {
-            const auto loaded = loadAndParse(path);
+            const auto loaded = loadAndParse(path, trackSourceMap);
             auto parser = buildParser(loaded);
             TNG_LOG_INFO("[SpecDecoder] loadFromYaml '{}' – {} Felder, header={}B",
                 loaded.desc, loaded.fields.size(), loaded.hdr_sz);
@@ -573,13 +713,49 @@ namespace TNG_NAMESPACE::spec {
         }
     }
 
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFromYamlCached(const std::string& path, bool trackSourceMap,
+            CacheValidation validation)
+    {
+        const auto absPath = std::filesystem::absolute(path).string();
+
+        if (validation == CacheValidation::TrustUntilInvalidated) {
+            // Kein last_write_time()-Aufruf (Systemaufruf, ~0.9 us gemessen) -
+            // ein Cache-Treffer ist hier nur noch Map-Lookup + shared_ptr-Kopie
+            // (~25 ns). Erkennt Dateiänderungen NICHT automatisch - siehe
+            // Doku bei CacheValidation/invalidateCache().
+            std::shared_lock lock(parserCacheMutex());
+            auto it = parserCache().find(absPath);
+            if (it != parserCache().end()) {
+                TNG_LOG_DEBUG("[SpecDecoder] loadFromYamlCached '{}' – Cache-Treffer (ungeprüft)", absPath);
+                return it->second.parser;
+            }
+        }
+        else {
+            const auto mtime = tryGetMTime(absPath);
+            std::shared_lock lock(parserCacheMutex());
+            auto it = parserCache().find(absPath);
+            if (it != parserCache().end() && it->second.mtime == mtime) {
+                TNG_LOG_DEBUG("[SpecDecoder] loadFromYamlCached '{}' – Cache-Treffer", absPath);
+                return it->second.parser;
+            }
+        }
+
+        auto parser = loadFromYaml(path, trackSourceMap);
+        const auto mtime = tryGetMTime(absPath);
+
+        std::unique_lock lock(parserCacheMutex());
+        parserCache()[absPath] = ParserCacheEntry{ mtime, parser };
+        return parser;
+    }
+
     std::pair<
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
         ISOSpec::SmartPtr>
-        SpecDecoder::loadBothFromYaml(const std::string& path)
+        SpecDecoder::loadBothFromYaml(const std::string& path, bool trackSourceMap)
     {
         try {
-            const auto loaded = loadAndParse(path);
+            const auto loaded = loadAndParse(path, trackSourceMap);
             auto parser = buildParser(loaded);
 
             std::vector<SpecFieldInfo> infos;
@@ -597,6 +773,63 @@ namespace TNG_NAMESPACE::spec {
         catch (const std::exception& e) {
             TNG_LOG_ERROR("[SpecDecoder] loadBothFromYaml '{}' fehlgeschlagen: {}", path, e.what());
             throw;
+        }
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadBothFromYamlCached(const std::string& path, bool trackSourceMap,
+            CacheValidation validation)
+    {
+        const auto absPath = std::filesystem::absolute(path).string();
+
+        if (validation == CacheValidation::TrustUntilInvalidated) {
+            std::shared_lock lock(bothCacheMutex());
+            auto it = bothCache().find(absPath);
+            if (it != bothCache().end()) {
+                TNG_LOG_DEBUG("[SpecDecoder] loadBothFromYamlCached '{}' – Cache-Treffer (ungeprüft)", absPath);
+                return { it->second.parser, it->second.spec };
+            }
+        }
+        else {
+            const auto mtime = tryGetMTime(absPath);
+            std::shared_lock lock(bothCacheMutex());
+            auto it = bothCache().find(absPath);
+            if (it != bothCache().end() && it->second.mtime == mtime) {
+                TNG_LOG_DEBUG("[SpecDecoder] loadBothFromYamlCached '{}' – Cache-Treffer", absPath);
+                return { it->second.parser, it->second.spec };
+            }
+        }
+
+        auto [parser, spec] = loadBothFromYaml(path, trackSourceMap);
+        const auto mtime = tryGetMTime(absPath);
+
+        std::unique_lock lock(bothCacheMutex());
+        bothCache()[absPath] = BothCacheEntry{ mtime, parser, spec };
+        return { parser, spec };
+    }
+
+    void SpecDecoder::invalidateCache(const std::string& path) {
+        const auto absPath = std::filesystem::absolute(path).string();
+        {
+            std::unique_lock lock(parserCacheMutex());
+            parserCache().erase(absPath);
+        }
+        {
+            std::unique_lock lock(bothCacheMutex());
+            bothCache().erase(absPath);
+        }
+    }
+
+    void SpecDecoder::clearCache() {
+        {
+            std::unique_lock lock(parserCacheMutex());
+            parserCache().clear();
+        }
+        {
+            std::unique_lock lock(bothCacheMutex());
+            bothCache().clear();
         }
     }
 

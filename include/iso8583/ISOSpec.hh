@@ -25,9 +25,10 @@
 ///     for (const auto& f : spec->fields())
 ///         fmt::print("DE{:03d}: {}\n", f.key, f.description);
 
+// [iso8583]
 #include "config.h"
 #include "detail/_interfaces.hh"
-
+// [stdc++]
 #include <memory>
 #include <optional>
 #include <string>
@@ -79,7 +80,7 @@ namespace TNG_NAMESPACE {
         ///
         /// Returned by @ref ISOSpec::field and iterated via @ref ISOSpec::fields.
         struct TNG_EXPORT SpecFieldInfo {
-            /// @brief DE number – same key used in @ref iso8583::ISOMessage.
+            /// @brief DE number – same key used in @ref `iso8583::Message`.
             TNG_KEY_TYPE key = 0;
 
             /// @brief Human-readable field name from the YAML `description:` key.
@@ -202,6 +203,29 @@ namespace TNG_NAMESPACE {
         ///   - `!use <name>`            – substitute a named definition
         ///   - `!template P(F, N)`      – variable-length shorthand (e.g. `LL(CHAR, 19)`)
         ///   - `!merge [...]`           – merge maps, later entries overwrite
+        /// @brief Steuert, wie @ref SpecDecoder::loadFromYamlCached (und
+        /// `loadBothFromYamlCached`) bei einem Cache-Treffer die Aktualität
+        /// der Datei prüfen.
+        enum class CacheValidation {
+            /// @brief Default. Vergleicht bei JEDEM Aufruf `last_write_time()`
+            /// der Datei mit dem beim Cachen gespeicherten Stand - erkennt
+            /// Änderungen automatisch, kostet aber einen `stat()`-artigen
+            /// Systemaufruf pro Aufruf (gemessen: ~0.9 us von insgesamt ~1.2 us
+            /// für einen Cache-Treffer - der eigentliche Map-Lookup kostet nur
+            /// ~25 ns).
+            CheckEveryCall,
+            /// @brief Kein Dateisystem-Zugriff bei einem Cache-Treffer (nur
+            /// noch Map-Lookup + shared_ptr-Kopie, ~25 ns statt ~1.2 us) -
+            /// dafür wird eine Änderung der Datei NICHT automatisch erkannt.
+            /// Nur sinnvoll, wenn die Anwendung selbst weiß, wann sich eine
+            /// Spec geändert hat (z.B. über einen eigenen Datei-Watcher oder
+            /// ein explizites Reload-Signal) und dann @ref invalidateCache
+            /// selbst aufruft. Für Specs, die zur Laufzeit ohnehin nie
+            /// verändert werden (der Normalfall in Produktion), gibt es
+            /// keinen Nachteil gegenüber `CheckEveryCall`.
+            TrustUntilInvalidated
+        };
+
         class TNG_EXPORT SpecDecoder {
         public:
             /// @brief Loads a parser from a YAML spec file.
@@ -211,11 +235,49 @@ namespace TNG_NAMESPACE {
             ///     auto parser = iso8583::spec::SpecDecoder::loadFromYaml("mc.yml");
             ///     msg->parser(parser);
             ///
-            /// @param path Path to the root YAML spec file.
+            /// @param path            Path to the root YAML spec file.
+            /// @param trackSourceMap  When `false`, skips per-node source position
+            ///        tracking during preprocessing - this is the dominant cost of
+            ///        loading a spec (far more than the actual YAML parsing or
+            ///        building the field-parser tree), since every single YAML
+            ///        node otherwise gets a `SourceLocation` entry recorded. Error
+            ///        messages then fall back to the position in the already-
+            ///        processed (`!use`/`!template`/`!merge`-resolved) document
+            ///        instead of the original source file - for a spec that
+            ///        doesn't use those directives (the common case) this is
+            ///        exactly as precise; for one that does, less precise. If a
+            ///        valid `.smap` sidecar already exists from an earlier
+            ///        `trackSourceMap=true` load, it's reused regardless - full
+            ///        precision "for free", without repeating the expensive
+            ///        tracking. Default `true` preserves prior behaviour exactly.
             /// @return Opaque smart pointer to the configured parser.
             /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
             static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-                loadFromYaml(const std::string& path);
+                loadFromYaml(const std::string& path, bool trackSourceMap = true);
+
+            /// @brief Like @ref loadFromYaml, but caches the resulting parser
+            /// in-process, keyed by absolute path.
+            ///
+            /// A repeat call for the same (unmodified) file is just a
+            /// lock-guarded map lookup - no YAML parsing, no preprocessing, no
+            /// rebuilding the field-parser tree. Prefer this over `loadFromYaml`
+            /// whenever the same spec file may be loaded more than once during
+            /// the process lifetime (e.g. one call site reused across many
+            /// short-lived requests/workers) rather than exactly once at startup.
+            ///
+            /// Thread-safe: concurrent calls for the same or different paths are
+            /// safe; a cache miss for one path never blocks lookups for another.
+            ///
+            /// @param path            Path to the root YAML spec file.
+            /// @param trackSourceMap  Only relevant on a cache miss - see @ref loadFromYaml.
+            /// @param validation      See @ref CacheValidation. Default
+            ///        `CheckEveryCall` preserves prior behaviour exactly.
+            /// @return Opaque smart pointer to the configured parser (shared
+            ///         across all callers that hit the cache for this path).
+            /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFromYamlCached(const std::string& path, bool trackSourceMap = true,
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
 
             /// @brief Loads both a parser and an introspectable spec object.
             ///
@@ -230,13 +292,39 @@ namespace TNG_NAMESPACE {
             ///     for (const auto& f : spec->fields())
             ///         fmt::print("DE{:03d}: {}\n", f.key, f.description);
             ///
-            /// @param path Path to the root YAML spec file.
+            /// @param path            Path to the root YAML spec file.
+            /// @param trackSourceMap  See @ref loadFromYaml.
             /// @return Pair of `{parser, spec}`.
             /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
             static std::pair<
                 ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
                 ISOSpec::SmartPtr>
-                loadBothFromYaml(const std::string& path);
+                loadBothFromYaml(const std::string& path, bool trackSourceMap = true);
+
+            /// @brief Like @ref loadBothFromYaml, but caches the result
+            /// in-process - see @ref loadFromYamlCached for the caching/
+            /// validation contract (kept in a separate cache from
+            /// `loadFromYamlCached`, so mixing both call styles for the same
+            /// path is safe but not deduplicated against each other).
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadBothFromYamlCached(const std::string& path, bool trackSourceMap = true,
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
+
+            /// @brief Removes `path` from both in-process caches (@ref
+            /// loadFromYamlCached and `loadBothFromYamlCached`), if present.
+            ///
+            /// Required when using `CacheValidation::TrustUntilInvalidated`
+            /// and the underlying file has actually changed (e.g. triggered by
+            /// your own file-watcher or a config-reload signal) - with the
+            /// default `CheckEveryCall` this is never necessary (changes are
+            /// picked up automatically), but calling it is always safe either
+            /// way. A no-op if `path` isn't currently cached.
+            static void invalidateCache(const std::string& path);
+
+            /// @brief Clears both in-process caches entirely.
+            static void clearCache();
         };
 
     } // namespace spec

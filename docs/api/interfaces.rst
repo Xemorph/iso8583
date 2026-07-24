@@ -6,33 +6,33 @@ These are the base classes for advanced users implementing custom parsers.
 ISOComponentPtrBase
 -------------------
 
-.. doxygenclass:: tng::ISOComponentPtrBase
+.. doxygenclass:: iso8583::ISOComponentPtrBase
    :project: libiso8583
    :members:
 
 ISOFieldParserType
 ------------------
 
-.. doxygenenum:: tng::ISOFieldParserType
+.. doxygenenum:: iso8583::ISOFieldParserType
    :project: libiso8583
 
 ISOFieldParserPtrBase
 ---------------------
 
-.. doxygenclass:: tng::ISOFieldParserPtrBase
+.. doxygenclass:: iso8583::ISOFieldParserPtrBase
    :project: libiso8583
    :members:
 
 ISOParserPtrBase
 ----------------
 
-.. doxygenclass:: tng::ISOParserPtrBase
+.. doxygenclass:: iso8583::ISOParserPtrBase
    :project: libiso8583
    :members:
 
 ISOHeader
 ---------
 
-.. doxygenclass:: tng::ISOHeader
+.. doxygenclass:: iso8583::ISOHeader
    :project: libiso8583
    :members:

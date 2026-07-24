@@ -2,6 +2,7 @@
 
 // [stdc++]
 #include <deque>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -32,7 +33,9 @@ namespace TNG_NAMESPACE {
         // Description of this un/parser
         std::string d_;
         // For implementations where the tertiary bitmap is inside a Data Element (DE)
-        TNG_KEY_TYPE bmp_3rd_ = INT16_MIN;
+        // Sentinel "nicht gesetzt": kleinstmöglicher Wert des jeweils aktiven
+        // TNG_KEY_TYPE (int16_t standardmäßig, int32_t mit ISO8583_BERTLV).
+        TNG_KEY_TYPE bmp_3rd_ = std::numeric_limits<TNG_KEY_TYPE>::min();
         // Header size if applicable;
         std::size_t hdr_sz_ = 0u;
     public:

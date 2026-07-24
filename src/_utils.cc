@@ -19,56 +19,8 @@ std::string TNG_NAMESPACE::utils::getSetBMPFieldsCSV(const dynamic_bitset<>& bit
     return oss.str();
 }
 
-template<char MaskChar>
-std::string TNG_NAMESPACE::utils::protect(const std::string& s) {
-    static_assert(std::is_same<decltype(MaskChar), char>::value, "The masking char (MaskChar) must be a typeof char");
-
-    // Disallow newline or null character as mask (compile-time validation)
-    static_assert(MaskChar != '\0', "Mask character cannot be null");
-    static_assert(MaskChar != '\n', "Mask character cannot be newline");
-
-    const std::size_t len = s.length();
-    if (len <= 4) {
-        return std::string(len, MaskChar);
-    }
-
-    std::string result = s;
-
-    // Find separator: either '^' or '='
-    std::size_t sepPos = s.find('^');
-    if (sepPos == std::string::npos) {
-        sepPos = s.find('=');
-    }
-
-    if (sepPos == std::string::npos) {
-        sepPos = len;
-    }
-
-    if (sepPos < 6) {
-        return s;
-    }
-
-    const std::size_t lastDigitStart = sepPos >= 4 ? sepPos - 4 : 6;
-
-    // Mask middle section, excluding BIN and last 4 digits
-    for (std::size_t i = 6; i < lastDigitStart; ++i) {
-        result[i] = MaskChar;
-    }
-
-    // Mask characters after separator (excluding '=' and '^')
-    if (sepPos < len) {
-        for (std::size_t i = sepPos + 1; i < len; ++i) {
-            if (result[i] != '=' && result[i] != '^') {
-                result[i] = MaskChar;
-            }
-        }
-    }
-
-    return result;
-}
-// Explizite Instanziierungen
-template std::string TNG_NAMESPACE::utils::protect<'_'>(const std::string&);
-template std::string TNG_NAMESPACE::utils::protect<'*'>(const std::string&);
+// protect<>() ist jetzt header-only implementiert (siehe _utils.hh) - kein
+// Export-/Instanziierungs-Ärger mehr über DLL-/SO-Grenzen hinweg.
 
 /*
 template <typename T>

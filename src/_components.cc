@@ -1,4 +1,5 @@
 #include <iso8583/detail/_components.hh>
+#include <iso8583/ISOUtils.hh>
 // [stdc++]
 #include <iostream>
 // [tng/parser]
@@ -6,10 +7,6 @@
 #include "_utils.hh"
 // [tng/logger]
 #include "_logger.hh"
-// [fmt]
-#define FMT_UNICODE 1
-#include <fmt/format.h>
-#include <fmt/ranges.h>
 // [tng/date]
 #include "_date.hh"
 
@@ -47,6 +44,15 @@ T& TNG_NAMESPACE::ISOComponent<IntegerType, T>::value() {
     return d_;
 }
 
+// Byte -> 2-stelliges Großbuchstaben-Hex ("0A", "FF", ...), ohne fmt::format -
+// eine simple Lookup-Tabelle ist für einen pro-Byte-Hot-Path ohnehin sowohl
+// einfacher als auch schneller als ein Format-String-Aufruf pro Byte.
+static void appendHexByte(std::string& out, uint8_t b) {
+    static constexpr char kHexDigits[] = "0123456789ABCDEF";
+    out += kHexDigits[(b >> 4) & 0x0F];
+    out += kHexDigits[b & 0x0F];
+}
+
 template < typename IntegerType, typename T >
 std::string TNG_NAMESPACE::ISOComponent<IntegerType, T>::readable_value() const {
     if constexpr (std::is_same_v<T, dynamic_bitset<>>)
@@ -56,7 +62,7 @@ std::string TNG_NAMESPACE::ISOComponent<IntegerType, T>::readable_value() const 
         hex.reserve(d_.size() * 2);
 
         for (auto b : d_)
-            hex += fmt::format("{:02X}", b);
+            appendHexByte(hex, b);
 
         return hex;
     }
@@ -94,35 +100,51 @@ bool TNG_NAMESPACE::ISOComponent<IntegerType, T>::is_composite() const {
 }
 
 template < typename IntegerType, typename T >
-void TNG_NAMESPACE::ISOComponent<IntegerType, T>::print(bool nested) const {
-    if constexpr (std::is_same_v< T, dynamic_bitset<> >)
-        fmt::print("{}BMP## {:.<48} [{}] =vorhandene Datenfelder\n",
-            nested ? "\u2500\u2574" : "\u251C\u2574", desc_, ::TNG_NAMESPACE::utils::getSetBMPFieldsCSV((static_cast<dynamic_bitset<>>(d_)))); //(static_cast<dynamic_bitset<>>(d_)).to_string('0', '1'));//
-    else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
-        fmt::print("{}DE{:03} {:.<48} [0x{:X}]\n",
-            nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, fmt::join(d_, ""));
-    else if constexpr (std::is_same_v< T, ISO_MAP >)
-        fmt::print("{}DE{:03}: \"Currently unsupported\"\n",
-            nested ? "\u2500\u2574" : "\u251C\u2574", k_);
-    else if constexpr (std::is_same_v< T, std::string >) {
-        if (!expl_.empty())
-            /*
-            if (k_ == 2 && !nested)
-                fmt::print("{}DE{:03} {:.<48} [{}] ={}\n",
-                    nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, tng::utils::protect<'#'>(d_), expl_);
-            else*/
-            fmt::print("{}DE{:03} {:.<48} [{}] ={}\n",
-                nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, d_, expl_);
-        else
-            /*
-            if (k_ == 2 && !nested)
-                fmt::print("{}DE{:03} {:.<48} [{}]\n",
-                    nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, tng::utils::protect<'#'>(d_));
-            else*/
-            fmt::print("{}DE{:03} {:.<48} [{}]\n",
-                nested ? "\u2500\u2574" : "\u251C\u2574", k_, desc_, d_);
+void TNG_NAMESPACE::ISOComponent<IntegerType, T>::dump(std::ostream& os, bool nested) const {
+    // Stream-Flags/Fill-Zeichen sichern und am Ende garantiert wiederherstellen
+    // (auch bei Exceptions) - guter Stil für operator<<-Implementierungen:
+    // der Aufrufer darf nicht mit verändertem Stream-Zustand zurückbleiben.
+    const std::ios::fmtflags saved_flags = os.flags();
+    const char saved_fill = os.fill();
+    struct RestoreGuard {
+        std::ostream& os;
+        std::ios::fmtflags flags;
+        char fill;
+        ~RestoreGuard() { os.flags(flags); os.fill(fill); }
+    } guard{ os, saved_flags, saved_fill };
+
+    const char* connector = nested ? "\u2500\u2574" : "\u251C\u2574";
+
+    if constexpr (std::is_same_v< T, dynamic_bitset<> >) {
+        os << connector << "BMP## "
+            << std::left << std::setfill('.') << std::setw(48) << desc_
+            << std::right << std::setfill(' ')
+            << " [" << ::TNG_NAMESPACE::utils::getSetBMPFieldsCSV(static_cast<dynamic_bitset<>>(d_))
+            << "] =vorhandene Datenfelder\n";
     }
-    else return;
+    else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
+        std::string hex;
+        hex.reserve(d_.size() * 2);
+        for (const auto b : d_)
+            appendHexByte(hex, b);
+
+        os << connector << "DE" << std::setfill('0') << std::setw(3) << k_ << " "
+            << std::left << std::setfill('.') << std::setw(48) << desc_
+            << std::right << std::setfill(' ')
+            << " [0x" << hex << "]\n";
+    }
+    else if constexpr (std::is_same_v< T, ISO_MAP >) {
+        os << connector << "DE" << std::setfill('0') << std::setw(3) << k_
+            << ": \"Currently unsupported\"\n";
+    }
+    else if constexpr (std::is_same_v< T, std::string >) {
+        os << connector << "DE" << std::setfill('0') << std::setw(3) << k_ << " "
+            << std::left << std::setfill('.') << std::setw(48) << desc_
+            << std::right << std::setfill(' ') << " [" << d_ << "]";
+        if (!expl_.empty())
+            os << " =" << expl_;
+        os << "\n";
+    }
 }
 
 template < typename IntegerType, typename T >
@@ -137,8 +159,9 @@ json TNG_NAMESPACE::ISOComponent<IntegerType, T>::to_json() const {
     else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
         // Spezielle Verarbeitung für std::vector<uint8_t>
         std::string hex_str;
+        hex_str.reserve(d_.size() * 2);
         for (auto byte : d_) {
-            hex_str += fmt::format("{:02X}", byte);
+            appendHexByte(hex_str, byte);
         }
         j["value"] = hex_str;
     }
@@ -188,7 +211,7 @@ template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
 
 
 TNG_NAMESPACE::ISOMessage::ISOMessage()
-    : ISOComponent(-1), hf_(-1), recalc_(true)
+    : ISOComponent(ROOT_KEY), hf_(-1), recalc_(true)
 {
     description("N/A"_sv);
 }
@@ -198,14 +221,14 @@ TNG_NAMESPACE::ISOMessage::ISOMessage(const ISO_MAP::key_type& key)
     description("N/A"_sv);
 }
 TNG_NAMESPACE::ISOMessage::ISOMessage(nonstd::string_view mti)
-    : ISOComponent(-1), hf_(-1), recalc_(true)
+    : ISOComponent(ROOT_KEY), hf_(-1), recalc_(true)
 {
     description("N/A"_sv);
     if (isInner()) {
         TNG_LOG_ERROR("[ISOMessage::()] Cannot set MTI on inner message");
         return;
     }
-    set(std::make_shared<ISOOpaqueField>(0, nonstd::to_string(mti)));
+    set(std::make_shared<OpaqueField>(MTI_KEY, nonstd::to_string(mti)));
 }
 
 // Composites are just container and do not contain any usefull values.
@@ -218,41 +241,66 @@ bool TNG_NAMESPACE::ISOMessage::is_composite() const {
     return true;
 }
 
-void TNG_NAMESPACE::ISOMessage::print(bool nested) const {
-    if (is_composite()) {
-        if (key() == -1) {
-            if (!expl_.empty())
-                fmt::print("\u252C\x1b[4m{}\x1b[0m: [ISOMessage]\n", expl_);
-            else
-                fmt::print("\u252CISOMessage:\n");
-        }
-        else {
-            fmt::print("{}DE{:03} {}:\n", "\u253C", k_, desc_);
-        }
+void TNG_NAMESPACE::ISOMessage::dump(std::ostream& os, bool nested) const {
+    if (!is_composite()) return;
 
-        ISO_MAP_CONST_ITERATOR citr = d_.cbegin();
-        while (citr != d_.cend()) {
-            // bmp
-            const ISO_MAP::key_type de = citr->first;
-            // print
-            if (key() > -1)
-                if (std::distance(citr, d_.cend()) == 1)
-                    fmt::print("{}{}", "\u2514", "\u2574");
-                else
-                    fmt::print("{}{}", "\u251C", "\u2574");
-            citr->second->print((key() > -1 ? true : false));
-            // increment
-            citr++;
+    if (key() == ROOT_KEY) {
+        if (!expl_.empty())
+            os << "\u252C\x1b[4m" << expl_ << "\x1b[0m: [ISOMessage]\n";
+        else
+            os << "\u252CISOMessage:\n";
+    }
+    else {
+        const std::ios::fmtflags saved_flags = os.flags();
+        const char saved_fill = os.fill();
+        os << "\u253CDE" << std::setfill('0') << std::setw(3) << k_ << " " << desc_ << ":\n";
+        os.flags(saved_flags);
+        os.fill(saved_fill);
+    }
+
+    ISO_MAP_CONST_ITERATOR citr = d_.cbegin();
+    while (citr != d_.cend()) {
+        // print
+        if (key() > ROOT_KEY) {
+            if (std::distance(citr, d_.cend()) == 1)
+                os << "\u2514\u2574";
+            else
+                os << "\u251C\u2574";
         }
+        citr->second->dump(os, (key() > ROOT_KEY ? true : false));
+        // increment
+        citr++;
     }
 }
 
 bool TNG_NAMESPACE::ISOMessage::has(const ISO_MAP::key_type& key) {
+    // Guarded by std::mutex -> shared read
+    std::shared_lock<std::shared_mutex> lock(d_lock_);
     // Try to find element
     ISO_MAP_ITERATOR itr = d_.find(key);
     if (itr == d_.end())
         return false;
     return true;
+}
+
+std::vector<TNG_KEY_TYPE> TNG_NAMESPACE::ISOMessage::keys() {
+    std::shared_lock<std::shared_mutex> lock(d_lock_);
+
+    // std::transform statt manueller for-Schleife für die reine
+    // Key-Extraktion (1:1-Abbildung Paar -> .first). Filtern kann
+    // std::transform selbst nicht - deshalb werden die (höchstens zwei)
+    // negativen Sentinels -1 (eigene Bitmap) und -2 (TLV TCC) NICHT während
+    // der Extraktion geprüft, sondern nach dem ohnehin nötigen std::sort in
+    // einem Rutsch am Anfang der sortierten Liste abgeschnitten - alles
+    // Negative steht dort garantiert vor den echten (>= 0) DE/SE-Schlüsseln.
+    std::vector<TNG_KEY_TYPE> out;
+    out.reserve(d_.size());
+    std::transform(d_.begin(), d_.end(), std::back_inserter(out),
+        [](const ISO_MAP::value_type& kv) { return kv.first; });
+
+    std::sort(out.begin(), out.end());
+    out.erase(out.begin(), std::lower_bound(out.begin(), out.end(), MTI_KEY));
+    return out;
 }
 
 bool TNG_NAMESPACE::ISOMessage::set(ISO_MAP::mapped_type component) {
@@ -500,11 +548,20 @@ void TNG_NAMESPACE::ISOMessage::recalcBitmap() {
 
     dynamic_bitset<> bmap(bmap_size + 1); // +1: dynamic_bitset nutzt Index 0 nicht
 
-    for (int i = 1; i <= mf; ++i)
-        if (d_.count(static_cast<TNG_KEY_TYPE>(i)))
-            bmap.set(static_cast<std::size_t>(i));
+    // Über die tatsächlich gesetzten Felder in d_ iterieren, statt bis zu
+    // 192 einzelne Hash-Lookups (d_.count(i) für jedes i von 1..mf)
+    // durchzuführen. d_ enthält bei typischen ISO-8583-Nachrichten deutlich
+    // weniger als 192 Einträge (üblich: 10-30 Felder), daher ist das
+    // direkte Iterieren über d_ hier günstiger. BITMAP_KEY (-1) und
+    // MTI_KEY (0) werden durch die "key >= 1"-Bedingung automatisch
+    // ausgeschlossen, exakt wie beim vorherigen "for i = 1..mf"-Loop.
+    for (const auto& kv : d_) {
+        const auto key = kv.first;
+        if (key >= 1 && key <= mf)
+            bmap.set(static_cast<std::size_t>(key));
+    }
 
-    auto bitmap = std::make_shared<::TNG_NAMESPACE::Bitmap>(-1);
+    auto bitmap = std::make_shared<::TNG_NAMESPACE::Bitmap>(ISOMessage::BITMAP_KEY);
     bitmap->value(bmap);
     set(bitmap);
 
@@ -547,98 +604,72 @@ TNG_NAMESPACE::ISOMessage::Direction TNG_NAMESPACE::ISOMessage::direction() {
 
 
 bool TNG_NAMESPACE::ISOMessage::isInner() const {
-    return (k_ > -1);
+    return (k_ > ROOT_KEY);
 }
 
 bool TNG_NAMESPACE::ISOMessage::hasMTI() {
     if (isInner())
         return false; // No need for exception
-    return (has(0));
+    return (has(MTI_KEY));
 }
 
 nonstd::string_view TNG_NAMESPACE::ISOMessage::mti() {
     if (isInner())
         throw std::logic_error("MTI cannot be in inner data elements");
-    if (!has(0))
+    if (!has(MTI_KEY))
         throw std::logic_error("No MTI data element found");
-    return (get<::TNG_NAMESPACE::OpaqueField>(0)->value());
+    return (get<::TNG_NAMESPACE::OpaqueField>(MTI_KEY)->value());
 }
 
 bool TNG_NAMESPACE::ISOMessage::isRequest() {
-    return (((int)mti().at(2) - '0') % 2 == 0);
+    return (has(MTI_KEY) && (((int)mti().at(2) - '0') % 2 == 0));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isResponse() {
-    return (!isRequest());
+    return (has(MTI_KEY) && !isRequest());
 }
 
 bool TNG_NAMESPACE::ISOMessage::isAuthorization() {
-    return (has(0) && (mti().at(1) == '1'));
+    return (has(MTI_KEY) && (mti().at(1) == '1'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFinancial() {
-    return (has(0) && (mti().at(1) == '2'));
+    return (has(MTI_KEY) && (mti().at(1) == '2'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFileAction() {
-    return (has(0) && (mti().at(1) == '3'));
+    return (has(MTI_KEY) && (mti().at(1) == '3'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isReversal() {
-    return (has(0) && (mti().at(1) == '4') && ((mti().at(3) == '0') || (mti().at(3) == '1')));
+    return (has(MTI_KEY) && (mti().at(1) == '4') && ((mti().at(3) == '0') || (mti().at(3) == '1')));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isChargeback() {
-    return (has(0) && (mti().at(1) == '4') && ((mti().at(3) == '2') || (mti().at(3) == '3')));
+    return (has(MTI_KEY) && (mti().at(1) == '4') && ((mti().at(3) == '2') || (mti().at(3) == '3')));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isReconciliation() {
-    return (has(0) && (mti().at(1) == '5'));
+    return (has(MTI_KEY) && (mti().at(1) == '5'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isAdministrative() {
-    return (has(0) && (mti().at(1) == '6'));
+    return (has(MTI_KEY) && (mti().at(1) == '6'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFeeCollection() {
-    return (has(0) && (mti().at(1) == '7'));
+    return (has(MTI_KEY) && (mti().at(1) == '7'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isNetworkManagement() {
-    return (has(0) && (mti().at(1) == '8'));
+    return (has(MTI_KEY) && (mti().at(1) == '8'));
 }
 
 bool TNG_NAMESPACE::ISOMessage::isRetransmission() {
-    return (has(0) && (mti().at(3) == '1'));
+    return (has(MTI_KEY) && (mti().at(3) == '1'));
 }
 
 // ============================================================================
-
-static std::string toEbcdic(const std::string& ascii) {
-    // Create conversion instance without initialization
-    iconv_wrapper::iconv enc;
-    // Initialize conversion instance: from Local Encoding to EBCDIC (IBM-1047)
-    enc.open("", "IBM-1047");
-    // Convert and output test string
-    std::string ebcdic(enc.convert(ascii));
-    // Close conversion instance
-    enc.close();
-
-    return ebcdic;
-}
-
-static std::string fromEbcdic(const std::string& ebcdic) {
-    // Create conversion instance without initialization
-    iconv_wrapper::iconv enc;
-    // Initialize conversion instance: from EBCDIC (IBM-1047) to Local Encoding
-    enc.open("IBM-1047", "");
-    // Convert and output test string
-    std::string ascii(enc.convert(ebcdic));
-    // Close conversion instance
-    enc.close();
-
-    return ascii;
-}
 
 static std::string getFormattedTimestamp() {
     auto tp = std::chrono::system_clock::now();
@@ -658,33 +689,22 @@ static std::string getFormattedTimestamp() {
     return ss.str();
 }
 
-static std::array<uint8_t, 3> str2bcd(std::string_view s) {
-    if (s.size() > 6)
-        throw std::invalid_argument("Maximal 6 Ziffern erlaubt!");
-    if (s.size() % 2 != 0)
-        s = std::string("0") + std::string(s);
-    std::array<uint8_t, 3> bcd{ 0, 0, 0 };
-
-    size_t o = 3 - (s.size() / 2);
-    size_t ri = 0;
-    for (size_t i = 0; i < s.size(); i += 2) {
-        char hi = s[i];
-        char lo = s[i + 1];
-
-        if (!std::isdigit(static_cast<unsigned char>(hi)) ||
-            !std::isdigit(static_cast<unsigned char>(lo))) {
+static void setBcdField(std::vector<uint8_t>& header, std::size_t field_offset,
+    std::size_t field_bytes, nonstd::string_view sv)
+{
+    if (sv.size() > field_bytes * 2)
+        throw std::invalid_argument("Maximal " + std::to_string(field_bytes * 2) + " Ziffern erlaubt!");
+    for (const char c : sv)
+        if (!std::isdigit(static_cast<unsigned char>(c)))
             throw std::invalid_argument("Ungültige Eingabe (keine Ziffer)");
-        }
 
-        bcd[o + ri] = static_cast<uint8_t>(((hi - '0') << 4) | (lo - '0'));
-        ++ri;
-    }
+    std::string s(sv);
+    if (s.size() % 2 != 0)
+        s.insert(s.begin(), '0');
 
-    return bcd;
-}
-static std::string bcd2str(const std::vector<uint8_t>& b, size_t offset, size_t len) {
-    // TODO: Implementiere BCD-Konvertierung hier
-    return "";
+    std::fill(header.begin() + field_offset, header.begin() + field_offset + field_bytes, 0x00);
+    const std::size_t byte_off = field_offset + (field_bytes - s.size() / 2);
+    ::TNG_NAMESPACE::codec::to<::TNG_NAMESPACE::codec::Encoder::BCD>(s, header, byte_off);
 }
 
 TNG_NAMESPACE::BASE1Header::BASE1Header() : BASE1Header("000000"_sv, "000000"_sv) {
@@ -732,18 +752,20 @@ void TNG_NAMESPACE::BASE1Header::setLen(std::size_t len) {
 }
 
 void TNG_NAMESPACE::BASE1Header::destination(nonstd::string_view dest) {
-    auto bcd = str2bcd(dest);
-    std::copy(bcd.begin(), bcd.end(), header.begin() + 5);
+    setBcdField(header, 5, 3, dest);
 }
 void TNG_NAMESPACE::BASE1Header::source(nonstd::string_view src) {
-    auto bcd = str2bcd(src);
-    std::copy(bcd.begin(), bcd.end(), header.begin() + 8);
+    setBcdField(header, 8, 3, src);
 }
 std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::source() const {
-    return bcd2str(header, 8, 6);
+    src_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 8, 6);
+    if (src_cache_.empty()) return std::nullopt;
+    return nonstd::string_view(src_cache_);
 }
 std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::destination() const {
-    return bcd2str(header, 5, 6);
+    dst_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 5, 6);
+    if (dst_cache_.empty()) return std::nullopt;
+    return nonstd::string_view(dst_cache_);
 }
 void TNG_NAMESPACE::BASE1Header::swapDirection() {
     if (header.size() >= LENGTH) {
@@ -758,7 +780,7 @@ bool TNG_NAMESPACE::BASE1Header::isRejected() const {
 }
 std::string TNG_NAMESPACE::BASE1Header::getRejectCode() const {
     if (isRejected()) {
-        return bcd2str(header, 24, 4);
+        return ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 24, 4);
     }
     return "";
 }
@@ -783,7 +805,7 @@ std::ostream& operator<<(std::ostream& os, const ::TNG_NAMESPACE::BASE1Header& h
 // === WLPFOHeader ============================================================
 
 TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader()
-    : WLP_FOHeader("", "", 2, "", "", "00")
+    : WLP_FOHeader("", "0000", 2, "", "", "00")
 {}
 
 TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(
@@ -832,14 +854,17 @@ TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(const std::vector<uint8_t>& header)
 
 std::vector<uint8_t> TNG_NAMESPACE::WLP_FOHeader::pack() const {
     std::string asciiHeader(header.begin() + 4, header.end());
-    std::string ebcdicHeader = toEbcdic(asciiHeader);
-    return std::vector<uint8_t>(ebcdicHeader.begin(), ebcdicHeader.end());
+    std::vector<uint8_t> ebcdicHeader(asciiHeader.size(), 0x00);
+    ::TNG_NAMESPACE::codec::to<::TNG_NAMESPACE::codec::Encoder::EBCDIC>(asciiHeader, ebcdicHeader, 0);
+    return ebcdicHeader;
 }
 std::size_t TNG_NAMESPACE::WLP_FOHeader::unpack(const std::vector<uint8_t>& b) {
-    std::string ebcdicHeader(b.begin(), b.end());
-    std::string asciiHeader = fromEbcdic(ebcdicHeader);
-    header = std::vector<uint8_t>(asciiHeader.begin(), asciiHeader.end());
-    return header.size();
+    const auto asciiHeader = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::EBCDIC>(b, 0, b.size());
+
+    header.assign(4, 0x00);
+    header.insert(header.end(), asciiHeader.begin(), asciiHeader.end());
+
+    return b.size();
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::length(int len) {
@@ -964,7 +989,7 @@ void flatten_iso(
     }
 }
 
-std::map<std::string, std::string> TNG_NAMESPACE::ISOUtils::flatten(const ISOMessage& msg) {
+std::map<std::string, std::string> TNG_NAMESPACE::utils::flatten(const Message& msg) {
     std::map<std::string, std::string> out;
 
     const ISO_MAP map_ptr = msg.value(); // ISO_MAP

@@ -54,7 +54,7 @@ ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
 PREDEFINED             = TNG_EXPORT= \
-                         TNG_NAMESPACE=tng \
+                         TNG_NAMESPACE=iso8583 \
                          TNG_KEY_TYPE=int16_t \
                          "ISOComponentPtrBaseSmartPtr=std::shared_ptr<ISOComponentPtrBase>" \
                          "ISOFieldParserPtrBaseSmartPtr=std::shared_ptr<ISOFieldParserPtrBase>" \

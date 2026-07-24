@@ -196,10 +196,72 @@ namespace TNG_NAMESPACE::spec {
         return result;
     }
 
+    // hasDirective / trackSubtree
+    //
+    // hasDirective(): rein lesende, rekursive Prüfung ob `node` oder ein
+    // Nachfahre einen der vier Preprocessor-Tags trägt. Deutlich günstiger
+    // als ein voller processNode()-Durchlauf, da nur .Tag() gelesen wird -
+    // keine einzige YAML::Node-Neuzuweisung (out[key]=val), die den
+    // Baum-Neuaufbau in processNode() so teuer macht (siehe dort).
+    //
+    // trackSubtree(): identisches Positions-Tracking wie der volle
+    // processNode()-Durchlauf, aber ohne den Baum neu aufzubauen - für
+    // Teilbäume, in denen hasDirective() bereits false ergeben hat.
+    // =============================================================================
+    static bool hasDirective(const YAML::Node& node) {
+        const std::string& tag = node.Tag();
+        if (tag == "!use" || tag == "!include" || tag == "!template" || tag == "!merge")
+            return true;
+
+        if (node.IsMap()) {
+            for (auto it : node)
+                if (hasDirective(it.second)) return true;
+        }
+        else if (node.IsSequence()) {
+            for (const auto& elem : node)
+                if (hasDirective(elem)) return true;
+        }
+        return false;
+    }
+
+    static void trackSubtree(const YAML::Node& node, ProcessContext& ctx) {
+        if (node.IsMap()) {
+            for (auto it : node) {
+                const YAML::Mark key_mark = it.first.Mark();
+                track(ctx.smap, key_mark.line + 1, ctx.current_file,
+                    key_mark.line + 1, key_mark.column + 1);
+                trackSubtree(it.second, ctx);
+            }
+        }
+        else if (node.IsSequence()) {
+            for (const auto& elem : node)
+                trackSubtree(elem, ctx);
+        }
+        else if (node.IsScalar() && node.Mark().pos > 0) {
+            track(ctx.smap, node.Mark().line + 1, ctx.current_file,
+                node.Mark().line + 1, node.Mark().column + 1);
+        }
+    }
+
     // =============================================================================
     // processNode
     // Gibt wo möglich originale Nodes zurück damit YAML::Mark erhalten bleibt.
     // Trackt jeden Node in der SourceMap mit current_file.
+    //
+    // PERFORMANCE: Der mit Abstand dominante Kostenfaktor beim Laden einer
+    // Spec ist NICHT das YAML-Parsing selbst und NICHT das Tracking (beide
+    // zusammen typischerweise < 15% der Ladezeit), sondern die Zeile
+    // `out[it.first] = val;` unten - yaml-cpp's Map-Zuweisungsoperator, hier
+    // für JEDEN Knoten im Dokument aufgerufen, auch wenn an diesem Teilbaum
+    // gar nichts zu tun ist. Für einen Teilbaum ganz ohne !use/!include/
+    // !template/!merge (der Normalfall für die meisten Felder, selbst in
+    // einer Spec die diese Direktiven STELLENWEISE nutzt) reicht es, ihn
+    // unverändert zurückzugeben (yaml-cpp-Node-Kopien sind billige
+    // Referenz-Handles, keine Tiefenkopien) - siehe hasDirective()/
+    // trackSubtree() oben. Sicher, weil mergeInto() (siehe unten) `source`
+    // nur liest, nie mutiert - dasselbe Aliasing-Prinzip nutzt dieser Code
+    // bereits für "definitions" (Kommentar dort: "Originaler Node ohne
+    // Clone: YAML::Mark bleibt erhalten").
     // =============================================================================
     static YAML::Node processNode(const YAML::Node& node, ProcessContext& ctx) {
         const std::string tag = node.Tag();
@@ -210,6 +272,10 @@ namespace TNG_NAMESPACE::spec {
         if (tag == "!merge")    return processMerge(node, ctx);
 
         if (node.IsMap()) {
+            if (!hasDirective(node)) {
+                trackSubtree(node, ctx);
+                return node;
+            }
             YAML::Node out(YAML::NodeType::Map);
             for (auto it : node) {
                 const YAML::Mark key_mark = it.first.Mark();
@@ -227,6 +293,10 @@ namespace TNG_NAMESPACE::spec {
         }
 
         if (node.IsSequence()) {
+            if (!hasDirective(node)) {
+                trackSubtree(node, ctx);
+                return node;
+            }
             YAML::Node out(YAML::NodeType::Sequence);
             for (const auto& elem : node)
                 out.push_back(processNode(elem, ctx));
@@ -259,7 +329,7 @@ YAML::Node TNG_NAMESPACE::spec::SpecPreProcessor::preprocessFile(
 
 TNG_NAMESPACE::spec::PreprocessResult
 TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
-    const std::string& path)
+    const std::string& path, bool trackSourceMap)
 {
     namespace fs = std::filesystem;
     using namespace TNG_NAMESPACE::spec;
@@ -273,6 +343,14 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
 
     PreprocessResult result;
     SourceMap& smap = result.source_map;
+    // Bei trackSourceMap=false wird ctx.smap unten auf nullptr gesetzt - track()
+    // hat bereits einen `if (!smap || ...) return;`-Guard (siehe oben), der
+    // damit JEDEN Tracking-Aufruf zu einem No-Op macht, ohne track() selbst
+    // anfassen zu müssen. Das ist der dominante Kostenfaktor beim Laden: jeder
+    // einzelne YAML-Knoten (Map-Key UND Scalar) bekommt sonst einen
+    // SourceLocation-Eintrag inkl. Kopie des vollständigen Dateipfads - bei
+    // einer Spec mit vielen Feldern schnell mehrere hundert Einträge.
+    SourceMap* const smapForTracking = trackSourceMap ? &smap : nullptr;
 
     // ── Akkumulierter Definitions-Node ────────────────────────────────────────
     // Enthält alle geladenen Definitionen mit ihren originalen YAML::Mark.
@@ -337,7 +415,7 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                     }
                     // Felder prozessieren
                     ProcessContext ctx{ defsWrapper, abs.parent_path(),
-                                       visitedFiles, &smap, absStr, &defOrigins };
+                                       visitedFiles, smapForTracking, absStr, &defOrigins };
                     YAML::Node processed = processNode(docs[i], ctx);
                     mergeInto(root, processed, defOrigins, absStr);
                 }
@@ -356,7 +434,7 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                     }
                     // Felder prozessieren – defsWrapper als root_context für !use
                     ProcessContext ctx{ defsWrapper, abs.parent_path(),
-                                       visitedFiles, &smap, absStr, &defOrigins };
+                                       visitedFiles, smapForTracking, absStr, &defOrigins };
                     YAML::Node processed = processNode(doc, ctx);
                     mergeInto(root, processed, defOrigins, absStr);
                 }
@@ -371,12 +449,18 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
     smap.finalise(allFiles);
 
     // ── Sidecar prüfen / schreiben ────────────────────────────────────────────
+    // Existiert bereits eine gültige Sidecar (z.B. aus einem früheren Lauf mit
+    // trackSourceMap=true), wird sie IMMER genutzt - auch wenn dieser Lauf
+    // selbst nicht getrackt hat. Nur wenn tatsächlich getrackt wurde, wird eine
+    // (dann auch wirklich vollständige) Sidecar geschrieben - ein Lauf mit
+    // trackSourceMap=false darf niemals eine vorhandene gute Sidecar mit einer
+    // leeren überschreiben, und soll auch keine leere/nutzlose neu anlegen.
     const std::string currentHash = smap.hash();
     if (auto loaded = SourceMap::load(smapPath, currentHash)) {
         result.source_map = std::move(*loaded);
         TNG_LOG_DEBUG("[Preprocessor] SourceMap aus Sidecar geladen: {}", smapPath);
     }
-    else {
+    else if (trackSourceMap) {
         smap.save(smapPath);
         TNG_LOG_DEBUG("[Preprocessor] SourceMap neu geschrieben: {}", smapPath);
     }

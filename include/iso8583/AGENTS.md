@@ -31,10 +31,48 @@ ISOMessage                         ──► ISOParserPtrBase::parse() ──►
 // Everything lives in namespace tng::
 using namespace tng;   // optional convenience
 
-// DE numbers (data element keys) are int16_t
+// DE numbers (data element keys) are int16_t by default
 TNG_KEY_TYPE  key = 2;   // expands to tng::key_type = int16_t
 // Special value -1 = root ISOMessage (not itself a sub-field)
+// Special value -2 = reserved internally for TLV TCC fields
 ```
+
+### Konfigurierbarer Schlüsseltyp (BER-TLV / EMV)
+
+`TNG_KEY_TYPE` ist standardmäßig `int16_t` (-32768…32767). Reale 2-Byte-EMV-Tags
+mit erstem Byte `>= 0x80` (z.B. `9F26`, `5F24` - praktisch alle `9Fxx`/`5Fxx`-Tags)
+ergeben als Big-Endian-Wert `> 32767` und passen dort nicht hinein.
+
+Für volle BER-TLV/EMV-Tag-Unterstützung `ISO8583_BERTLV` definieren (schaltet
+automatisch auf `int32_t` um):
+
+```cmake
+# CMake
+target_compile_definitions(your_target PUBLIC ISO8583_BERTLV)
+# oder beim Konfigurieren:
+cmake -DISO8583_BERTLV=ON ...
+```
+
+```cpp
+// Manuell (ohne CMake-Option), VOR dem ersten iso8583-Include:
+#define ISO8583_BERTLV
+#include <iso8583/iso8583.h>
+```
+
+Wer einen noch größeren (oder anderen) Schlüsseltyp braucht, kann ihn frei
+festlegen - das überstimmt auch `ISO8583_BERTLV`:
+
+```cpp
+#define ISO8583_KEY_TYPE int64_t
+```
+
+**Wichtig (ABI):** Der Schlüsseltyp fließt in die virtuelle Signatur von
+`ISOComponentPtrBase::key()` ein. Wird libiso8583 als Shared Library gebaut,
+muss JEDER Konsument mit demselben Wert übersetzt werden. Über CMake genügt
+`target_link_libraries(... iso8583::iso8583)`, da `ISO8583_BERTLV` als
+`PUBLIC`-Compile-Definition automatisch weitergereicht wird. Bei manueller
+Einbindung ohne CMake-Target muss das Makro von Hand in Bibliothek UND allen
+Konsumenten identisch gesetzt werden.
 
 ---
 
@@ -267,6 +305,12 @@ fields:
     !merge
     - !template LLL(BINARY, 255)
     - description: "ICC Data"
+  "056":                  # BER-TLV container (EMV ICC data) — scalar-only
+    format: lllbertlv     # LLL-prefix + BER-TLV payload (ISO/IEC 8825-1)
+    length: 999
+    description: "ICC Data (BER-TLV)"
+    # No 'type: nested', 'children', or 'tlv:' block — BER-TLV tags are
+    # dynamic (not a fixed, pre-declared SE list), so none is needed.
   "061":                  # nested field with children
     type: nested
     format: binary
@@ -290,6 +334,13 @@ fields:
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
 - `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
 - `remaining` — reads all bytes remaining in the parent buffer
+- `bertlv` (optionally `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV container
+  (ISO/IEC 8825-1, EMV Book 3 Annex B); **scalar-only**, must NOT be combined
+  with `type: nested`, `children`, or a `tlv:` block. Produces a nested
+  `ISOMessage` at runtime whose child keys are the raw BER tag values
+  (see `BERTLVParser` in `src/_tlv.hh`). Requires `ISO8583_BERTLV` (see
+  above) if any tag exceeds the `int16_t` range, e.g. real 2-byte EMV tags
+  like `9F26`.
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
 

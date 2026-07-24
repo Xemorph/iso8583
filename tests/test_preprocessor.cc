@@ -454,3 +454,85 @@ fields:
     REQUIRE(de11 != nullptr);
     CHECK(de11->value() == "000001");
 }
+
+// =============================================================================
+// processNode() Fast-Path: Teilbäume ohne Direktiven werden unverändert
+// zurückgegeben statt neu aufgebaut (Performance-Optimierung) - hier wird
+// geprüft, dass eine Spec mit GEMISCHTEN Feldern (manche mit !template/!use/
+// !merge, manche ganz ohne) weiterhin exakt korrekt aufgelöst wird. Der
+// Fast-Path greift NUR für Teilbäume ohne jede Direktive - für den Rest muss
+// sich am Ergebnis nichts ändern.
+// =============================================================================
+
+TEST_CASE("Preprocessor - Mixed spec (fields with and without directives) is resolved correctly", "[preprocessor][fastpath]") {
+    TempDir dir;
+    const auto specPath = dir.write("mixed.yml", R"(
+spec: "Mixed Fast-Path Test"
+encoding: ascii
+
+definitions:
+  amount_field:
+    format: numeric
+    length: 12
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  # Ganz ohne Direktive - muss vom Fast-Path erfasst werden
+  "002": { format: llchar,  length: 19, description: "PAN" }
+  "003": { format: numeric, length: 6,  description: "Processing Code" }
+  # Mit !use - muss weiterhin korrekt aufgelöst werden
+  "004": !use amount_field
+  # Mit !template - muss weiterhin korrekt aufgelöst werden
+  "011":
+    !template LL(CHAR, 19)
+  # Mit !merge - muss weiterhin korrekt aufgelöst werden
+  "049":
+    !merge
+    - !template LL(CHAR, 3)
+    - description: "Currency Code"
+  # Wieder ganz ohne Direktive
+  "050": { format: numeric, length: 5, description: "Plain Field" }
+)");
+
+    auto parser = spec::SpecDecoder::loadFromYaml(specPath);
+    REQUIRE(parser != nullptr);
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+
+    std::vector<uint8_t> raw;
+    auto ascii_b = [](const std::string& s) { return std::vector<uint8_t>(s.begin(), s.end()); };
+    raw.insert(raw.end(), { '0','2','0','0' }); // MTI
+
+    // Bitmap: DE2,3,4,11,49,50
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[0] = 0x70; // DE2,3,4
+    bmp[1] = 0x21; // DE11(=0x20?) - siehe unten exakt berechnet
+    // DE11 -> p=10, byte=1, bit=7-2=5 -> 0x20
+    // DE49 -> p=48, byte=6, bit=7-0=7 -> 0x80
+    // DE50 -> p=49, byte=6, bit=7-1=6 -> 0x40
+    bmp[1] = 0x20;
+    bmp[6] = 0x80 | 0x40;
+    raw.insert(raw.end(), bmp.begin(), bmp.end());
+
+    auto pan = ascii_b("4111111111111111");
+    raw.insert(raw.end(), { '1','6' });
+    raw.insert(raw.end(), pan.begin(), pan.end());       // DE2
+    raw.insert(raw.end(), { '0','0','0','0','0','0' });   // DE3
+    raw.insert(raw.end(), { '0','0','0','0','0','0','0','0','1','9','9','9' }); // DE4 (12 Stellen)
+    raw.insert(raw.end(), { '0','6' });
+    raw.insert(raw.end(), { '0','0','0','0','0','1' });   // DE11 (6 Stellen, LL="06")
+    raw.insert(raw.end(), { '0','3' });
+    raw.insert(raw.end(), { '9','7','8' });                // DE49 (LL="03")
+    raw.insert(raw.end(), { '1','2','3','4','5' });         // DE50
+
+    REQUIRE_NOTHROW(msg->unparse(msg, raw));
+
+    CHECK(msg->get<OpaqueField>(2)->value() == "4111111111111111");
+    CHECK(msg->get<OpaqueField>(3)->value() == "000000");
+    CHECK(msg->get<OpaqueField>(4)->value() == "000000001999");
+    CHECK(msg->get<OpaqueField>(11)->value() == "000001");
+    CHECK(msg->get<OpaqueField>(49)->value() == "978");
+    CHECK(msg->get<OpaqueField>(50)->value() == "12345");
+}

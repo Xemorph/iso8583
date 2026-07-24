@@ -141,11 +141,7 @@ namespace TNG_NAMESPACE::codec {
             if constexpr (Encoder::EBCDIC == e) {
                 std::string data(text.begin() + offset, text.begin() + offset + length);
 #if ENABLE_ICONV
-                iconv_wrapper::iconv enc;
-                enc.open("IBM-1047", "");
-                std::string res(enc.convert(data));
-                enc.close();
-                return res;
+                return detail::ebcdic_to_ascii_cached(data);
 #else
                 detail::e2a_n(data.data(), data.size());
                 return data;
@@ -194,11 +190,7 @@ namespace TNG_NAMESPACE::codec {
                 // non-digit characters; for digits and common alphanumerics
                 // the reverse-table approach matches the decoder exactly.
 #if ENABLE_ICONV
-                std::string src(value);
-                iconv_wrapper::iconv enc;
-                enc.open("", "IBM-1047");   // ASCII → EBCDIC
-                std::string res(enc.convert(src));
-                enc.close();
+                const std::string res = detail::ascii_to_ebcdic_cached(std::string(value));
                 for (std::size_t i = 0; i < res.size(); ++i)
                     b[offset + i] = static_cast<uint8_t>(res[i]);
 #else

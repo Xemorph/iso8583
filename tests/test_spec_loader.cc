@@ -356,6 +356,177 @@ fields:
     CHECK(se72->value() == data);
 }
 
+TEST_CASE("SpecDecoder - TLV nested field BER-TLV style", "[spec][tlv][ber]") {
+    TempYaml yaml(R"(
+spec: "BER-TLV Test"
+encoding: ascii
+
+fields:
+  "000":
+    format: numeric
+    length: 4
+  "001":
+    format: bitmap
+    length: 8
+  "055":
+    format: lllbinary
+    length: 999
+    description: "ICC Data"
+    tlv:
+      ber: true
+    children:
+      "26":
+        format: binary
+        length: 50
+        description: "Application Cryptogram"
+)");
+
+    std::shared_ptr<ISOParserPtrBase> parser;
+    REQUIRE_NOTHROW(parser = spec::SpecDecoder::loadFromYaml(yaml.str()));
+    REQUIRE(parser != nullptr);
+
+    auto ascii_b = [](const std::string& s) {
+        return std::vector<uint8_t>(s.begin(), s.end());
+        };
+
+    // ── Wire-Buffer aufbauen ─────────────────────────────────────────────────
+    // MTI "0200" (ASCII), Bitmap mit DE55 aktiv (Bit 55 → Byte 6, Bit 1: da
+    // (55-1)/8 = 6, 7-((55-1)%8) = 7-6 = 1 → Byte[6] |= 0x02).
+    // DE055 payload: 1 SE mit Tag 0x1A (1 Byte, low5 != 0x1F), Länge 3
+    // (Short-Form), 3 Datenbytes.
+    std::vector<uint8_t> raw;
+
+    auto mti_bytes = ascii_b("0200");
+    raw.insert(raw.end(), mti_bytes.begin(), mti_bytes.end());
+
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[6] = 0x02u; // DE55
+    raw.insert(raw.end(), bmp.begin(), bmp.end());
+
+    const std::vector<uint8_t> tlv_payload{ 0x1A, 0x03, 0xDE, 0xAD, 0xBE };
+    auto lll = ascii_b("005"); // 5 Bytes Payload
+    raw.insert(raw.end(), lll.begin(), lll.end());
+    raw.insert(raw.end(), tlv_payload.begin(), tlv_payload.end());
+
+    // ── Dekodieren ───────────────────────────────────────────────────────────
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE_NOTHROW(msg->unparse(msg, raw));
+
+    auto de55 = msg->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+
+    auto se = de55->get<BinaryField>(0x1A);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == std::vector<uint8_t>{0xDE, 0xAD, 0xBE});
+
+    // ── Roundtrip: erneutes Serialisieren muss den TLV-Payload reproduzieren ─
+    auto tlv_parser = std::dynamic_pointer_cast<ISOBaseParser>(parser)
+        ->field_parser(55)->subParser();
+    REQUIRE(tlv_parser != nullptr);
+    CHECK(tlv_parser->parse(de55) == tlv_payload);
+}
+
+TEST_CASE("SpecDecoder - format: lllbertlv shorthand (no type/children/tlv needed)", "[spec][tlv][ber]") {
+    // Reine Kurzschreibweise: kein 'type: nested', kein 'children:', kein
+    // 'tlv:'-Block - 'format: lllbertlv' allein genügt (siehe parseSpecField).
+    TempYaml yaml(R"(
+spec: "BER-TLV Shorthand Test"
+encoding: ascii
+
+fields:
+  "000":
+    format: numeric
+    length: 4
+  "001":
+    format: bitmap
+    length: 8
+  "055":
+    format: lllbertlv
+    length: 999
+    description: "ICC Data"
+)");
+
+    std::shared_ptr<ISOParserPtrBase> parser;
+    REQUIRE_NOTHROW(parser = spec::SpecDecoder::loadFromYaml(yaml.str()));
+    REQUIRE(parser != nullptr);
+
+    auto ascii_b = [](const std::string& s) {
+        return std::vector<uint8_t>(s.begin(), s.end());
+        };
+
+    std::vector<uint8_t> raw;
+    raw.insert(raw.end(), { '0','2','0','0' }); // MTI
+
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[6] = 0x02u; // DE55
+    raw.insert(raw.end(), bmp.begin(), bmp.end());
+
+    const std::vector<uint8_t> tlv_payload{ 0x1A, 0x02, 0xAB, 0xCD };
+    auto lll = ascii_b("004");
+    raw.insert(raw.end(), lll.begin(), lll.end());
+    raw.insert(raw.end(), tlv_payload.begin(), tlv_payload.end());
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE_NOTHROW(msg->unparse(msg, raw));
+
+    auto de55 = msg->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+    auto se = de55->get<BinaryField>(0x1A);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == std::vector<uint8_t>{0xAB, 0xCD});
+}
+
+TEST_CASE("Error - format: bertlv combined with children is rejected", "[error][spec][ber]") {
+    TempYaml yaml(R"(
+spec: "Invalid"
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbertlv
+    length: 999
+    children:
+      - format: numeric
+        length: 1
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+}
+
+TEST_CASE("Error - format: bertlv combined with tlv block is rejected", "[error][spec][ber]") {
+    TempYaml yaml(R"(
+spec: "Invalid"
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbertlv
+    length: 999
+    tlv:
+      tag_bytes: 2
+      len_bytes: 2
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+}
+
+TEST_CASE("Error - format: bertlv combined with type: nested is rejected", "[error][spec][ber]") {
+    TempYaml yaml(R"(
+spec: "Invalid"
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    type: nested
+    format: lllbertlv
+    length: 999
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+}
+
 // =============================================================================
 // Fehlermeldungs-Tests: verifizieren dass Fehler die richtigen
 // Datei/Zeile/Spalte-Angaben enthalten
@@ -723,4 +894,248 @@ fields:
     const auto t2 = std::filesystem::last_write_time(smap_path);
 
     CHECK(t1 != t2);  // Sidecar wurde neu geschrieben
+}
+
+// =============================================================================
+// loadFromYaml/loadBothFromYaml - trackSourceMap-Parameter
+// =============================================================================
+
+TEST_CASE("SpecDecoder - loadFromYaml(path, false) baut denselben Parser wie trackSourceMap=true", "[spec][perf]") {
+    TempYaml yaml(R"(
+spec: "TrackSourceMap Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "002": { format: llchar,  length: 19, description: "PAN" }
+)");
+
+    auto parser_tracked = spec::SpecDecoder::loadFromYaml(yaml.str(), true);
+    auto parser_fast = spec::SpecDecoder::loadFromYaml(yaml.str(), false);
+    REQUIRE(parser_tracked != nullptr);
+    REQUIRE(parser_fast != nullptr);
+
+    // Beide müssen dieselbe Nachricht identisch dekodieren - trackSourceMap
+    // beeinflusst nur Fehlermeldungs-Präzision, nie das Ergebnis.
+    auto msgA = std::make_shared<Message>();
+    msgA->parser(parser_tracked);
+    auto msgB = std::make_shared<Message>();
+    msgB->parser(parser_fast);
+
+    std::vector<uint8_t> raw;
+    auto ascii_b = [](const std::string& s) { return std::vector<uint8_t>(s.begin(), s.end()); };
+    raw.insert(raw.end(), { '0','2','0','0' });
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[0] = 0x40; // DE2
+    raw.insert(raw.end(), bmp.begin(), bmp.end());
+    auto pan = ascii_b("4111111111111111");
+    raw.insert(raw.end(), { '1','6' });
+    raw.insert(raw.end(), pan.begin(), pan.end());
+
+    REQUIRE_NOTHROW(msgA->unparse(msgA, raw));
+    REQUIRE_NOTHROW(msgB->unparse(msgB, raw));
+    CHECK(msgA->get<OpaqueField>(2)->value() == msgB->get<OpaqueField>(2)->value());
+}
+
+TEST_CASE("SpecDecoder - trackSourceMap=false liefert bei Fehlern in einer Einzeldatei-Spec dieselbe Fehlermeldung", "[spec][perf][error]") {
+    // Ohne !use/!include_files/!template/!merge ist die "prozessierte" Position
+    // identisch zur Original-Position - hier darf sich also NICHTS an der
+    // Fehlermeldung ändern, nur die interne Tracking-Arbeit entfällt.
+    TempYaml yaml(R"(
+spec: "Error Test"
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "002": { format: unknownformat, length: 5 }
+)");
+
+    std::string msg_tracked, msg_fast;
+    try { spec::SpecDecoder::loadFromYaml(yaml.str(), true); }
+    catch (const std::exception& e) { msg_tracked = e.what(); }
+    try { spec::SpecDecoder::loadFromYaml(yaml.str(), false); }
+    catch (const std::exception& e) { msg_fast = e.what(); }
+
+    REQUIRE_FALSE(msg_tracked.empty());
+    CHECK(msg_tracked == msg_fast);
+}
+
+// =============================================================================
+// loadFromYamlCached/loadBothFromYamlCached
+// =============================================================================
+
+TEST_CASE("SpecDecoder - loadFromYamlCached returns the same parser if file remains unchanged", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "Cache Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto p1 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+    auto p2 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+
+    // Objektidentität, nicht nur Gleichheit - beweist einen echten Cache-Treffer
+    // (kein zweites Parsen/Aufbauen), nicht bloß ein zufällig gleiches Ergebnis.
+    CHECK(p1.get() == p2.get());
+}
+
+TEST_CASE("SpecDecoder - loadFromYamlCached fails when file has been modified (mtime)", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "Cache Invalidation Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "002": { format: llchar,  length: 19 }
+)");
+
+    auto p1 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+
+    // Datei ändern UND die mtime explizit vorstellen (statt auf Uhr-Auflösung
+    // zu hoffen - manche Dateisysteme haben nur Sekundenauflösung, ein
+    // sleep_for wäre hier ein flakiger Test).
+    {
+        std::ofstream f(yaml.path, std::ios::app);
+        f << "\n  \"003\": { format: numeric, length: 3 }\n";
+    }
+    const auto newTime = std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5);
+    std::filesystem::last_write_time(yaml.path, newTime);
+
+    auto p2 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+
+    // Andere Instanz - Cache wurde invalidiert und neu geladen
+    CHECK(p1.get() != p2.get());
+
+    // Erneuter Aufruf mit demselben (jetzt neuen) Stand trifft wieder den Cache
+    auto p3 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+    CHECK(p2.get() == p3.get());
+}
+
+TEST_CASE("SpecDecoder - loadBothFromYamlCached returns same objects if file remains unchanged", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "Cache Both Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto [p1, s1] = spec::SpecDecoder::loadBothFromYamlCached(yaml.str());
+    auto [p2, s2] = spec::SpecDecoder::loadBothFromYamlCached(yaml.str());
+
+    CHECK(p1.get() == p2.get());
+    CHECK(s1.get() == s2.get());
+}
+
+TEST_CASE("SpecDecoder - loadFromYamlCached and loadBothFromYamlCached use separate caches", "[spec][cache]") {
+    // Sind unabhängige Caches (siehe Doku in ISOSpec.hh) - beide funktionieren
+    // für denselben Pfad, ohne sich gegenseitig zu beeinflussen.
+    TempYaml yaml(R"(
+spec: "Separate Caches Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto parserOnly = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+    auto [parserBoth, specBoth] = spec::SpecDecoder::loadBothFromYamlCached(yaml.str());
+
+    REQUIRE(parserOnly != nullptr);
+    REQUIRE(parserBoth != nullptr);
+    REQUIRE(specBoth != nullptr);
+}
+
+TEST_CASE("SpecDecoder - loadFromYamlCached throws an error if spec is invalid (no silent fallback)", "[spec][cache][error]") {
+    TempYaml yaml(R"(
+spec: "Invalid"
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "002": { format: totally_unknown_format, length: 5 }
+)");
+
+    CHECK_THROWS_AS(spec::SpecDecoder::loadFromYamlCached(yaml.str()), std::exception);
+}
+
+TEST_CASE("SpecDecoder - TrustUntilInvalidated does NOT automatically detect file changes", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "TrustUntilInvalidated Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto p1 = spec::SpecDecoder::loadFromYamlCached(
+        yaml.str(), true, spec::CacheValidation::TrustUntilInvalidated);
+
+    // Datei ändern + mtime explizit vorstellen - TrustUntilInvalidated darf
+    // das trotzdem NICHT bemerken (das ist der ganze Punkt).
+    {
+        std::ofstream f(yaml.path, std::ios::app);
+        f << "\n  \"002\": { format: llchar, length: 19 }\n";
+    }
+    const auto newTime = std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5);
+    std::filesystem::last_write_time(yaml.path, newTime);
+
+    auto p2 = spec::SpecDecoder::loadFromYamlCached(
+        yaml.str(), true, spec::CacheValidation::TrustUntilInvalidated);
+
+    CHECK(p1.get() == p2.get()); // immer noch derselbe (veraltete) Parser
+}
+
+TEST_CASE("SpecDecoder - invalidateCache() forces TrustUntilInvalidated to reload", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "Invalidate Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto p1 = spec::SpecDecoder::loadFromYamlCached(
+        yaml.str(), true, spec::CacheValidation::TrustUntilInvalidated);
+
+    {
+        std::ofstream f(yaml.path, std::ios::app);
+        f << "\n  \"002\": { format: llchar, length: 19 }\n";
+    }
+    std::filesystem::last_write_time(yaml.path,
+        std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5));
+
+    spec::SpecDecoder::invalidateCache(yaml.str());
+
+    auto p2 = spec::SpecDecoder::loadFromYamlCached(
+        yaml.str(), true, spec::CacheValidation::TrustUntilInvalidated);
+
+    CHECK(p1.get() != p2.get()); // nach invalidateCache() ein frischer Parser
+}
+
+TEST_CASE("SpecDecoder - clearCache() clears both caches", "[spec][cache]") {
+    TempYaml yaml(R"(
+spec: "ClearCache Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+)");
+
+    auto p1 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+    auto [pb1, sb1] = spec::SpecDecoder::loadBothFromYamlCached(yaml.str());
+
+    spec::SpecDecoder::clearCache();
+
+    auto p2 = spec::SpecDecoder::loadFromYamlCached(yaml.str());
+    auto [pb2, sb2] = spec::SpecDecoder::loadBothFromYamlCached(yaml.str());
+
+    // Nach clearCache() sind es frische Objekte, obwohl die Datei unverändert ist
+    CHECK(p1.get() != p2.get());
+    CHECK(pb1.get() != pb2.get());
+    CHECK(sb1.get() != sb2.get());
+}
+
+TEST_CASE("SpecDecoder - invalidateCache() for a non-cached path is a no-op", "[spec][cache]") {
+    CHECK_NOTHROW(spec::SpecDecoder::invalidateCache("/pfad/der/nie/gecacht/wurde.yml"));
 }

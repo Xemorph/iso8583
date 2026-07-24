@@ -123,6 +123,24 @@ TEST_CASE("as<string, EBCDIC> - with offset", "[encoder][ebcdic]") {
     CHECK(as<std::string, Encoder::EBCDIC>(buf, 2, 2) == "XY");
 }
 
+TEST_CASE("EBCDIC - special characters '!' and '|' follow IBM-1047, not CP500", "[encoder][ebcdic]") {
+    // Regressionstest für die Umstellung der Fallback-Tabelle
+    // (kEbcdicToAscii in include/iso8583/_codec.hh) von CP500 auf IBM-1047 -
+    // dieselbe Codepage, die der iconv-Pfad in dieser Datei bereits nutzt
+    // (enc.open("IBM-1047", ...)). Beide Pfade (mit UND ohne ENABLE_ICONV)
+    // müssen für dieselben Bytes dasselbe Ergebnis liefern.
+    //
+    // '!' liegt bei IBM-1047 auf Byte 0x5A (bei CP500 auf 0x4F).
+    // '|' liegt bei IBM-1047 auf Byte 0x4F (bei CP500 auf 0xBB).
+    auto buf = B({ 0x5A, 0x4F });
+    CHECK(as<std::string, Encoder::EBCDIC>(buf, 0, 2) == "!|");
+
+    // Und umgekehrt: Encodieren von "!|" muss exakt auf {0x5A, 0x4F} zurückführen.
+    std::vector<uint8_t> out(2, 0x00);
+    to<Encoder::EBCDIC>(std::string("!|"), out, 0);
+    CHECK(out == std::vector<uint8_t>{ 0x5A, 0x4F });
+}
+
 TEST_CASE("as<string, BCD> - even digit count", "[encoder][bcd]") {
     auto buf = B({ 0x12, 0x34 });
     CHECK(as<std::string, Encoder::BCD>(buf, 0, 4) == "1234");

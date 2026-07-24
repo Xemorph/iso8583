@@ -41,7 +41,7 @@ struct TempDir {
 // ISORemainderFieldParser direkt
 // =============================================================================
 
-TEST_CASE("IFE_REMAINING - liest alle verbleibenden Bytes", "[remaining][direct]") {
+TEST_CASE("IFE_REMAINING - reads all remaining bytes", "[remaining][direct]") {
     // Buffer: 4 feste Bytes + 3 variable Bytes
     auto buf = B({ 0xF1, 0xF2, 0xF3, 0xF4,   // 4 Bytes feste Felder (schon konsumiert)
                    0xC1, 0xC2, 0xC3 });        // 3 Bytes verbleibend
@@ -57,7 +57,7 @@ TEST_CASE("IFE_REMAINING - liest alle verbleibenden Bytes", "[remaining][direct]
 }
 
 /*
-TEST_CASE("IF_REMAINING - leerer Buffer gibt 0 zurueck (kein Crash)", "[remaining][direct]") {
+TEST_CASE("IF_REMAINING - empty buffer returns 0 (no crash)", "[remaining][direct]") {
     auto buf = B({ 0xF1, 0xF2 });
     IF_REMAINING parser(0, "Optional Trailing");
     auto component = std::make_shared<ISOOpaqueField>(15);
@@ -69,7 +69,7 @@ TEST_CASE("IF_REMAINING - leerer Buffer gibt 0 zurueck (kein Crash)", "[remainin
     CHECK(component->value().empty());
 }
 
-TEST_CASE("IF_REMAINING - voller Buffer (kein vorheriges Feld)", "[remaining][direct]") {
+TEST_CASE("IF_REMAINING - full buffer (no preceding field)", "[remaining][direct]") {
     auto buf = B({ 0xC1, 0xC2, 0xC3, 0xC4, 0xC5 });
     IF_REMAINING parser(0, "All Bytes");
     auto component = std::make_shared<ISOOpaqueField>(1);
@@ -80,7 +80,7 @@ TEST_CASE("IF_REMAINING - voller Buffer (kein vorheriges Feld)", "[remaining][di
 }
 */
 
-TEST_CASE("IF_REMAINING - type() gibt REMAINING zurueck", "[remaining][direct]") {
+TEST_CASE("IF_REMAINING - type() returns REMAINING", "[remaining][direct]") {
     IF_REMAINING parser(0, "test");
     CHECK(parser.type() == ISOFieldParserType::REMAINING);
 }
@@ -119,7 +119,7 @@ static std::shared_ptr<ISOBaseParser> make_bmp061_parser() {
     return sub;
 }
 
-TEST_CASE("BMP_061 - ohne Postal Code (16 Bytes Payload)", "[remaining][bmp061]") {
+TEST_CASE("BMP_061 - without postal code (16 bytes payload)", "[remaining][bmp061]") {
     // LLL Payload = 16 Bytes, Subfeld 15 bekommt 0 Bytes
     auto buf = B({
         // 16 EBCDIC-Bytes fuer Subfelder 1-13
@@ -143,7 +143,7 @@ TEST_CASE("BMP_061 - ohne Postal Code (16 Bytes Payload)", "[remaining][bmp061]"
     CHECK(sf14 == nullptr);
 }
 
-TEST_CASE("BMP_061 - mit vollem Postal Code (26 Bytes Payload)", "[remaining][bmp061]") {
+TEST_CASE("BMP_061 - with full postal code (26 bytes payload)", "[remaining][bmp061]") {
     // LLL Payload = 26 Bytes, Subfeld 15 bekommt 10 Bytes
     auto buf = B({
         // SF2-9 (8 Bytes)
@@ -176,7 +176,7 @@ TEST_CASE("BMP_061 - mit vollem Postal Code (26 Bytes Payload)", "[remaining][bm
     CHECK(sf14->value() == "6900      ");
 }
 
-TEST_CASE("BMP_061 - mit kurzem Postal Code (19 Bytes Payload)", "[remaining][bmp061]") {
+TEST_CASE("BMP_061 - with short postal code (19 bytes payload)", "[remaining][bmp061]") {
     // LLL Payload = 19 Bytes, Subfeld 14 has 3 Bytes
     auto buf = B({
         0xF1, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0,    // SF1-8

@@ -60,7 +60,9 @@
 /// @note The caller is responsible for the lifetime of any injected logger.
 ///       The logger must remain valid until the library is no longer used.
 
+// [iso8583]
 #include "config.h"
+// [stdc++]
 #include <string_view>
 
 namespace TNG_NAMESPACE::log {

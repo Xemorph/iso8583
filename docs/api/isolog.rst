@@ -1,10 +1,10 @@
 ISOLog — Logging API
 ====================
 
-.. doxygenenum:: tng::log::Level
+.. doxygenenum:: iso8583::log::Level
    :project: libiso8583
 
-.. doxygenclass:: tng::log::ISOLogger
+.. doxygenclass:: iso8583::log::ISOLogger
    :project: libiso8583
    :members:
 
@@ -15,14 +15,11 @@ ISOLog — Logging API
    ``QUILL_VERSION`` is defined).  It is not extracted by Doxygen in a
    standard build — see :ref:`quickstart:logging` for usage.
 
-.. doxygenfunction:: tng::log::setLevel
+.. doxygenfunction:: iso8583::log::setLevel
    :project: libiso8583
 
-.. doxygenfunction:: tng::log::getLevel
+.. doxygenfunction:: iso8583::log::getLevel
    :project: libiso8583
 
-.. doxygenfunction:: tng::log::setLogger
-   :project: libiso8583
-
-.. doxygenfunction:: tng::log::setQuillLogger
+.. doxygenfunction:: iso8583::log::setLogger
    :project: libiso8583
