@@ -78,14 +78,19 @@ namespace TNG_NAMESPACE::tlv_detail {
         const std::shared_ptr< ::TNG_NAMESPACE::Message >& msg,
         std::size_t se_num, const std::vector<uint8_t>& buf,
         std::size_t data_offset, std::size_t data_len,
-        std::size_t wire_offset, std::size_t wire_len)
+        std::size_t wire_offset, std::size_t wire_len,
+        const nonstd::string_view& description)
     {
         auto se = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
             static_cast<TNG_KEY_TYPE>(se_num));
         se->value(std::vector<uint8_t>(
             buf.begin() + static_cast<std::ptrdiff_t>(data_offset),
             buf.begin() + static_cast<std::ptrdiff_t>(data_offset + data_len)));
-        se->description("SE" + std::to_string(se_num));
+        // `description` zeigt bereits in einen langlebigen, vom Parser
+        // besessenen Speicher (siehe ISOTLVParser::description_for_wire) -
+        // keine Kopie/Temporäre hier, sonst dangelnde Sicht (siehe dortiger
+        // Kommentar).
+        se->description(description);
         se->wire_offset(wire_offset);
         se->wire_length(wire_len);
         msg->set(se);

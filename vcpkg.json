@@ -1,10 +1,14 @@
 {
   "name": "libiso8583",
   "version": "0.1.1",
+  "builtin-baseline": "1f5e0348089e8a9b187f57d42866ebc871e815da",
   "dependencies": [
     "nlohmann-json",
     "fmt",
-    "yaml-cpp",
+    {
+      "name": "ryml",
+      "version>=": "0.15.2"
+    },
     "robin-map",
     {
       "name": "catch2",

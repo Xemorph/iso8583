@@ -13,6 +13,7 @@
 #include <fstream>
 #include <thread>
 #include <chrono>
+#include <nlohmann/json.hpp>
 
 using namespace TNG_NAMESPACE;
 
@@ -375,7 +376,7 @@ fields:
     tlv:
       ber: true
     children:
-      "26":
+      "1A":
         format: binary
         length: 50
         description: "Application Cryptogram"
@@ -393,7 +394,9 @@ fields:
     // MTI "0200" (ASCII), Bitmap mit DE55 aktiv (Bit 55 → Byte 6, Bit 1: da
     // (55-1)/8 = 6, 7-((55-1)%8) = 7-6 = 1 → Byte[6] |= 0x02).
     // DE055 payload: 1 SE mit Tag 0x1A (1 Byte, low5 != 0x1F), Länge 3
-    // (Short-Form), 3 Datenbytes.
+    // (Short-Form), 3 Datenbytes. Der children-Key "1A" in der Spec (hex,
+    // da tlv.ber=true) entspricht direkt diesem Wire-Tag-Byte - keine
+    // gedankliche Dezimal-Umrechnung mehr nötig.
     std::vector<uint8_t> raw;
 
     auto mti_bytes = ascii_b("0200");
@@ -419,12 +422,181 @@ fields:
     auto se = de55->get<BinaryField>(0x1A);
     REQUIRE(se != nullptr);
     CHECK(se->value() == std::vector<uint8_t>{0xDE, 0xAD, 0xBE});
+    // Aus 'children' deklarierte Beschreibung muss beim Dekodieren tatsächlich
+    // ankommen, statt vom generischen "SE26" überschrieben zu werden.
+    CHECK(se->description() == "Application Cryptogram");
 
     // ── Roundtrip: erneutes Serialisieren muss den TLV-Payload reproduzieren ─
     auto tlv_parser = std::dynamic_pointer_cast<ISOBaseParser>(parser)
         ->field_parser(55)->subParser();
     REQUIRE(tlv_parser != nullptr);
     CHECK(tlv_parser->parse(de55) == tlv_payload);
+}
+
+TEST_CASE("SpecDecoder - BER-TLV multi-byte EMC field (e.g., 9F26) via hex children key", "[spec][tlv][ber]") {
+    // Echtes 2-Byte-EMV-Tag (9F26 = "Application Cryptogram") - braucht
+    // ISO8583_BERTLV NUR falls der Big-Endian-Wert (0x9F26 = 40742) den
+    // Standard-int16_t-Schlüsseltyp überschreitet, was hier der Fall wäre;
+    // dieser Test läuft deshalb unabhängig vom eigentlichen TNG_KEY_TYPE nur
+    // gegen die Spec-Parsing-Ebene (parseTlvChildKey), nicht gegen die volle
+    // Laufzeit-Dekodierung eines echten 2-Byte-BER-Tags.
+    TempYaml yaml(R"(
+spec: "BER-TLV Multibyte Tag Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbinary
+    length: 999
+    description: "ICC Data"
+    tlv:
+      ber: true
+    children:
+      "9F26":
+        format: binary
+        length: 8
+        description: "Application Cryptogram"
+      "5A":
+        format: binary
+        length: 10
+        description: "Application PAN"
+)");
+
+    // Erfolgreiches Laden beweist bereits: "9F26" wurde korrekt als
+    // hexadezimal 0x9F26 = 40742 geparst (nicht als Dezimalzahl, die an der
+    // Stelle "26" gar nicht gültig wäre, oder als Fehler).
+    REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(yaml.str()));
+}
+
+TEST_CASE("SpecDecoder - A TLV children - Key with an explicit 0x prefix forces hex regardless of the TLV mode", "[spec][tlv]") {
+    // Mastercard/Visa-Fix-Format-TLV (kein ber:true) ist standardmäßig
+    // dezimal - ein "0x"-Präfix erzwingt hexadezimal trotzdem.
+    TempYaml yaml(R"(
+spec: "0x-Praefix-Test"
+encoding: ebcdic
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    description: "Additional Data"
+    tlv:
+      tag_bytes: 2
+      len_bytes: 2
+    children:
+      "0x1A":
+        format: char
+        length: 10
+        description: "Hex via 0x-Praefix"
+)");
+
+    REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(yaml.str()));
+}
+
+TEST_CASE("SpecDecoder - An invalid TLV children key returns a clear error message", "[spec][tlv][error]") {
+    TempYaml yaml(R"(
+spec: "Invalid Key Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbinary
+    length: 999
+    description: "ICC Data"
+    tlv:
+      ber: true
+    children:
+      "9F26G":
+        format: binary
+        length: 8
+        description: "Ungueltiges hex - G ist kein Hex-Zeichen"
+)");
+
+    REQUIRE_THROWS_WITH(
+        spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("9F26G"));
+}
+
+TEST_CASE("SpecDecoder - The Mastercard-Fixed-Format-TLV with decimal SE numbers remains unchanged (backward compatibility)", "[spec][tlv]") {
+    // Bestehende Mastercard/Visa-Specs (z.B. DE48-Subelemente) nutzen
+    // dezimale SE-Nummern in 'children' - das darf sich durch die neue
+    // hex-Unterstützung für BER-TLV NICHT ändern.
+    TempYaml yaml(R"(
+spec: "Mastercard SE Test"
+encoding: ebcdic
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    description: "Additional Data"
+    tlv:
+      tag_bytes: 2
+      len_bytes: 2
+    children:
+      "26":
+        format: char
+        length: 10
+        description: "Some Subelement"
+)");
+
+    REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(yaml.str()));
+}
+
+TEST_CASE("SpecDecoder - A TLV subelement without an explicit description still correctly falls back to 'SE<n>'", "[spec][tlv]") {
+    // Kein 'description:' im children-Eintrag - muss den generischen
+    // Fallback nutzen (und darf dabei NICHT korrumpiert sein, siehe
+    // description_for_wire()/fallback_description_cache_ in _tlv.hh).
+    TempYaml yaml(R"(
+spec: "Fallback Description Test"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbinary
+    length: 999
+    description: "ICC Data"
+    tlv:
+      ber: true
+    children:
+      "1A":
+        format: binary
+        length: 50
+)");
+
+    std::shared_ptr<ISOParserPtrBase> parser;
+    REQUIRE_NOTHROW(parser = spec::SpecDecoder::loadFromYaml(yaml.str()));
+
+    auto ascii_b = [](const std::string& s) {
+        return std::vector<uint8_t>(s.begin(), s.end());
+        };
+
+    std::vector<uint8_t> raw;
+    raw.insert(raw.end(), { '0','2','0','0' });
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[6] = 0x02u; // DE55
+    raw.insert(raw.end(), bmp.begin(), bmp.end());
+    const std::vector<uint8_t> tlv_payload{ 0x1A, 0x02, 0xAA, 0xBB };
+    auto lll = ascii_b("004");
+    raw.insert(raw.end(), lll.begin(), lll.end());
+    raw.insert(raw.end(), tlv_payload.begin(), tlv_payload.end());
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE_NOTHROW(msg->unparse(msg, raw));
+
+    auto de55 = msg->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+    auto se = de55->get<BinaryField>(0x1A);
+    REQUIRE(se != nullptr);
+    CHECK(se->description() == "SE26"); // 0x1A = 26 dezimal, generischer Fallback
 }
 
 TEST_CASE("SpecDecoder - format: lllbertlv shorthand (no type/children/tlv needed)", "[spec][tlv][ber]") {
@@ -562,7 +734,7 @@ TEST_CASE("Error - !include_files missing file", "[error][preprocessor]") {
     TempYaml y(R"(
 !include_files
 - does_not_exist.yml
-
+---
 spec: "Test"
 encoding: ebcdic
 fields:
@@ -722,7 +894,7 @@ definitions:
     auto spec_path = dir.write("invalid.yml", R"(
 !include_files
 - defs.yml
-
+---
 spec: "SourceMap Test"
 encoding: ebcdic
 fields:
@@ -896,11 +1068,74 @@ fields:
     CHECK(t1 != t2);  // Sidecar wurde neu geschrieben
 }
 
+TEST_CASE("SourceMap - A sidecar without a format_version or with an incorrect one is discarded rather than misinterpreted", "[sourcemap][persistence]") {
+    // Simuliert eine Sidecar-Datei aus einer ALTEN Installation (vor der
+    // yaml-cpp->ryml-Migration): richtiger Hash für den Dateiinhalt, aber
+    // OHNE format_version - der Schlüssel-Typ von "entries" hat sich damals
+    // von "Zeilennummer" zu "ryml-Knoten-ID" geändert (siehe _sourcemap.cc).
+    // Ohne die format_version-Prüfung würde diese Sidecar stillschweigend
+    // geladen und ihre (bedeutungslos gewordenen) Zahlen als Knoten-IDs
+    // fehlinterpretiert - der Hash allein schützt davor nicht, da er nur
+    // vom Quelldatei-Inhalt abhängt.
+    TempDir dir;
+    auto spec_path = dir.write("mc.yml", R"(
+spec: "Format-Version-Test"
+encoding: ebcdic
+fields:
+  "000":
+    format: numeric
+    length: 4
+  "001":
+    format: bitmap
+    length: 8
+)");
+    const std::string smap_path = spec_path + ".smap";
+
+    // Erstes Laden erzeugt eine GÜLTIGE, aktuelle Sidecar mit korrektem Hash.
+    REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(spec_path));
+    REQUIRE(std::filesystem::exists(smap_path));
+
+    // Den echten Hash aus der frisch geschriebenen Sidecar auslesen und eine
+    // "alte" Sidecar-Datei simulieren: derselbe Hash, aber OHNE format_version.
+    nlohmann::json j;
+    {
+        std::ifstream in(smap_path);
+        in >> j;
+    }
+    REQUIRE(j.contains("format_version"));
+    const std::string realHash = j.at("hash").get<std::string>();
+
+    nlohmann::json oldStyle;
+    oldStyle["hash"] = realHash;  // Hash passt weiterhin zum Dateiinhalt
+    oldStyle["entries"] = nlohmann::json::array();
+    // KEIN "format_version"-Feld - genau wie eine echte alte Sidecar.
+    {
+        std::ofstream out(smap_path, std::ios::trunc);
+        out << oldStyle.dump(2);
+    }
+    const auto t_old = std::filesystem::last_write_time(smap_path);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Zweites Laden: Hash würde passen, aber format_version fehlt -> muss
+    // trotzdem als ungültig behandelt und die Sidecar neu geschrieben werden.
+    REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(spec_path));
+    const auto t_new = std::filesystem::last_write_time(smap_path);
+    CHECK(t_new != t_old);
+
+    nlohmann::json j2;
+    {
+        std::ifstream in(smap_path);
+        in >> j2;
+    }
+    CHECK(j2.contains("format_version"));
+}
+
 // =============================================================================
 // loadFromYaml/loadBothFromYaml - trackSourceMap-Parameter
 // =============================================================================
 
-TEST_CASE("SpecDecoder - loadFromYaml(path, false) baut denselben Parser wie trackSourceMap=true", "[spec][perf]") {
+TEST_CASE("SpecDecoder - loadFromYaml(path, false) creates the same parser as trackSourceMap=true", "[spec][perf]") {
     TempYaml yaml(R"(
 spec: "TrackSourceMap Test"
 encoding: ascii
@@ -937,7 +1172,7 @@ fields:
     CHECK(msgA->get<OpaqueField>(2)->value() == msgB->get<OpaqueField>(2)->value());
 }
 
-TEST_CASE("SpecDecoder - trackSourceMap=false liefert bei Fehlern in einer Einzeldatei-Spec dieselbe Fehlermeldung", "[spec][perf][error]") {
+TEST_CASE("SpecDecoder - trackSourceMap=false returns the same error message for errors in a single-file spec", "[spec][perf][error]") {
     // Ohne !use/!include_files/!template/!merge ist die "prozessierte" Position
     // identisch zur Original-Position - hier darf sich also NICHTS an der
     // Fehlermeldung ändern, nur die interne Tracking-Arbeit entfällt.
@@ -963,7 +1198,7 @@ fields:
 // loadFromYamlCached/loadBothFromYamlCached
 // =============================================================================
 
-TEST_CASE("SpecDecoder - loadFromYamlCached returns the same parser if file remains unchanged", "[spec][cache]") {
+TEST_CASE("SpecDecoder - loadFromYamlCached returns the same parser if the file remains unchanged", "[spec][cache]") {
     TempYaml yaml(R"(
 spec: "Cache Test"
 encoding: ascii
@@ -980,7 +1215,7 @@ fields:
     CHECK(p1.get() == p2.get());
 }
 
-TEST_CASE("SpecDecoder - loadFromYamlCached fails when file has been modified (mtime)", "[spec][cache]") {
+TEST_CASE("SpecDecoder - loadFromYamlCached fails when the file has been modified (mtime)", "[spec][cache]") {
     TempYaml yaml(R"(
 spec: "Cache Invalidation Test"
 encoding: ascii
@@ -1012,7 +1247,7 @@ fields:
     CHECK(p2.get() == p3.get());
 }
 
-TEST_CASE("SpecDecoder - loadBothFromYamlCached returns same objects if file remains unchanged", "[spec][cache]") {
+TEST_CASE("SpecDecoder - loadBothFromYamlCached returns the same objects if the file remains unchanged", "[spec][cache]") {
     TempYaml yaml(R"(
 spec: "Cache Both Test"
 encoding: ascii
@@ -1047,7 +1282,7 @@ fields:
     REQUIRE(specBoth != nullptr);
 }
 
-TEST_CASE("SpecDecoder - loadFromYamlCached throws an error if spec is invalid (no silent fallback)", "[spec][cache][error]") {
+TEST_CASE("SpecDecoder - loadFromYamlCached throws an error if the spec is invalid (no silent fallback)", "[spec][cache][error]") {
     TempYaml yaml(R"(
 spec: "Invalid"
 fields:

@@ -61,7 +61,8 @@ namespace TNG_NAMESPACE {
             std::size_t  data_offset,
             std::size_t  data_len,
             std::size_t  wire_offset,
-            std::size_t  wire_len);
+            std::size_t  wire_len,
+            const nonstd::string_view& description);
 
     } // namespace tlv_detail
 
@@ -80,10 +81,12 @@ namespace TNG_NAMESPACE {
     public:
         static constexpr TNG_KEY_TYPE TCC_KEY = -2;
         using DataEncodingMap = std::unordered_map<std::size_t, codec::Encoder>;
+        using DescriptionMap  = std::unordered_map<std::size_t, std::string>;
 
-        explicit ISOTLVParser(DataEncodingMap data_enc_map = {})
+        explicit ISOTLVParser(DataEncodingMap data_enc_map = {}, DescriptionMap description_map = {})
             : ISOBaseParser("<tlv>", 0)
             , data_enc_map_(std::move(data_enc_map))
+            , description_map_(std::move(description_map))
         {
         }
 
@@ -150,7 +153,8 @@ namespace TNG_NAMESPACE {
 
                 tlv_detail::store_se(msg, se_num, b, pos, se_len,
                     base_offset + tag_start,
-                    (pos - tag_start) + se_len);
+                    (pos - tag_start) + se_len,
+                    description_for_wire(se_num));
                 tlv_detail::log_debug_se_read(se_num, se_len);
                 pos += se_len;
             }
@@ -211,8 +215,40 @@ namespace TNG_NAMESPACE {
             return std::nullopt;
         }
 
+        // Liefert eine LANGLEBIGE (an dieses Parser-Objekt gebundene) Sicht auf
+        // die Beschreibung für `se_num` - NIEMALS eine Kopie/Temporäre.
+        //
+        // KRITISCH: ISOComponent::description(const nonstd::string_view&)
+        // speichert NUR eine Sicht, keine eigene Kopie (siehe _components.cc).
+        // Ein Aufruf wie `se->description(irgendein_temporäres_std::string)`
+        // erzeugt deshalb eine dangelnde Sicht, sobald die Temporäre am Ende
+        // des Ausdrucks zerstört wird - betraf früher auch schon den
+        // generischen "SE26"-Fallback, nur unauffällig (kurze Strings landen
+        // typischerweise in der Small-String-Optimization und werden nicht
+        // sofort überschrieben; empirisch mit einer längeren, aus 'children'
+        // deklarierten Beschreibung wie "Application Cryptogram" aufgedeckt).
+        // Deshalb: explizite Beschreibungen leben in description_map_ (schon
+        // bei Konstruktion befüllt, Parser-Lebensdauer), generierte "SE<n>"-
+        // Fallbacks werden HIER EINMALIG erzeugt und in einem eigenen,
+        // ebenfalls Parser-langlebigen Cache abgelegt.
+        nonstd::string_view description_for_wire(std::size_t se_num) const {
+            auto it = description_map_.find(se_num);
+            if (it != description_map_.end())
+                return nonstd::string_view(it->second);
+
+            auto [cacheIt, inserted] = fallback_description_cache_.try_emplace(
+                se_num, "SE" + std::to_string(se_num));
+            return nonstd::string_view(cacheIt->second);
+        }
+
     private:
         DataEncodingMap data_enc_map_;
+        DescriptionMap  description_map_;
+        // mutable: unparse() ist zwar selbst nicht const, description_for_wire()
+        // wird aber bewusst als const-Methode angeboten (liest nur, "erzeugt"
+        // höchstens einen Cache-Eintrag - kein Teil des eigentlichen
+        // Tag/Length/Value-Zustands).
+        mutable std::unordered_map<std::size_t, std::string> fallback_description_cache_;
     };
 
     // ── Vordefinierte Aliase ─────────────────────────────────────────────────

@@ -25,10 +25,9 @@
 ///     for (const auto& f : spec->fields())
 ///         fmt::print("DE{:03d}: {}\n", f.key, f.description);
 
-// [iso8583]
 #include "config.h"
 #include "detail/_interfaces.hh"
-// [stdc++]
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -80,7 +79,7 @@ namespace TNG_NAMESPACE {
         ///
         /// Returned by @ref ISOSpec::field and iterated via @ref ISOSpec::fields.
         struct TNG_EXPORT SpecFieldInfo {
-            /// @brief DE number – same key used in @ref `iso8583::Message`.
+            /// @brief DE number – same key used in @ref iso8583::ISOMessage.
             TNG_KEY_TYPE key = 0;
 
             /// @brief Human-readable field name from the YAML `description:` key.
@@ -199,7 +198,10 @@ namespace TNG_NAMESPACE {
         ///         - description: "ICC Data"
         ///
         /// @par Supported directives:
-        ///   - `!include_files [a.yml]` – load external definition files
+        ///   - `!include_files [a.yml]` – load external definition files.
+        ///     Must be followed by a `---` document separator before the
+        ///     rest of the spec content - `!include_files` and the
+        ///     remainder are two separate YAML documents in the same file.
         ///   - `!use <name>`            – substitute a named definition
         ///   - `!template P(F, N)`      – variable-length shorthand (e.g. `LL(CHAR, 19)`)
         ///   - `!merge [...]`           – merge maps, later entries overwrite

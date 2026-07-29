@@ -15,6 +15,21 @@
 //       double back = eur->parseAmountFromISOMessage(amt);        // 19.99
 //   }
 //
+// -----------------------------------------------------------------------------
+// Historie: warum es hier eine neue Klasse statt der alten `_currency.LEGACY`
+// gibt
+// -----------------------------------------------------------------------------
+// Die Vorgängerversion deklarierte `decimals` als TEMPLATE-Parameter
+// (`template <int decimals> class Currency`). Damit sind z.B. `Currency<2>`
+// (EUR, USD, ...) und `Currency<0>` (JPY, KRW, ...) unterschiedliche C++-
+// Typen - eine Laufzeit-Tabelle wie `std::unordered_map<std::string,
+// Currency>` kann so grundsätzlich nicht existieren, welchen der Typen
+// sollte sie speichern? Das machte das eigentliche Ziel ("ISO-Codes in eine
+// Tabelle laden") von vornherein unmöglich, unabhängig davon, wie die
+// Tabelle befüllt wird. `decimals` ist hier deshalb ein normales
+// Laufzeit-Feld - alle Currency-Objekte haben denselben Typ und passen in
+// eine gemeinsame Tabelle (siehe detail/_currency_table.hh, generiert von
+// scripts/generate_currency_table.py).
 // =============================================================================
 
 // [stdc++]
@@ -24,7 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-// [iso8583]
+// [tng]
 #include <iso8583/config.h>
 
 namespace TNG_NAMESPACE {

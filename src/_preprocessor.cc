@@ -1,6 +1,10 @@
 #include "_preprocessor.hh"
 // [stdc++]
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -13,141 +17,260 @@
 namespace TNG_NAMESPACE::spec {
 
     // =============================================================================
-    // Typen
+    // Architektur (yaml-cpp -> ryml, Phase 3+4 der Migration)
     // =============================================================================
+    //
+    // ALLES (akkumulierte Definitionen, Zwischenergebnisse) lebt in EINEM
+    // einzigen `ryml::Tree` ("workspace"). Jede Datei wird zunächst in einen
+    // EIGENEN, TEMPORÄREN `ryml::Tree` ("filetree") geparst - notwendig, weil
+    // nur ein frisch per parse_in_arena() erzeugter STANDALONE-Tree YAML-
+    // STREAMS (mehrere "---"-getrennte Dokumente pro Datei) korrekt erkennt.
+    // Der Datei-Inhalt darf dabei NICHT über eine ANDERE, gleichzeitig aktive
+    // Tree-Arena an parse_in_arena() übergeben werden (Aliasing-Eigenheit
+    // zwischen zwei gleichzeitig existierenden Arenen, korrumpiert einzelne
+    // Dokument-Knoten). Beides empirisch geprüft (ryml v0.15.2).
+    //
+    // Da filetree seine EIGENE Arena hat, muss filetree für die gesamte
+    // restliche Verarbeitung am Leben bleiben (merge_with() kopiert nur
+    // Baumstruktur, keine String-Bytes) - siehe fileTreesKeepAlive unten.
+    //
+    // Das ENDERGEBNIS lebt in einem SEPARATEN Tree (result.tree, siehe
+    // _preprocessor.hh) - nicht im workspace selbst. So bleibt result.tree
+    // absolut sauber (keine __scratch__/__definitions__-Bereiche) und die
+    // Knoten-IDs, die die SourceMap referenziert, sind exakt die IDs, die
+    // _spec.cc später sieht - keine weitere Kopie mehr nötig.
+    //
+    // KRITISCHE REGEL für den gesamten Code unten: set_key() IMMER ALS
+    // LETZTEN Schritt aufrufen, NACHDEM set_type()/append_child()/
+    // merge_with() für denselben Knoten bereits gelaufen sind - nicht davor!
+    // Empirisch geprüft (ryml v0.15.2): set_type() (und merge_with() intern)
+    // überschreibt die Knoten-Flags komplett, inklusive des "hat einen Key"-
+    // Bits. Ein vorher gesetzter Key geht dadurch stillschweigend verloren.
+    //
+    // Positions-Tracking (SourceMap): ryml erlaubt Location-Abfragen nur für
+    // den ZULETZT mit einem Parser-Objekt geparsten Baum, und Knoten-IDs
+    // ändern sich bei JEDEM merge_with()-Kopiervorgang (Quell- und
+    // Ziel-Knoten haben unterschiedliche IDs, auch innerhalb desselben
+    // Trees). Es gibt deshalb KEINE stabile "prozessierte Zeile" mehr, wie
+    // es sie mit yaml-cpp gab. Stattdessen: für jede Datei wird EINMALIG,
+    // solange ihr Parser noch lebt, eine Origin-Map (Knoten-ID -> wahre
+    // Quellposition) aufgebaut. Bei JEDEM merge_with()-Kopiervorgang läuft
+    // anschließend propagateOrigins() im Gleichschritt über Quelle und Kopie
+    // und überträgt die bekannte Herkunft auf die NEUEN Knoten-IDs der
+    // Kopie. So wandert die Herkunfts-Info über alle Kopierschritte hinweg
+    // mit, bis sie beim finalen Schreiben nach result.tree in die
+    // eigentliche (öffentliche) SourceMap übernommen wird - jetzt mit
+    // result.tree's IDs als Schlüssel, exakt was _spec.cc sehen wird.
+    // =============================================================================
+
+    /// Herkunfts-Map: Knoten-ID (in EINEM bestimmten Baum) -> wahre Quellposition.
+    /// Rein intern/transient - nicht zu verwechseln mit der öffentlichen SourceMap
+    /// (die am Ende, mit result.tree's IDs als Schlüssel, befüllt wird).
+    using OriginMap = std::unordered_map<ryml::id_type, SourceLocation>;
 
     /// Trackt welche Definition aus welcher Datei stammt.
     using DefOriginMap = std::unordered_map<std::string, std::string>;
 
+    // Verhindert Stack-Overflow bei böswillig oder versehentlich extrem tief
+    // verschachtelten YAML-Strukturen - wandelt einen harten Absturz in eine
+    // saubere, fangbare Exception um. 200 ist für jede realistische Spec
+    // (typischerweise 3-5 Ebenen: fields -> field -> children -> child -> tlv)
+    // weit mehr Spielraum als je gebraucht wird.
+    static constexpr int MAX_RECURSION_DEPTH = 200;
+
+    static void checkDepth(int depth) {
+        if (depth > MAX_RECURSION_DEPTH)
+            throw std::runtime_error(
+                "YAML-Struktur zu tief verschachtelt (> " + std::to_string(MAX_RECURSION_DEPTH) +
+                " Ebenen) - möglicherweise eine zirkuläre !use-Referenz oder eine "
+                "fehlerhafte/böswillige Spec-Datei.");
+    }
+
     struct ProcessContext {
-        const YAML::Node& root_context; // für !use-Lookups
-        const std::filesystem::path& base_path;
+        ryml::Tree* ws;                     // Workspace - besitzt Scratch/Definitionen
+        ryml::id_type defs_id;              // workspace["__definitions__"]
+        ryml::id_type scratch_id;           // workspace["__scratch__"]
+        std::filesystem::path base_path;
         std::unordered_set<std::string>& visited;
-        SourceMap* smap;
-        std::string                      current_file;
-        const DefOriginMap* def_origins;
+        DefOriginMap* def_origins;
+        OriginMap* origins;                 // Herkunft, keyed by *ws*-Knoten-ID
+        // Namen der Definitionen, die GERADE (in der aktuellen !use-
+        // Aufrufkette) aufgelöst werden - erkennt zirkuläre !use-Referenzen
+        // (A !use B, B !use A) mit einer präzisen Fehlermeldung, statt sich
+        // auf den generischen Tiefenlimit-Schutz (checkDepth) zu verlassen.
+        std::unordered_set<std::string> activeUseChain;
     };
 
     // =============================================================================
-    // Forward-Deklaration
+    // Forward-Deklarationen
     // =============================================================================
-    static YAML::Node processNode(const YAML::Node& node, ProcessContext& ctx);
+    static void processNode(ryml::ConstNodeRef src, ryml::NodeRef dst, ProcessContext& ctx, int depth = 0);
 
     // =============================================================================
-    // deepClone – nur für Stellen wo yaml-cpp Referenz-Aliasing vermieden werden muss
+    // Hilfsfunktionen
     // =============================================================================
-    static YAML::Node deepClone(const YAML::Node& node) {
-        switch (node.Type()) {
-        case YAML::NodeType::Map: {
-            YAML::Node out(YAML::NodeType::Map);
-            for (auto it : node)
-                out[it.first.as<std::string>()] = deepClone(it.second);
-            return out;
-        }
-        case YAML::NodeType::Sequence: {
-            YAML::Node out(YAML::NodeType::Sequence);
-            for (const auto& e : node)
-                out.push_back(deepClone(e));
-            return out;
-        }
-        default:
-            return YAML::Node(node.Scalar());
+
+    static ryml::NodeRef scratchNode(ProcessContext& ctx) {
+        return ctx.ws->ref(ctx.scratch_id).append_child();
+    }
+
+    static std::string toStdString(ryml::csubstr s) {
+        return std::string(s.str, s.len);
+    }
+
+    // Läuft `src` und `dst` STRUKTURELL PARALLEL (dst ist eine merge_with-Kopie
+    // von src - gleiche Keys, gleiche Reihenfolge) und überträgt für jeden
+    // Knoten die bekannte Herkunft aus `originsIn[src.id()]` nach
+    // `originsOut[dst.id()]`. originsIn und originsOut dürfen dieselbe Map
+    // sein (Same-Tree-Merge) - sicher, da dst immer NEUE, bei diesem Aufruf
+    // noch nicht existierende IDs hat.
+    static void propagateOrigins(ryml::ConstNodeRef src, ryml::ConstNodeRef dst,
+        const OriginMap& originsIn, OriginMap& originsOut, int depth = 0)
+    {
+        checkDepth(depth);
+        auto it = originsIn.find(src.id());
+        if (it != originsIn.end())
+            originsOut.emplace(dst.id(), it->second);
+
+        if ((src.is_map() && dst.is_map()) || (src.is_seq() && dst.is_seq())) {
+            auto sit = src.children().begin();
+            auto dit = dst.children().begin();
+            for (; sit != src.children().end() && dit != dst.children().end(); ++sit, ++dit)
+                propagateOrigins(*sit, *dit, originsIn, originsOut, depth + 1);
         }
     }
 
-    // =============================================================================
-    // mergeInto – Definitionen OHNE Clone damit YAML::Mark erhalten bleibt
-    // =============================================================================
-    static void mergeInto(YAML::Node& dest,
-        const YAML::Node& source,
-        DefOriginMap& def_origins,
-        const std::string& source_file)
-    {
-        if (!source.IsMap()) return;
-        for (auto it : source) {
-            const std::string key = it.first.as<std::string>();
-            if (key == "definitions") {
-                if (!dest["definitions"] || !dest["definitions"].IsMap())
-                    dest["definitions"] = YAML::Node(YAML::NodeType::Map);
-                if (it.second.IsMap()) {
-                    for (auto def : it.second) {
-                        const std::string defName = def.first.as<std::string>();
-                        // Originaler Node ohne Clone: YAML::Mark bleibt erhalten
-                        dest["definitions"][defName] = def.second;
-                        def_origins[defName] = source_file;
-                    }
-                }
-            }
-            else {
-                dest[it.first] = it.second;
-            }
-        }
+    // Läuft rekursiv über `tree` und kopiert JEDEN Key/Value über
+    // tree.to_arena() in TREE'S EIGENE Arena um. Notwendig, weil
+    // merge_with() nur die Baumstruktur kopiert, NICHT die zugrundeliegenden
+    // String-Bytes - Keys/Values eines per merge_with() kopierten Knotens
+    // zeigen deshalb weiterhin in die Arena des URSPRÜNGLICHEN Baums (hier:
+    // ws bzw. die einzelnen filetree-Instanzen). Da diese Bäume nach dem
+    // Ende von preprocessWithSourceMap() zerstört werden, MUSS result.tree
+    // vor der Rückgabe vollständig eigenständig gemacht werden - sonst
+    // zeigen alle Keys/Values ins Leere (dangling), sobald der Aufrufer das
+    // Ergebnis benutzt.
+    static void makeSelfContained(ryml::Tree& tree, ryml::NodeRef node, int depth = 0) {
+        checkDepth(depth);
+        if (node.has_key())
+            node.set_key(tree.to_arena(node.key()));
+        if (node.has_val())
+            node.set_val(tree.to_arena(node.val()));
+        if (node.is_map() || node.is_seq())
+            for (ryml::NodeRef child : node.children())
+                makeSelfContained(tree, child, depth + 1);
     }
 
     // =============================================================================
-    // SourceMap-Tracking
+    // ryml-Fehlerbehandlung: Exceptions statt abort()
     // =============================================================================
-    static void track(SourceMap* smap,
-        int                proc_line,
-        const std::string& origin_file,
-        int                origin_line,
-        int                origin_col)
-    {
-        if (!smap || proc_line <= 0) return;
-        smap->record(proc_line, SourceLocation{ origin_file, origin_line, origin_col });
+    // KRITISCH: ryml ruft standardmäßig std::abort() bei JEDEM Parse-/Basic-/
+    // Visit-Fehler auf - nicht etwa eine C++-Exception. Ohne diese explizite
+    // Umstellung würde jede fehlerhafte YAML-Spec-Datei den GESAMTEN Prozess
+    // abschießen, statt (wie von SpecDecoder::loadFromYaml() dokumentiert und
+    // vom Rest dieser Bibliothek erwartet) einen fangbaren std::runtime_error
+    // zu werfen. Wird einmalig beim ersten Preprocessing-Aufruf installiert.
+    // =============================================================================
+    [[noreturn]] static void rymlErrorBasic(ryml::csubstr msg, ryml::ErrorDataBasic const&, void*) {
+        throw std::runtime_error("YAML-Fehler: " + std::string(msg.str, msg.len));
+    }
+    [[noreturn]] static void rymlErrorParse(ryml::csubstr msg, ryml::ErrorDataParse const&, void*) {
+        throw std::runtime_error("YAML-Parse-Fehler: " + std::string(msg.str, msg.len));
+    }
+    [[noreturn]] static void rymlErrorVisit(ryml::csubstr msg, ryml::ErrorDataVisit const&, void*) {
+        throw std::runtime_error("YAML-Fehler: " + std::string(msg.str, msg.len));
+    }
+
+    static void ensureRymlThrowsExceptions() {
+        static const bool installed = [] {
+            ryml::Callbacks cb = ryml::get_callbacks();
+            cb.m_error_basic = &rymlErrorBasic;
+            cb.m_error_parse = &rymlErrorParse;
+            cb.m_error_visit = &rymlErrorVisit;
+            ryml::set_callbacks(cb);
+            return true;
+        }();
+        (void)installed;
+    }
+
+    // =============================================================================
+    // hasDirective – rein lesende, rekursive Prüfung ob `node` oder ein
+    // Nachfahre einen der vier Preprocessor-Tags trägt. Deutlich günstiger
+    // als eine volle Knoten-für-Knoten-Rekursion, da nur Tags gelesen werden
+    // - für Teilbäume ohne jede Direktive reicht ein Bulk-merge_with().
+    // =============================================================================
+    static bool hasDirective(ryml::ConstNodeRef node, int depth = 0) {
+        checkDepth(depth);
+        if (node.has_val_tag()) {
+            ryml::csubstr t = node.val_tag();
+            if (t == "!use" || t == "!include" || t == "!template" || t == "!merge")
+                return true;
+        }
+        if (node.is_map() || node.is_seq()) {
+            for (ryml::ConstNodeRef child : node.children())
+                if (hasDirective(child, depth + 1)) return true;
+        }
+        return false;
     }
 
     // =============================================================================
     // Direktiv-Handler
+    //
+    // Alle Handler setzen NIE einen Key auf `dst` - das ist immer Sache des
+    // AUFRUFERS, und zwar NACH dem Handler-Aufruf (siehe KRITISCHE REGEL oben).
     // =============================================================================
 
-    static YAML::Node processUse(const YAML::Node& node,
-        ProcessContext& ctx,
-        bool               is_legacy = false)
+    static void processUse(ryml::ConstNodeRef src, ryml::NodeRef dst,
+        ProcessContext& ctx, bool is_legacy, int depth)
     {
-        if (!node.IsScalar())
+        checkDepth(depth);
+        if (src.is_map() || src.is_seq() || !src.has_val())
             throw std::runtime_error(
                 is_legacy ? "!include erwartet einen Schlüsselstring"
                 : "!use erwartet einen Schlüsselstring");
 
-        const std::string refKey = node.as<std::string>();
+        const std::string refKey = toStdString(src.val());
         if (is_legacy)
             TNG_LOG_WARN("[Preprocessor] '!include {}' veraltet – bitte '!use {}' verwenden",
                 refKey, refKey);
 
-        if (!ctx.root_context["definitions"] ||
-            !ctx.root_context["definitions"][refKey])
+        ryml::ConstNodeRef defs = ctx.ws->cref(ctx.defs_id);
+        ryml::csubstr refKeyC = ryml::to_csubstr(refKey);
+        if (!defs.has_child(refKeyC))
             throw std::runtime_error(
                 "!use verweist auf unbekannte Definition '" + refKey + "' – "
                 "ist die Definition in 'definitions' oder via '!include_files' geladen?");
 
-        // Ursprungs-Datei der Definition nachschlagen
-        std::string def_file = ctx.current_file;
-        if (ctx.def_origins) {
-            auto it = ctx.def_origins->find(refKey);
-            if (it != ctx.def_origins->end())
-                def_file = it->second;
+        // Zirkuläre !use-Referenzen (A !use B, B !use A, oder längere Ketten)
+        // erkennen, BEVOR sie den generischen Tiefenlimit-Schutz auslösen -
+        // deutlich präzisere Fehlermeldung für den in der Praxis häufigsten
+        // Auslöser einer Endlos-Rekursion (ein Autorenfehler, keine böswillige
+        // Datei).
+        if (ctx.activeUseChain.count(refKey)) {
+            std::string chain;
+            for (const auto& k : ctx.activeUseChain) chain += k + " -> ";
+            throw std::runtime_error(
+                "Zirkuläre !use-Referenz erkannt: " + chain + refKey);
         }
+        ctx.activeUseChain.insert(refKey);
 
-        // Track: !use-Stelle in der aufrufenden Datei
-        track(ctx.smap,
-            node.Mark().line + 1,
-            ctx.current_file,
-            node.Mark().line + 1,
-            node.Mark().column + 1);
-
-        // Expansion mit Definitions-Datei als current_file –
-        // damit werden die Kinder-Nodes mit der richtigen Datei getrackt
-        ProcessContext defCtx = ctx;
-        defCtx.current_file = def_file;
-        return processNode(ctx.root_context["definitions"][refKey], defCtx);
+        // Definitionen wurden beim Akkumulieren bereits vollständig getrackt.
+        try {
+            processNode(defs[refKeyC], dst, ctx, depth + 1);
+        }
+        catch (...) {
+            ctx.activeUseChain.erase(refKey);
+            throw;
+        }
+        ctx.activeUseChain.erase(refKey);
     }
 
-    static YAML::Node processTemplate(const YAML::Node& node) {
-        if (!node.IsScalar())
+    static void processTemplate(ryml::ConstNodeRef src, ryml::NodeRef dst, ProcessContext& ctx, int depth) {
+        checkDepth(depth);
+        if (src.is_map() || src.is_seq() || !src.has_val())
             throw std::runtime_error("!template erwartet einen Ausdruck wie 'LL(CHAR, 19)'");
 
-        const std::string expr = node.as<std::string>();
+        const std::string expr = toStdString(src.val());
         static const std::regex pattern(
             R"(^(L{1,4})\((\w+),\s*(\d{1,4})\s*(?:,\s*(.*))?\)$)",
             std::regex::icase);
@@ -173,146 +296,135 @@ namespace TNG_NAMESPACE::spec {
                     " überschreitet Maximum " + std::to_string(max) +
                     " für Prefix '" + prefix + "'");
 
-        YAML::Node result(YAML::NodeType::Map);
-        result["format"] = prefix + fmt;
-        result["length"] = length;
-        if (m[4].matched && !m[4].str().empty())
-            result["description"] = m[4].str();
-        return result;
+        dst.set_type(ryml::MAP);
+
+        auto fmt_child = dst.append_child();
+        fmt_child.set_type(ryml::VAL);
+        fmt_child.set_val(ctx.ws->to_arena(prefix + fmt));
+        fmt_child.set_key("format");
+
+        auto len_child = dst.append_child();
+        len_child.set_type(ryml::VAL);
+        len_child.set_val(ctx.ws->to_arena(length));
+        len_child.set_key("length");
+
+        ryml::id_type desc_id = ryml::NONE;
+        if (m[4].matched && !m[4].str().empty()) {
+            auto desc_child = dst.append_child();
+            desc_child.set_type(ryml::VAL);
+            desc_child.set_val(ctx.ws->to_arena(m[4].str()));
+            desc_child.set_key("description");
+            desc_id = desc_child.id();
+        }
+
+        // Herkunft: synthetisierte Felder (format/length/description werden
+        // berechnet, nicht aus der Quelldatei kopiert) bekommen die Position
+        // des "!template ..."-Ausdrucks selbst zugewiesen - präziser geht's
+        // hier nicht.
+        auto it = ctx.origins->find(src.id());
+        if (it != ctx.origins->end()) {
+            ctx.origins->emplace(dst.id(), it->second);
+            ctx.origins->emplace(fmt_child.id(), it->second);
+            ctx.origins->emplace(len_child.id(), it->second);
+            if (desc_id != ryml::NONE)
+                ctx.origins->emplace(desc_id, it->second);
+        }
     }
 
-    static YAML::Node processMerge(const YAML::Node& node, ProcessContext& ctx) {
-        if (!node.IsSequence())
+    static void processMerge(ryml::ConstNodeRef src, ryml::NodeRef dst, ProcessContext& ctx, int depth) {
+        checkDepth(depth);
+        if (!src.is_seq())
             throw std::runtime_error("!merge erwartet eine Liste von Maps");
 
-        YAML::Node result(YAML::NodeType::Map);
-        for (const auto& part : node) {
-            YAML::Node evaluated = processNode(part, ctx);
-            if (!evaluated.IsMap())
+        dst.set_type(ryml::MAP);
+        for (ryml::ConstNodeRef part : src.children()) {
+            ryml::NodeRef scratch = scratchNode(ctx);
+            processNode(part, scratch, ctx, depth + 1);
+
+            if (!scratch.is_map())
                 throw std::runtime_error("Alle Elemente in !merge müssen Maps sein");
-            for (auto it : evaluated)
-                result[it.first] = it.second;
-        }
-        return result;
-    }
 
-    // hasDirective / trackSubtree
-    //
-    // hasDirective(): rein lesende, rekursive Prüfung ob `node` oder ein
-    // Nachfahre einen der vier Preprocessor-Tags trägt. Deutlich günstiger
-    // als ein voller processNode()-Durchlauf, da nur .Tag() gelesen wird -
-    // keine einzige YAML::Node-Neuzuweisung (out[key]=val), die den
-    // Baum-Neuaufbau in processNode() so teuer macht (siehe dort).
-    //
-    // trackSubtree(): identisches Positions-Tracking wie der volle
-    // processNode()-Durchlauf, aber ohne den Baum neu aufzubauen - für
-    // Teilbäume, in denen hasDirective() bereits false ergeben hat.
-    // =============================================================================
-    static bool hasDirective(const YAML::Node& node) {
-        const std::string& tag = node.Tag();
-        if (tag == "!use" || tag == "!include" || tag == "!template" || tag == "!merge")
-            return true;
-
-        if (node.IsMap()) {
-            for (auto it : node)
-                if (hasDirective(it.second)) return true;
-        }
-        else if (node.IsSequence()) {
-            for (const auto& elem : node)
-                if (hasDirective(elem)) return true;
-        }
-        return false;
-    }
-
-    static void trackSubtree(const YAML::Node& node, ProcessContext& ctx) {
-        if (node.IsMap()) {
-            for (auto it : node) {
-                const YAML::Mark key_mark = it.first.Mark();
-                track(ctx.smap, key_mark.line + 1, ctx.current_file,
-                    key_mark.line + 1, key_mark.column + 1);
-                trackSubtree(it.second, ctx);
+            for (ryml::ConstNodeRef child : scratch.children()) {
+                // Vorhandenen Eintrag (falls von einem früheren !merge-Teil)
+                // komplett entfernen, bevor der neue geschrieben wird - sonst
+                // würde merge_with() weiter unten rekursiv in den ALTEN
+                // Inhalt hineinmergen statt ihn (wie im Original) komplett zu
+                // ersetzen. "Spätere Teile überschreiben frühere" gilt hier
+                // bewusst nur auf oberster Ebene (flach), nicht rekursiv -
+                // exakt das Verhalten der ursprünglichen yaml-cpp-Version.
+                if (dst.has_child(child.key()))
+                    ctx.ws->remove(dst.find_child(child.key()).id());
+                ryml::NodeRef out = dst.append_child();
+                out.set_type(child.type());
+                ctx.ws->merge_with(ctx.ws, child.id(), out.id());
+                propagateOrigins(child, out, *ctx.origins, *ctx.origins);
+                out.set_key(child.key());  // ZULETZT (siehe KRITISCHE REGEL)
             }
-        }
-        else if (node.IsSequence()) {
-            for (const auto& elem : node)
-                trackSubtree(elem, ctx);
-        }
-        else if (node.IsScalar() && node.Mark().pos > 0) {
-            track(ctx.smap, node.Mark().line + 1, ctx.current_file,
-                node.Mark().line + 1, node.Mark().column + 1);
         }
     }
 
     // =============================================================================
-    // processNode
-    // Gibt wo möglich originale Nodes zurück damit YAML::Mark erhalten bleibt.
-    // Trackt jeden Node in der SourceMap mit current_file.
+    // processNode – arbeitet ausschließlich auf bereits workspace-residenten
+    // Knoten. Setzt NIE selbst den Key von `dst` (Sache des Aufrufers, NACH
+    // diesem Aufruf - siehe KRITISCHE REGEL oben).
     //
-    // PERFORMANCE: Der mit Abstand dominante Kostenfaktor beim Laden einer
-    // Spec ist NICHT das YAML-Parsing selbst und NICHT das Tracking (beide
-    // zusammen typischerweise < 15% der Ladezeit), sondern die Zeile
-    // `out[it.first] = val;` unten - yaml-cpp's Map-Zuweisungsoperator, hier
-    // für JEDEN Knoten im Dokument aufgerufen, auch wenn an diesem Teilbaum
-    // gar nichts zu tun ist. Für einen Teilbaum ganz ohne !use/!include/
-    // !template/!merge (der Normalfall für die meisten Felder, selbst in
-    // einer Spec die diese Direktiven STELLENWEISE nutzt) reicht es, ihn
-    // unverändert zurückzugeben (yaml-cpp-Node-Kopien sind billige
-    // Referenz-Handles, keine Tiefenkopien) - siehe hasDirective()/
-    // trackSubtree() oben. Sicher, weil mergeInto() (siehe unten) `source`
-    // nur liest, nie mutiert - dasselbe Aliasing-Prinzip nutzt dieser Code
-    // bereits für "definitions" (Kommentar dort: "Originaler Node ohne
-    // Clone: YAML::Mark bleibt erhalten").
+    // PERFORMANCE: Für einen Teilbaum ganz ohne !use/!include/!template/
+    // !merge reicht ein Bulk-merge_with() (intern optimiert) statt Knoten-
+    // für-Knoten-Rekursion - siehe hasDirective() oben.
     // =============================================================================
-    static YAML::Node processNode(const YAML::Node& node, ProcessContext& ctx) {
-        const std::string tag = node.Tag();
-
-        if (tag == "!use")      return processUse(node, ctx, false);
-        if (tag == "!include")  return processUse(node, ctx, true);
-        if (tag == "!template") return processTemplate(node);
-        if (tag == "!merge")    return processMerge(node, ctx);
-
-        if (node.IsMap()) {
-            if (!hasDirective(node)) {
-                trackSubtree(node, ctx);
-                return node;
-            }
-            YAML::Node out(YAML::NodeType::Map);
-            for (auto it : node) {
-                const YAML::Mark key_mark = it.first.Mark();
-                YAML::Node val = processNode(it.second, ctx);
-
-                track(ctx.smap,
-                    key_mark.line + 1,
-                    ctx.current_file,
-                    key_mark.line + 1,
-                    key_mark.column + 1);
-
-                out[it.first] = val;
-            }
-            return out;
+    static void processNode(ryml::ConstNodeRef src, ryml::NodeRef dst, ProcessContext& ctx, int depth) {
+        checkDepth(depth);
+        if (src.has_val_tag()) {
+            ryml::csubstr tag = src.val_tag();
+            if (tag == "!use")      { processUse(src, dst, ctx, false, depth + 1); return; }
+            if (tag == "!include")  { processUse(src, dst, ctx, true,  depth + 1); return; }
+            if (tag == "!template") { processTemplate(src, dst, ctx, depth + 1);   return; }
+            if (tag == "!merge")    { processMerge(src, dst, ctx, depth + 1);      return; }
         }
 
-        if (node.IsSequence()) {
-            if (!hasDirective(node)) {
-                trackSubtree(node, ctx);
-                return node;
+        if (src.is_map()) {
+            dst.set_type(ryml::MAP);
+            if (!hasDirective(src)) {
+                ctx.ws->merge_with(ctx.ws, src.id(), dst.id());
+                propagateOrigins(src, dst, *ctx.origins, *ctx.origins);
+                return;
             }
-            YAML::Node out(YAML::NodeType::Sequence);
-            for (const auto& elem : node)
-                out.push_back(processNode(elem, ctx));
-            return out;
+            for (ryml::ConstNodeRef child : src.children()) {
+                ryml::NodeRef out_child = dst.append_child();
+                processNode(child, out_child, ctx, depth + 1);
+                out_child.set_key(child.key());  // ZULETZT (siehe KRITISCHE REGEL)
+                auto it = ctx.origins->find(child.id());
+                if (it != ctx.origins->end())
+                    ctx.origins->emplace(out_child.id(), it->second);
+            }
+            return;
         }
 
-        // Scalar: Original-Node zurückgeben damit Mark erhalten bleibt.
-        // pos > 0: Zeile 1 (line=0, col=0, pos=0) würde sonst herausgefiltert.
-        if (node.IsScalar() && node.Mark().pos > 0) {
-            track(ctx.smap,
-                node.Mark().line + 1,
-                ctx.current_file,
-                node.Mark().line + 1,
-                node.Mark().column + 1);
+        if (src.is_seq()) {
+            dst.set_type(ryml::SEQ);
+            if (!hasDirective(src)) {
+                ctx.ws->merge_with(ctx.ws, src.id(), dst.id());
+                propagateOrigins(src, dst, *ctx.origins, *ctx.origins);
+                return;
+            }
+            for (ryml::ConstNodeRef child : src.children()) {
+                ryml::NodeRef out_child = dst.append_child();
+                processNode(child, out_child, ctx, depth + 1);
+                auto it = ctx.origins->find(child.id());
+                if (it != ctx.origins->end())
+                    ctx.origins->emplace(out_child.id(), it->second);
+            }
+            return;
         }
-        return node;
+
+        // Scalar: `src` und `dst` liegen im selben Baum - der Wert zeigt
+        // bereits in workspace's eigene Arena, kein to_arena() nötig (nur
+        // für SYNTHETISIERTE Werte wie in !template gebraucht).
+        dst.set_type(ryml::VAL);
+        dst.set_val(src.val());
+        auto it = ctx.origins->find(src.id());
+        if (it != ctx.origins->end())
+            ctx.origins->emplace(dst.id(), it->second);
     }
 
 } // namespace TNG_NAMESPACE::spec
@@ -321,18 +433,14 @@ namespace TNG_NAMESPACE::spec {
 // Öffentliche API
 // =============================================================================
 
-YAML::Node TNG_NAMESPACE::spec::SpecPreProcessor::preprocessFile(
-    const std::string& path)
-{
-    return preprocessWithSourceMap(path).node;
-}
-
 TNG_NAMESPACE::spec::PreprocessResult
 TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
     const std::string& path, bool trackSourceMap)
 {
     namespace fs = std::filesystem;
     using namespace TNG_NAMESPACE::spec;
+
+    ensureRymlThrowsExceptions();
 
     const fs::path    absPath = fs::absolute(path);
     const std::string smapPath = absPath.string() + ".smap";
@@ -342,119 +450,234 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
     DefOriginMap                    defOrigins;
 
     PreprocessResult result;
+    result.tree.rootref().set_type(ryml::MAP);
     SourceMap& smap = result.source_map;
-    // Bei trackSourceMap=false wird ctx.smap unten auf nullptr gesetzt - track()
-    // hat bereits einen `if (!smap || ...) return;`-Guard (siehe oben), der
-    // damit JEDEN Tracking-Aufruf zu einem No-Op macht, ohne track() selbst
-    // anfassen zu müssen. Das ist der dominante Kostenfaktor beim Laden: jeder
-    // einzelne YAML-Knoten (Map-Key UND Scalar) bekommt sonst einen
-    // SourceLocation-Eintrag inkl. Kopie des vollständigen Dateipfads - bei
-    // einer Spec mit vielen Feldern schnell mehrere hundert Einträge.
-    SourceMap* const smapForTracking = trackSourceMap ? &smap : nullptr;
 
-    // ── Akkumulierter Definitions-Node ────────────────────────────────────────
-    // Enthält alle geladenen Definitionen mit ihren originalen YAML::Mark.
-    // Wird als { "definitions": { "name": node, ... } } gewrappt damit
-    // processUse via ctx.root_context["definitions"][refKey] zugreifen kann.
-    YAML::Node defsWrapper(YAML::NodeType::Map);
-    defsWrapper["definitions"] = YAML::Node(YAML::NodeType::Map);
-    // Kein lvalue-Reference auf defsWrapper["definitions"] – GCC erlaubt das nicht.
-    // Stattdessen überall defsWrapper["definitions"] direkt verwenden.
+    ryml::Tree ws;
+    ws.rootref().set_type(ryml::MAP);
+    ryml::id_type scratch_id = ws.rootref().append_child().id();
+    ws.ref(scratch_id).set_type(ryml::MAP);
+    ws.ref(scratch_id).set_key("__scratch__");
+    ryml::id_type defs_id = ws.rootref().append_child().id();
+    ws.ref(defs_id).set_type(ryml::MAP);
+    ws.ref(defs_id).set_key("__definitions__");
+    ryml::id_type raw_docs_id = ws.rootref().append_child().id();
+    ws.ref(raw_docs_id).set_type(ryml::SEQ);
+    ws.ref(raw_docs_id).set_key("__raw_docs__");
+
+    OriginMap wsOrigins;    // Herkunft, keyed by ws-Knoten-ID (transient)
+    wsOrigins.reserve(512); // grobe Vorab-Dimensionierung, vermeidet Rehashing
+                            // während des Wachstums bei den meisten Specs
+
+    // Jede Datei wird in einen EIGENEN, temporären Tree geparst (siehe
+    // Architektur-Kommentar oben). merge_with() kopiert beim Übernehmen nach
+    // ws aber NUR die Baumstruktur, nicht die zugrundeliegenden String-
+    // Bytes - die müssen weiterleben, solange ws sie referenziert. Deshalb
+    // werden ALLE filetree-Instanzen hier bis zum Ende dieser Funktion (nach
+    // dem finalen Zusammenbau von result.tree) am Leben gehalten.
+    // unique_ptr statt direktem vector<Tree>, damit eine Reallocation des
+    // Vektors nicht die Adresse eines bereits geparsten Trees verschiebt.
+    std::vector<std::unique_ptr<ryml::Tree>> fileTreesKeepAlive;
+
+    ProcessContext ctx{ &ws, defs_id, scratch_id, {}, visitedFiles, &defOrigins, &wsOrigins };
 
     // ── Rekursive Ladefunktion ────────────────────────────────────────────────
-    // Jede Datei wird SEPARAT geladen und prozessiert.
-    // Nur Definitions werden global akkumuliert (für !use-Lookups).
-    // Der Rest (fields, spec, encoding) wird direkt in root gemergt.
-    std::function<void(const std::string&, YAML::Node&)> loadAndProcess =
-        [&](const std::string& filePath, YAML::Node& root)
+    // Jede Datei wird SEPARAT geladen. Definitionen werden global akkumuliert
+    // (für !use-Lookups), der Rest wird flach (Top-Level-Replace) in
+    // result.tree gemergt - identisch zum ursprünglichen mergeInto()-Verhalten.
+    std::function<void(const std::string&)> loadAndProcess =
+        [&](const std::string& filePath)
         {
             const fs::path    abs = fs::absolute(filePath);
             const std::string absStr = abs.string();
 
             allFiles.push_back(absStr);
             visitedFiles.insert(absStr);
+            ctx.base_path = abs.parent_path();
 
-            std::vector<YAML::Node> docs = YAML::LoadAllFromFile(absStr);
-            if (docs.empty())
+            std::ifstream f(absStr, std::ios::binary);
+            if (!f)
+                throw std::runtime_error("Datei nicht lesbar: " + absStr);
+            std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            if (content.empty())
                 throw std::runtime_error("Leere YAML-Datei: " + absStr);
 
-            // !include_files: erst Abhängigkeiten laden
-            const YAML::Node& first = docs[0];
-            if (first.Tag() == "!include_files" && first.IsSequence()) {
-                TNG_LOG_DEBUG("[Preprocessor] !include_files in '{}'", absStr);
+            // WICHTIG (per AddressSanitizer gefunden): ryml ruft intern
+            // strlen() auf dem Dateinamen auf, behandelt ihn also wie einen
+            // klassischen C-String - ws.to_arena(std::string) kopiert aber
+            // NUR die exakte Länge OHNE Null-Terminator. Deshalb hier
+            // manuell ein Byte mehr allozieren und explizit auf '\0' setzen.
+            ryml::substr filenameBuf = ws.alloc_arena(absStr.size() + 1);
+            std::memcpy(filenameBuf.str, absStr.data(), absStr.size());
+            filenameBuf.str[absStr.size()] = '\0';
+            ryml::csubstr filenameArena(filenameBuf.str, absStr.size());
 
-                for (const auto& entry : first) {
-                    const fs::path fullPath = fs::absolute(
-                        abs.parent_path() / entry.as<std::string>());
+            ryml::ParserOptions popts = {};
+            popts.locations(trackSourceMap);
+            ryml::EventHandlerTree evt_handler = {};
+            ryml::Parser parser(&evt_handler, popts);
+            if (trackSourceMap)
+                parser.reserve_locations(256u);
 
-                    if (!fs::exists(fullPath))
-                        throw std::runtime_error(
-                            "!include_files: Datei nicht gefunden: " + fullPath.string() +
-                            "\n  Referenziert von: " + absStr);
+            // Frischer, eigenständiger Tree (siehe Architektur-Kommentar) -
+            // Inhalt kommt direkt aus `content`, NICHT aus ws' Arena.
+            auto filetreePtr = std::make_unique<ryml::Tree>(
+                ryml::parse_in_arena(&parser, filenameArena, ryml::to_csubstr(content)));
+            ryml::Tree& filetree = *filetreePtr;
+            fileTreesKeepAlive.push_back(std::move(filetreePtr));
 
-                    const std::string fullStr = fullPath.string();
-                    if (visitedFiles.count(fullStr)) {
-                        TNG_LOG_DEBUG("[Preprocessor] Duplikat übersprungen: {}", fullStr);
-                        continue;
-                    }
+            ryml::ConstNodeRef streamRoot = filetree.crootref();
 
-                    // Rekursiv laden: Definitions landen in defsWrapper["definitions"],
-                    // andere Felder in root – jeweils mit korrekter current_file
-                    loadAndProcess(fullStr, root);
-                }
-
-                // Restliche docs der Haupt-Sequenz-Datei prozessieren
-                for (std::size_t i = 1; i < docs.size(); ++i) {
-                    // Definitions separat sammeln (mit korrekter Datei)
-                    if (docs[i]["definitions"] && docs[i]["definitions"].IsMap()) {
-                        for (auto def : docs[i]["definitions"]) {
-                            const std::string defName = def.first.as<std::string>();
-                            defsWrapper["definitions"][defName] = def.second;
-                            defOrigins[defName] = absStr;
-                        }
-                    }
-                    // Felder prozessieren
-                    ProcessContext ctx{ defsWrapper, abs.parent_path(),
-                                       visitedFiles, smapForTracking, absStr, &defOrigins };
-                    YAML::Node processed = processNode(docs[i], ctx);
-                    mergeInto(root, processed, defOrigins, absStr);
-                }
-
+            std::vector<ryml::ConstNodeRef> docs;
+            if (streamRoot.is_stream()) {
+                for (ryml::ConstNodeRef d : streamRoot.children())
+                    docs.push_back(d);
+            } else {
+                docs.push_back(streamRoot);
             }
-            else {
-                // Keine !include_files: alle docs direkt prozessieren
-                for (auto& doc : docs) {
-                    // Definitions zuerst in defsWrapper["definitions"] aufnehmen (mit korrekter Datei)
-                    if (doc["definitions"] && doc["definitions"].IsMap()) {
-                        for (auto def : doc["definitions"]) {
-                            const std::string defName = def.first.as<std::string>();
-                            defsWrapper["definitions"][defName] = def.second;
+
+            for (ryml::ConstNodeRef doc : docs) {
+                // 1) Positions-Tracking: EIN vollständiger Durchlauf über das
+                //    Original-Dokument in filetree, solange parser noch
+                //    gültig ist. Ergebnis landet in einer TEMPORÄREN, nach
+                //    filetree-Knoten-IDs geordneten Map - erst nach dem
+                //    gleich folgenden merge_with() wird das per
+                //    propagateOrigins() auf ws-Knoten-IDs übertragen.
+                OriginMap fileOrigins;
+                fileOrigins.reserve(256);
+                std::function<void(ryml::ConstNodeRef, int)> trackAll =
+                    [&](ryml::ConstNodeRef node, int depth) {
+                        if (!trackSourceMap) return;
+                        checkDepth(depth);
+                        ryml::Location loc = node.location(parser);
+                        fileOrigins.emplace(node.id(),
+                            SourceLocation{ absStr, (int)loc.line + 1, (int)loc.col + 1 });
+                        if (node.is_map() || node.is_seq())
+                            for (ryml::ConstNodeRef child : node.children())
+                                trackAll(child, depth + 1);
+                    };
+                if (doc.is_map()) {
+                    for (ryml::ConstNodeRef child : doc.children())
+                        trackAll(child, 0);
+                } else {
+                    trackAll(doc, 0);
+                }
+
+                // !include_files: WICHTIG - Tag-Prüfung auf `doc` (dem
+                // Original in filetree), NICHT auf einer per merge_with()
+                // erzeugten Kopie: merge_with() setzt zwar has_val_tag(),
+                // liefert aber einen LEEREN val_tag() zurück (empirisch
+                // geprüfte ryml-Eigenheit in v0.15.2) - eine Tag-Prüfung
+                // NACH dem Kopieren würde hier stillschweigend fehlschlagen.
+                // !include_files-Dokumente selbst werden nie nach ws kopiert
+                // - ihr Inhalt (eine Liste von Dateipfaden) wird nur
+                // transient gebraucht.
+                if (doc.has_val_tag() && doc.val_tag() == "!include_files" && doc.is_seq()) {
+                    TNG_LOG_DEBUG("[Preprocessor] !include_files in '{}'", absStr);
+
+                    for (ryml::ConstNodeRef entry : doc.children()) {
+                        const fs::path fullPath = fs::absolute(
+                            abs.parent_path() / toStdString(entry.val()));
+
+                        if (!fs::exists(fullPath))
+                            throw std::runtime_error(
+                                "!include_files: Datei nicht gefunden: " + fullPath.string() +
+                                "\n  Referenziert von: " + absStr);
+
+                        const std::string fullStr = fullPath.string();
+                        if (visitedFiles.count(fullStr)) {
+                            TNG_LOG_DEBUG("[Preprocessor] Duplikat übersprungen: {}", fullStr);
+                            continue;
+                        }
+                        loadAndProcess(fullStr);
+                    }
+                    continue; // nichts weiter zu tun für dieses Dokument
+                }
+
+                // 2) EINMALIGE Cross-Tree-Kopie nach ws - danach läuft alles
+                //    Weitere ausschließlich innerhalb von ws.
+                ryml::id_type raw_id = ws.ref(raw_docs_id).append_child().id();
+                ws.merge_with(&filetree, doc.id(), raw_id);
+                ryml::ConstNodeRef fileRoot = ws.cref(raw_id);
+                propagateOrigins(doc, fileRoot, fileOrigins, wsOrigins);
+
+                if (!fileRoot.is_map())
+                    continue; // Dokumente ohne Map-Struktur tragen keine fields/definitions
+
+                // "definitions" extrahieren
+                if (fileRoot.has_child("definitions")) {
+                    ryml::ConstNodeRef fileDefs = fileRoot["definitions"];
+                    if (fileDefs.is_map()) {
+                        for (ryml::ConstNodeRef def : fileDefs.children()) {
+                            const std::string defName = toStdString(def.key());
+
+                            if (ws.ref(defs_id).has_child(def.key()))
+                                ws.remove(ws.ref(defs_id).find_child(def.key()).id());
+                            ryml::NodeRef out = ws.ref(defs_id).append_child();
+                            ws.merge_with(&ws, def.id(), out.id());
+                            propagateOrigins(def, out, wsOrigins, wsOrigins);
+                            out.set_key(def.key());  // ZULETZT (siehe KRITISCHE REGEL)
+
                             defOrigins[defName] = absStr;
                         }
                     }
-                    // Felder prozessieren – defsWrapper als root_context für !use
-                    ProcessContext ctx{ defsWrapper, abs.parent_path(),
-                                       visitedFiles, smapForTracking, absStr, &defOrigins };
-                    YAML::Node processed = processNode(doc, ctx);
-                    mergeInto(root, processed, defOrigins, absStr);
+                }
+
+                // Restliche Top-Level-Keys verarbeiten und flach in
+                // result.tree mergen (Top-Level-Replace, siehe processMerge-
+                // Kommentar zum selben Prinzip).
+                for (ryml::ConstNodeRef field : fileRoot.children()) {
+                    const std::string key = toStdString(field.key());
+                    if (key == "definitions") continue;
+
+                    ryml::NodeRef scratch = scratchNode(ctx);
+                    processNode(field, scratch, ctx);
+                    scratch.set_key(field.key());  // ZULETZT (siehe KRITISCHE REGEL)
+                    {
+                        auto it = wsOrigins.find(field.id());
+                        if (it != wsOrigins.end())
+                            wsOrigins.emplace(scratch.id(), it->second);
+                    }
+
+                    ryml::NodeRef outRoot = result.tree.rootref();
+                    if (outRoot.has_child(field.key()))
+                        result.tree.remove(outRoot.find_child(field.key()).id());
+                    ryml::NodeRef out = outRoot.append_child();
+                    result.tree.merge_with(&ws, scratch.id(), out.id());
+                    // Finale Übertragung: von ws-Knoten-IDs auf result.tree-
+                    // Knoten-IDs - HIER, und erst hier, wird die öffentliche
+                    // SourceMap (smap) tatsächlich befüllt.
+                    {
+                        std::function<void(ryml::ConstNodeRef, ryml::ConstNodeRef)> finalize =
+                            [&](ryml::ConstNodeRef s, ryml::ConstNodeRef d) {
+                                auto it = wsOrigins.find(s.id());
+                                if (it != wsOrigins.end())
+                                    smap.record(static_cast<int>(d.id()), it->second);
+                                if ((s.is_map() && d.is_map()) || (s.is_seq() && d.is_seq())) {
+                                    auto sit = s.children().begin();
+                                    auto dit = d.children().begin();
+                                    for (; sit != s.children().end() && dit != d.children().end(); ++sit, ++dit)
+                                        finalize(*sit, *dit);
+                                }
+                            };
+                        finalize(scratch, out);
+                    }
+                    out.set_key(field.key());  // ZULETZT (siehe KRITISCHE REGEL)
                 }
             }
         };
 
     // ── Verarbeitung starten ──────────────────────────────────────────────────
-    YAML::Node root(YAML::NodeType::Map);
-    loadAndProcess(absPath.string(), root);
-    result.node = root;
+    loadAndProcess(absPath.string());
+
+    // result.tree eigenständig machen (siehe Kommentar bei makeSelfContained) -
+    // MUSS vor der Rückgabe passieren, sonst zeigen alle Keys/Values in die
+    // gleich zerstörten Bäume ws/filetree.
+    makeSelfContained(result.tree, result.tree.rootref());
 
     smap.finalise(allFiles);
 
     // ── Sidecar prüfen / schreiben ────────────────────────────────────────────
-    // Existiert bereits eine gültige Sidecar (z.B. aus einem früheren Lauf mit
-    // trackSourceMap=true), wird sie IMMER genutzt - auch wenn dieser Lauf
-    // selbst nicht getrackt hat. Nur wenn tatsächlich getrackt wurde, wird eine
-    // (dann auch wirklich vollständige) Sidecar geschrieben - ein Lauf mit
-    // trackSourceMap=false darf niemals eine vorhandene gute Sidecar mit einer
-    // leeren überschreiben, und soll auch keine leere/nutzlose neu anlegen.
     const std::string currentHash = smap.hash();
     if (auto loaded = SourceMap::load(smapPath, currentHash)) {
         result.source_map = std::move(*loaded);

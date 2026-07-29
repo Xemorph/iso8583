@@ -2,8 +2,9 @@
 
 // [stdc++]
 #include <string>
-// [yaml-cpp]
-#include <yaml-cpp/yaml.h>
+// [ryml]
+#include <ryml/ryml.hpp>
+#include <ryml/ryml_std.hpp>
 // [tng]
 #include <iso8583/config.h>
 // [tng/internal]
@@ -11,32 +12,38 @@
 
 namespace TNG_NAMESPACE::spec {
 
+    // PreprocessResult::tree - die Wurzel enthält DIREKT die Top-Level-Keys
+    // der Spec (spec/encoding/header/fields/...), kein Wrapper-Knoten. Der
+    // Baum ist vollständig eigenständig (keine Abhängigkeit von irgendeiner
+    // Datei-Arena oder einem anderen Tree - alle Strings leben in seiner
+    // eigenen Arena).
+    //
+    // source_map: Positions-Herkunft, aber mit einer WICHTIGEN Änderung
+    // gegenüber der ursprünglichen yaml-cpp-Version - der Tracking-Key ist
+    // NICHT mehr eine Zeilennummer im prozessierten Dokument, sondern die
+    // ryml::id_type (Knoten-ID) des jeweiligen Knotens INNERHALB von `tree`.
+    // Grund: ryml erlaubt Positions-Abfragen nur für den zuletzt geparsten
+    // Baum eines Parser-Objekts (siehe _preprocessor.cc) - es gibt daher
+    // keine "prozessierte Zeile" mehr, die nach dem Preprocessing noch
+    // sinnvoll wäre. Die Knoten-ID ist dagegen stabil für die gesamte
+    // Lebensdauer von `tree` und damit ein zuverlässigerer Schlüssel.
     struct PreprocessResult {
-        YAML::Node node;
+        ryml::Tree tree;
         SourceMap  source_map;
     };
 
     class TNG_EXPORT SpecPreProcessor {
     public:
-        /// Verarbeitet eine YAML-Spec-Datei und gibt das prozessierte YAML zurück.
-        /// Rückwärtskompatibel – ohne SourceMap.
-        static YAML::Node preprocessFile(const std::string& path);
-
         /// Verarbeitet eine YAML-Spec-Datei und baut gleichzeitig eine SourceMap auf.
         /// Die SourceMap wird automatisch als Sidecar (path + ".smap") gespeichert
         /// wenn sie noch nicht existiert oder veraltet ist.
         ///
         /// @param trackSourceMap  Bei `false` wird KEINE Positionsverfolgung pro
-        ///        YAML-Knoten durchgeführt (das ist der dominante Kostenfaktor
-        ///        beim Laden - siehe Kommentar in _preprocessor.cc). Fehler-
-        ///        meldungen fallen dann auf die Position im bereits prozessierten
-        ///        (also `!use`/`!template`/`!merge`-aufgelösten) Dokument zurück,
-        ///        statt auf die ursprüngliche Datei/Zeile zu verweisen - für eine
-        ///        Spec ohne diese Direktiven (der Normalfall) ist das identisch
-        ///        genau, für Specs MIT ihnen weniger präzise. Existiert bereits
-        ///        eine gültige `.smap`-Sidecar-Datei (z.B. aus einem früheren
-        ///        Lauf mit `trackSourceMap=true`), wird die trotzdem genutzt -
-        ///        volle Präzision "geschenkt", ganz ohne die teure Neuverfolgung.
+        ///        YAML-Knoten durchgeführt. Fehlermeldungen fallen dann auf eine
+        ///        generische, weniger präzise Angabe zurück - für eine Spec
+        ///        ohne !use/!template/!merge/!include_files (der Normalfall)
+        ///        bleibt die Präzision unverändert hoch. Existiert bereits eine
+        ///        gültige `.smap`-Sidecar-Datei, wird die trotzdem genutzt.
         static PreprocessResult preprocessWithSourceMap(
             const std::string& path, bool trackSourceMap = true);
     };

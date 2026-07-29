@@ -237,7 +237,7 @@ definitions:
     auto spec_path = dir.write("spec.yml", R"(
 !include_files
 - common.yml
-
+---
 spec: "Include Files Test"
 encoding: ebcdic
 
@@ -279,7 +279,7 @@ definitions:
 !include_files
 - fields_a.yml
 - fields_b.yml
-
+---
 spec: "Multi-Include Test"
 encoding: ebcdic
 
@@ -300,7 +300,7 @@ TEST_CASE("Preprocessor - missing !include_files target throws", "[preprocessor]
     auto spec_path = dir.write("spec.yml", R"(
 !include_files
 - nonexistent_file.yml
-
+---
 spec: "Error Test"
 fields: {}
 )");
@@ -329,6 +329,51 @@ fields:
     // Unbekannter !include-Key sollte entweder Exception werfen
     // oder einen Fallback-Wert produzieren – kein Crash
     REQUIRE_THROWS(spec::SpecDecoder::loadFromYaml(spec_path));
+}
+
+TEST_CASE("Preprocessor - direct circular !use reference returns a clear error message instead of causing a crash", "[preprocessor][error]") {
+    TempDir dir;
+    auto spec_path = dir.write("spec.yml", R"(
+spec: "Circular Self Test"
+encoding: ebcdic
+definitions:
+  self_ref: !use self_ref
+fields:
+  "000": !use self_ref
+)");
+
+    std::string msg;
+    try {
+        spec::SpecDecoder::loadFromYaml(spec_path);
+    }
+    catch (const std::exception& e) {
+        msg = e.what();
+    }
+    REQUIRE_FALSE(msg.empty());
+    CHECK(msg.find("irkulär") != std::string::npos);
+}
+
+TEST_CASE("Preprocessor - circular !use chain involving two definitions returns a clear error message instead of crashing", "[preprocessor][error]") {
+    TempDir dir;
+    auto spec_path = dir.write("spec.yml", R"(
+spec: "Circular Chain Test"
+encoding: ebcdic
+definitions:
+  field_a: !use field_b
+  field_b: !use field_a
+fields:
+  "000": !use field_a
+)");
+
+    std::string msg;
+    try {
+        spec::SpecDecoder::loadFromYaml(spec_path);
+    }
+    catch (const std::exception& e) {
+        msg = e.what();
+    }
+    REQUIRE_FALSE(msg.empty());
+    CHECK(msg.find("irkulär") != std::string::npos);
 }
 
 TEST_CASE("Preprocessor - invalid !template format throws", "[preprocessor][error]") {
@@ -368,7 +413,7 @@ definitions:
     auto spec_path = dir.write("spec.yml", R"(
 !include_files
 - defs.yml
-
+---
 spec: "Encoding Inheritance Test"
 encoding: ebcdic
 
@@ -464,7 +509,7 @@ fields:
 // sich am Ergebnis nichts ändern.
 // =============================================================================
 
-TEST_CASE("Preprocessor - Mixed spec (fields with and without directives) is resolved correctly", "[preprocessor][fastpath]") {
+TEST_CASE("Preprocessor - mixed spec (fields with and without directives) is resolved correctly", "[preprocessor][fastpath]") {
     TempDir dir;
     const auto specPath = dir.write("mixed.yml", R"(
 spec: "Mixed Fast-Path Test"

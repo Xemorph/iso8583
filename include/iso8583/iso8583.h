@@ -27,7 +27,7 @@
 /// │    src/fmt_types.hh   – IF_BINARY, IFE_CHAR, … (Type-Alias)     │
 /// └-----------------------------------------------------------------┘
 #include "config.h"
-#include "ISOMessage.hh"    // Message, OpaqueField, BinaryField, ...
+#include "ISOMessage.hh"    // ISOMessage, ISOOpaqueField, ISOBinaryField, …
 #include "ISOSpec.hh"       // SpecDecoder::loadFromYaml()
 #include "ISOLog.hh"        // setLevel(), setLogger(), ISOLogger
 #include "ISOParser.hh"     // ISOParserPtrBase (für eigene Parser-Implementierungen)

@@ -148,8 +148,19 @@ namespace TNG_NAMESPACE::spec {
     // Persistenz (JSON)
     // =============================================================================
 
+    // Erhöhen wenn sich die BEDEUTUNG von proc_line (dem Schlüssel in
+    // entries_) ändert - z.B. bei der yaml-cpp -> ryml-Migration wechselte
+    // proc_line von "Zeilennummer im prozessierten Dokument" zu "ryml-
+    // Knoten-ID in result.tree" (siehe _preprocessor.hh). Ohne diese Prüfung
+    // würde eine ALTE Sidecar-Datei (gleicher Datei-Hash, aber altes Schema)
+    // stillschweigend geladen und ihre Zahlen falsch interpretiert - der
+    // Hash allein schützt davor nicht, da er nur vom Quelldatei-Inhalt
+    // abhängt, nicht vom Sidecar-Format.
+    static constexpr int SMAP_FORMAT_VERSION = 2;
+
     void SourceMap::save(const std::string& smap_path) const {
         nlohmann::json j;
+        j["format_version"] = SMAP_FORMAT_VERSION;
         j["hash"] = hash_;
         j["entries"] = nlohmann::json::array();
         for (const auto& [proc_line, loc] : entries_) {
@@ -181,6 +192,15 @@ namespace TNG_NAMESPACE::spec {
         try {
             nlohmann::json j;
             in >> j;
+
+            // Format-Version prüfen (siehe Kommentar bei SMAP_FORMAT_VERSION) -
+            // fehlt sie (alte Sidecar von vor dieser Prüfung) oder stimmt sie
+            // nicht, wird genauso verfahren wie bei einem Hash-Mismatch.
+            const int stored_version = j.value("format_version", 0);
+            if (stored_version != SMAP_FORMAT_VERSION) {
+                TNG_LOG_DEBUG("[SourceMap] Format-Version-Mismatch – Sidecar veraltet, wird neu erzeugt");
+                return std::nullopt;
+            }
 
             // Hash-Vergleich: Stimmt die Sidecar noch mit den Quelldateien überein?
             const std::string stored_hash = j.at("hash").get<std::string>();

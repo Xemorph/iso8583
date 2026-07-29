@@ -37,7 +37,9 @@ endif()
 # -----------------------------------------------------------------------------
 find_package(nlohmann_json  CONFIG REQUIRED)
 find_package(fmt            CONFIG REQUIRED)
-find_package(yaml-cpp       CONFIG REQUIRED)
+# yaml-cpp -> rapidyaml Migration abgeschlossen (Phase 1-4): _preprocessor.cc
+# und _spec.cc nutzen vollständig ryml, yaml-cpp wird nirgends mehr gebraucht.
+find_package(ryml           CONFIG REQUIRED)
 find_package(tsl-robin-map  CONFIG REQUIRED)
 
 if(ISO8583_ENABLE_ICONV)
@@ -181,21 +183,22 @@ target_include_directories(iso8583
 # -----------------------------------------------------------------------------
 # Link-Abhängigkeiten
 # -----------------------------------------------------------------------------
-# WICHTIG: fmt und yaml-cpp sind PRIVATE, nicht PUBLIC!
+# WICHTIG: fmt und ryml sind PRIVATE, nicht PUBLIC!
 # Beide sind reine Implementierungsdetails (fmt: nur in src/_logger.hh und
-# den .cc-Dateien; yaml-cpp: nur in src/_spec.cc/_preprocessor.cc/_sourcemap.cc)
-# und tauchen in KEINEM öffentlichen Header (include/iso8583/*.hh) auf -
-# SpecDecoder::loadFromYaml() z.B. nimmt nur einen std::string Pfad entgegen,
-# kein YAML::Node. PRIVATE bedeutet: Konsumenten von iso8583::iso8583 müssen
-# selbst kein find_package(fmt)/find_package(yaml-cpp) mehr aufrufen, und wenn
-# fmt/yaml-cpp als STATISCHE vcpkg-Libs gebaut werden (z.B. Triplet
+# den .cc-Dateien; ryml: nur in src/_spec.cc/_preprocessor.cc) und tauchen in
+# KEINEM öffentlichen Header (include/iso8583/*.hh) auf - SpecDecoder::
+# loadFromYaml() z.B. nimmt nur einen std::string Pfad entgegen, keinen
+# ryml::Tree. PRIVATE bedeutet: Konsumenten von iso8583::iso8583 müssen
+# selbst kein find_package(fmt)/find_package(ryml) mehr aufrufen, und wenn
+# fmt/ryml als STATISCHE vcpkg-Libs gebaut werden (z.B. Triplet
 # x64-windows-static-md statt x64-windows), landet ihr Objektcode direkt in
-# libiso8583.so/.dll - kein separates fmt.dll/yaml-cpp.dll mehr zur Laufzeit
-# nötig. Mit dem Standard-x64-windows-Triplet (dynamische vcpkg-Libs) ändert
-# PRIVATE daran nichts an der Laufzeit-DLL-Abhängigkeit, aber am Compile-Zeit-
+# libiso8583.so/.dll - kein separates fmt.dll/ryml.dll mehr zur Laufzeit
+# nötig (ryml ist bei vcpkg ohnehin standardmäßig statisch). Mit dem
+# Standard-x64-windows-Triplet (dynamische vcpkg-Libs) ändert PRIVATE daran
+# nichts an der Laufzeit-DLL-Abhängigkeit für fmt, aber am Compile-Zeit-
 # "Konsumenten brauchen find_package(fmt) nicht mehr" schon.
 #
-# Für statisches fmt/yaml-cpp/... (Windows): CMakePresets.json bringt dafür
+# Für statisches fmt/... (Windows): CMakePresets.json bringt dafür
 # "msvc-debug-static"/"msvc-release-static" mit (VCPKG_TARGET_TRIPLET =
 # x64-windows-static-md - statische vcpkg-Libs, aber weiterhin dynamische
 # CRT/MD, um Konflikte mit der eigenen iso8583-DLL zu vermeiden).
@@ -211,12 +214,12 @@ target_link_libraries(iso8583
         tsl::robin_map
     PRIVATE
         fmt::fmt
-        yaml-cpp::yaml-cpp
+        ryml::ryml
         $<$<BOOL:${ISO8583_ENABLE_ICONV}>:Iconv::Iconv>
 )
 
 # -----------------------------------------------------------------------------
-# Diagnose: PRIVATE-Linkage (oben) bestimmt NICHT, ob fmt/yaml-cpp/iconv als
+# Diagnose: PRIVATE-Linkage (oben) bestimmt NICHT, ob fmt/iconv als
 # separate DLL neben iso8583.dll landen oder statisch mit hineinkompiliert
 # werden - PRIVATE steuert nur, ob Konsumenten von iso8583::iso8583 selbst
 # find_package(fmt) etc. aufrufen müssen. Ob es am Ende eine oder mehrere
@@ -225,7 +228,7 @@ target_link_libraries(iso8583
 # x64-windows-static-md = statisch - siehe CMakePresets.json,
 # msvc-*-static-Presets). Diese Meldung macht beim Konfigurieren sichtbar,
 # was tatsächlich aktiv ist, statt es erst im Output-Verzeichnis zu erraten.
-foreach(_iso8583_dep fmt::fmt yaml-cpp::yaml-cpp)
+foreach(_iso8583_dep fmt::fmt ryml::ryml)
     if(TARGET ${_iso8583_dep})
         get_target_property(_iso8583_dep_type ${_iso8583_dep} TYPE)
         if(_iso8583_dep_type STREQUAL "SHARED_LIBRARY")

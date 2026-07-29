@@ -5,8 +5,7 @@ include(CMakeFindDependencyMacro)
 # Transitive Abhängigkeiten auflösen
 find_dependency(nlohmann_json CONFIG)
 find_dependency(fmt           CONFIG)
-find_dependency(yaml-cpp      CONFIG)
-find_dependency(quill         CONFIG)
+find_dependency(ryml          CONFIG)
 find_dependency(tsl-robin-map CONFIG)
 
 if(@ISO8583_ENABLE_ICONV@)

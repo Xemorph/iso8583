@@ -13,8 +13,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-// [yaml-cpp]
-#include <yaml-cpp/yaml.h>
+// [ryml]
+#include <ryml/ryml.hpp>
+#include <ryml/ryml_std.hpp>
 // [tng/internal]
 #include "_logger.hh"
 #include "_parser.hh"
@@ -26,39 +27,85 @@
 namespace TNG_NAMESPACE::spec {
 
     // =============================================================================
+    // Hilfsfunktionen für ryml::ConstNodeRef (Ersatz für yaml-cpp's .as<T>())
+    // =============================================================================
+    // ryml::ConstNodeRef hat kein direktes Äquivalent zu yaml-cpp's bequemem
+    // node["key"].as<T>(default) - diese Helfer bilden genau dieses Muster nach.
+    // =============================================================================
+
+    static std::string toStdString(ryml::csubstr s) {
+        return std::string(s.str, s.len);
+    }
+
+    static bool hasKey(ryml::ConstNodeRef node, ryml::csubstr key) {
+        return !node.invalid() && node.is_map() && node.has_child(key);
+    }
+
+    static std::string getStr(ryml::ConstNodeRef node, ryml::csubstr key,
+        const std::string& def = "")
+    {
+        if (!hasKey(node, key)) return def;
+        ryml::ConstNodeRef c = node[key];
+        if (!c.has_val()) return def;
+        return toStdString(c.val());
+    }
+
+    static int getInt(ryml::ConstNodeRef node, ryml::csubstr key, int def) {
+        if (!hasKey(node, key)) return def;
+        ryml::ConstNodeRef c = node[key];
+        int v = def;
+        if (c.has_val()) c4::atoi(c.val(), &v);
+        return v;
+    }
+
+    static std::size_t getSizeT(ryml::ConstNodeRef node, ryml::csubstr key, std::size_t def) {
+        if (!hasKey(node, key)) return def;
+        ryml::ConstNodeRef c = node[key];
+        std::size_t v = def;
+        if (c.has_val()) c4::atou(c.val(), &v);
+        return v;
+    }
+
+    static bool getBool(ryml::ConstNodeRef node, ryml::csubstr key, bool def) {
+        if (!hasKey(node, key)) return def;
+        ryml::ConstNodeRef c = node[key];
+        if (!c.has_val()) return def;
+        return c.val() == "true" || c.val() == "1" || c.val() == "yes";
+    }
+
+    // =============================================================================
     // Interne Typen
     // =============================================================================
 
     class SpecValidationError : public std::runtime_error {
     public:
-        /// Ohne SourceMap: zeigt prozessierte Zeile/Spalte
-        SpecValidationError(const std::string& msg, const YAML::Mark& mark)
-            : std::runtime_error(format(msg, mark, nullptr))
+        /// Ohne SourceMap: generischer Fallback (Knoten-ID sagt einem Menschen
+        /// nichts, aber ohne SourceMap gibt es keine bessere Positionsangabe -
+        /// siehe Kommentar in _preprocessor.hh zum Positions-Tracking-Modell).
+        SpecValidationError(const std::string& msg, ryml::id_type nodeId)
+            : std::runtime_error(format(msg, nodeId, nullptr))
         {
         }
 
         /// Mit SourceMap: schlägt Original-Position nach
-        SpecValidationError(const std::string& msg, const YAML::Mark& mark,
+        SpecValidationError(const std::string& msg, ryml::id_type nodeId,
             const SourceMap* smap)
-            : std::runtime_error(format(msg, mark, smap))
+            : std::runtime_error(format(msg, nodeId, smap))
         {
         }
 
     private:
         static std::string format(const std::string& msg,
-            const YAML::Mark& mark, const SourceMap* smap)
+            ryml::id_type nodeId, const SourceMap* smap)
         {
-            const int line = mark.line + 1;
-            const int col = mark.column + 1;
+            const int key = static_cast<int>(nodeId);
             if (smap) {
-                // Alle Positionsinfos aus der SourceMap holen – nicht mischen
-                if (auto loc = smap->lookup(line))
+                if (auto loc = smap->lookup(key))
                     return loc->to_string() + ": " + msg;
-                if (auto loc = smap->lookup_nearest(line))
+                if (auto loc = smap->lookup_nearest(key))
                     return loc->to_string() + ": " + msg;
             }
-            return "Zeile " + std::to_string(line) +
-                ", Spalte " + std::to_string(col) + ": " + msg;
+            return "(Position unbekannt): " + msg;
         }
     };
 
@@ -79,10 +126,52 @@ namespace TNG_NAMESPACE::spec {
         std::string              encoding;
         std::size_t              length = 0;
         std::string              description = "<dummy>";
+        bool                     has_explicit_description = false; // s. parseSpecField
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
-        std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer)
+        std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
     };
+
+    // Parst einen TLV-'children'-Schlüssel als SE-Nummer (Mastercard/Visa-
+    // Fix-Format-TLV, z.B. DE48-Subelemente: "26" = dezimal 26) oder als
+    // EMV/BER-TLV-Tag (z.B. "9F26" = hex 0x9F26, "1A" = hex 0x1A = dez. 26).
+    //
+    // Standard: dezimal für Fix-Format-TLV, hexadezimal für BER-TLV
+    // (`tlv: {ber: true}`) - das entspricht jeweils der in der Praxis
+    // etablierten Schreibweise (Mastercard-Handbücher nennen SE-Nummern
+    // dezimal, EMV Book 3 / ISO 7816 nennen Tags hexadezimal). Ein
+    // explizites '0x'-Präfix (z.B. "0x1A") erzwingt hexadezimal UNABHÄNGIG
+    // vom TLV-Modus - ein Escape-Hatch für den seltenen Fall, dass eine
+    // Fix-Format-Spec trotzdem hexadezimale SE-Nummern bräuchte.
+    static int parseTlvChildKey(const std::string& key, bool defaultHex,
+        ryml::ConstNodeRef node, const SourceMap* smap)
+    {
+        std::string toParse = key;
+        int base = defaultHex ? 16 : 10;
+
+        if (key.size() > 2 && key[0] == '0' && (key[1] == 'x' || key[1] == 'X')) {
+            base = 16;
+            toParse = key.substr(2);
+        }
+
+        try {
+            std::size_t consumed = 0;
+            const int value = std::stoi(toParse, &consumed, base);
+            if (consumed != toParse.size() || toParse.empty())
+                throw std::invalid_argument("trailing/leere Zeichenfolge");
+            if (value < 0)
+                throw std::invalid_argument("negativer Wert");
+            return value;
+        }
+        catch (const std::exception&) {
+            throw SpecValidationError(
+                "Ungültiger TLV-Kindschlüssel '" + key + "' (erwartet " +
+                (base == 16 ? "hexadezimal, z.B. '9F26' oder '1A'"
+                            : "dezimal, z.B. '26' - für hexadezimal explizit "
+                              "mit '0x'-Präfix schreiben, z.B. '0x1A'") + ")",
+                node.id(), smap);
+        }
+    }
 
     // =============================================================================
     // Kleine Hilfsfunktionen
@@ -115,56 +204,55 @@ namespace TNG_NAMESPACE::spec {
     }
 
     /// Löst das Encoding für ein Feld auf (Feld-Override > Default > leer).
-    static std::string resolveEncoding(const YAML::Node& node,
+    static std::string resolveEncoding(ryml::ConstNodeRef node,
         const std::string& fmt,
         const std::string& defaultEncoding)
     {
         if (isEncodingNeutral(fmt)) return "";
-        return toUpper(node["encoding"].as<std::string>(defaultEncoding));
+        return toUpper(getStr(node, "encoding", defaultEncoding));
     }
 
     // =============================================================================
     // Validierung
     // =============================================================================
 
-    static void validateFieldKeys(const YAML::Node& node, const std::string& de,
+    static void validateFieldKeys(ryml::ConstNodeRef node, const std::string& de,
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children", "tlv"
         };
-        for (auto it = node.begin(); it != node.end(); ++it) {
-            const auto key = it->first.as<std::string>();
+        for (ryml::ConstNodeRef child : node.children()) {
+            const auto key = toStdString(child.key());
             if (!allowed.count(key))
                 throw SpecValidationError(
                     "Unbekannter Schlüssel '" + key + "' im Feld " + de,
-                    it->first.Mark(), smap);
+                    child.id(), smap);
         }
     }
 
-    static void validateSpecYaml(const YAML::Node& root, const SourceMap* smap = nullptr) {
+    static void validateSpecYaml(ryml::ConstNodeRef root, const SourceMap* smap = nullptr) {
         // Läuft auf dem BEREITS PREPROCESSIERTEN YAML – !template, !merge, !use
         // wurden bereits expandiert.
 
-        if (!root["fields"])
-            throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");  // no mark available
+        if (!hasKey(root, "fields"))
+            throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");  // keine Position verfügbar
 
-        for (const auto& entry : root["fields"]) {
-            const auto key = entry.first.as<std::string>();
-            const auto mark = entry.first.Mark();
+        for (ryml::ConstNodeRef entry : root["fields"].children()) {
+            const auto key = toStdString(entry.key());
 
             if (!std::all_of(key.begin(), key.end(), ::isdigit))
                 throw SpecValidationError(
-                    "Feldschlüssel '" + key + "' ist nicht numerisch", mark, smap);
+                    "Feldschlüssel '" + key + "' ist nicht numerisch", entry.id(), smap);
 
-            const YAML::Node& field = entry.second;
-            if (!field.IsMap()) continue;
+            ryml::ConstNodeRef field = entry;
+            if (!field.is_map()) continue;
 
             // Warnung wenn length für nicht-triviale Formate fehlt
-            if (field["format"] && field["format"].IsScalar()) {
-                const auto fmt = toLower(field["format"].as<std::string>());
+            if (hasKey(field, "format")) {
+                const auto fmt = toLower(getStr(field, "format"));
                 const bool needsLength = (fmt != "nop" && fmt != "bitmap" &&
                     fmt != "unused" && fmt != "remaining");
-                if (needsLength && !field["length"])
+                if (needsLength && !hasKey(field, "length"))
                     TNG_LOG_WARN("[SpecDecoder] Feld {} hat format='{}' aber kein 'length'",
                         key, fmt);
             }
@@ -174,43 +262,44 @@ namespace TNG_NAMESPACE::spec {
             // vorab deklarierte Kinderliste ergibt keinen Sinn. Explizites
             // 'type: nested', 'children' oder ein eigener 'tlv:'-Block wären
             // daher widersprüchlich und werden hier abgelehnt.
-            if (field["format"] && field["format"].IsScalar()) {
-                const auto fmtUpper = toUpper(field["format"].as<std::string>());
+            if (hasKey(field, "format")) {
+                const auto fmtUpper = toUpper(getStr(field, "format"));
                 std::size_t p = 0;
                 while (p < fmtUpper.size() && fmtUpper[p] == 'L') ++p;
                 if (fmtUpper.substr(p) == "BERTLV") {
-                    const bool explicitNested = field["type"] &&
-                        toLower(field["type"].as<std::string>()) == "nested";
-                    if (field["children"] || field["tlv"] || explicitNested)
+                    const bool explicitNested = hasKey(field, "type") &&
+                        toLower(getStr(field, "type")) == "nested";
+                    if (hasKey(field, "children") || hasKey(field, "tlv") || explicitNested)
                         throw SpecValidationError(
                             "Feld " + key + ": 'format: ...bertlv' ist nur bei "
                             "scalaren Feldern gültig - 'children', 'tlv' und "
                             "'type: nested' dürfen nicht zusätzlich gesetzt sein",
-                            field.Mark(), smap);
+                            field.id(), smap);
                 }
             }
 
             // Nested: erkennbar durch 'children' (oder optionales type: nested)
-            const bool isNested = field["children"] ||
-                (field["type"] && field["type"].as<std::string>() == "nested");
+            const bool isNested = hasKey(field, "children") ||
+                (hasKey(field, "type") && getStr(field, "type") == "nested");
             if (isNested) {
-                if (field["children"] &&
-                    !field["children"].IsSequence() &&
-                    !field["children"].IsMap())
-                    throw SpecValidationError(
-                        "'children' im nested-Feld " + key +
-                        " muss eine Liste (normal) oder Map (TLV) sein",
-                        field.Mark(), smap);
+                if (hasKey(field, "children")) {
+                    ryml::ConstNodeRef ch = field["children"];
+                    if (!ch.is_seq() && !ch.is_map())
+                        throw SpecValidationError(
+                            "'children' im nested-Feld " + key +
+                            " muss eine Liste (normal) oder Map (TLV) sein",
+                            field.id(), smap);
+                }
 
-                if (field["tlv"]) {
-                    const auto& tlv = field["tlv"];
-                    const bool isBer = tlv["ber"] && tlv["ber"].as<bool>(false);
-                    if (!isBer && (!tlv["tag_bytes"] || !tlv["len_bytes"]))
+                if (hasKey(field, "tlv")) {
+                    ryml::ConstNodeRef tlv = field["tlv"];
+                    const bool isBer = getBool(tlv, "ber", false);
+                    if (!isBer && (!hasKey(tlv, "tag_bytes") || !hasKey(tlv, "len_bytes")))
                         throw SpecValidationError(
                             "TLV-Block im Feld " + key +
                             " benötigt 'tag_bytes' und 'len_bytes' "
                             "(oder 'ber: true' für BER-TLV mit variabler Länge)",
-                            tlv.Mark(), smap);
+                            tlv.id(), smap);
                 }
             }
         }
@@ -220,19 +309,35 @@ namespace TNG_NAMESPACE::spec {
     // YAML → SpecField
     // =============================================================================
 
+    // Verhindert Stack-Overflow bei extrem tief verschachtelten 'children'-
+    // Strukturen (siehe analoge Begründung/Konstante in _preprocessor.cc -
+    // eigene Konstante hier, da beide Übersetzungseinheiten `static`/interne
+    // Bindung nutzen und sich nichts teilen).
+    static constexpr int MAX_RECURSION_DEPTH = 200;
+
+    static void checkDepth(int depth) {
+        if (depth > MAX_RECURSION_DEPTH)
+            throw std::runtime_error(
+                "Feld-Verschachtelung zu tief (> " + std::to_string(MAX_RECURSION_DEPTH) +
+                " Ebenen) - vermutlich eine fehlerhafte 'children'-Struktur in der Spec.");
+    }
+
     // Forward-Deklaration für rekursiven Aufruf
-    static SpecField parseSpecField(const YAML::Node& node,
+    static SpecField parseSpecField(ryml::ConstNodeRef node,
         const std::string& defaultEncoding,
         const std::string& tag = "",
-        const SourceMap* smap = nullptr);
+        const SourceMap* smap = nullptr,
+        int depth = 0);
 
-    static SpecField parseSpecField(const YAML::Node& node,
+    static SpecField parseSpecField(ryml::ConstNodeRef node,
         const std::string& defaultEncoding,
         const std::string& tag,
-        const SourceMap* smap)
+        const SourceMap* smap,
+        int depth)
     {
+        checkDepth(depth);
         SpecField f;
-        f.format = toUpper(node["format"].as<std::string>(""));
+        f.format = toUpper(getStr(node, "format"));
 
         // ── format: ...BERTLV - Kurzschreibweise für ein BER-TLV-Feld ─────────────
         // Nur bei scalaren Feldern gültig (siehe validateSpecYaml für die
@@ -263,10 +368,10 @@ namespace TNG_NAMESPACE::spec {
         if (isBerTlvShorthand) {
             f.type = SpecFieldType::NESTED;
         }
-        else if (node["type"]) {
-            f.type = fieldTypeFromString(toLower(node["type"].as<std::string>("")));
+        else if (hasKey(node, "type")) {
+            f.type = fieldTypeFromString(toLower(getStr(node, "type")));
         }
-        else if (node["children"]) {
+        else if (hasKey(node, "children")) {
             f.type = SpecFieldType::NESTED;
         }
         else {
@@ -277,31 +382,32 @@ namespace TNG_NAMESPACE::spec {
         // length und description sind bedeutungslos und müssen nicht angegeben werden.
         if (f.format == "NOP" || f.format == "UNUSED") {
             f.length = 0;
-            f.description = node["description"].as<std::string>("<nop>");
+            f.description = getStr(node, "description", "<nop>");
             f.encoding = "";
             return f;
         }
 
         f.encoding = resolveEncoding(node, f.format, defaultEncoding);
 
-        if (node["length"]) {
-            const int raw_length = node["length"].as<int>();
+        if (hasKey(node, "length")) {
+            const int raw_length = getInt(node, "length", 0);
             if (raw_length < 0) {
-                // node["length"] hat noch den originalen YAML::Mark aus der Quelldatei
-                // (weil processNode keine deepClone macht für Scalar-Nodes).
-                // Damit zeigt die Fehlermeldung direkt auf die richtige Datei + Zeile.
-                const YAML::Mark value_mark = node["length"].Mark();
+                // node["length"]s Knoten-ID trägt die ursprüngliche Herkunft
+                // aus der Quelldatei (siehe _preprocessor.hh) - damit zeigt
+                // die Fehlermeldung direkt auf die richtige Datei + Zeile.
+                const ryml::id_type value_id = node["length"].id();
                 throw SpecValidationError(
-                    "Feld '" + node["description"].as<std::string>("<unnamed>") +
+                    "Feld '" + getStr(node, "description", "<unnamed>") +
                     "' hat ungültige length=" + std::to_string(raw_length) +
                     " (muss >= 0 sein)",
-                    value_mark, smap);
+                    value_id, smap);
             }
             f.length = static_cast<std::size_t>(raw_length);
         }
 
-        f.description = node["description"]
-            ? node["description"].as<std::string>()
+        f.has_explicit_description = hasKey(node, "description");
+        f.description = f.has_explicit_description
+            ? getStr(node, "description")
             : (f.length == 0 ? "<dummy>" : "?");
 
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet
@@ -324,16 +430,16 @@ namespace TNG_NAMESPACE::spec {
             opts.ber = true;
             f.tlv = opts;
         }
-        else if (node["tlv"]) {
-            const YAML::Node& t = node["tlv"];
+        else if (hasKey(node, "tlv")) {
+            ryml::ConstNodeRef t = node["tlv"];
             TLVOptions opts;
-            opts.ber = t["ber"].as<bool>(false);
+            opts.ber = getBool(t, "ber", false);
             if (!opts.ber) {
-                opts.tag_bytes = t["tag_bytes"].as<int>(2);
-                opts.len_bytes = t["len_bytes"].as<int>(2);
+                opts.tag_bytes = getInt(t, "tag_bytes", 2);
+                opts.len_bytes = getInt(t, "len_bytes", 2);
             }
-            opts.tcc = t["tcc"].as<bool>(false);
-            opts.encoding = toUpper(t["encoding"].as<std::string>(childEnc));
+            opts.tcc = getBool(t, "tcc", false);
+            opts.encoding = toUpper(getStr(t, "encoding", childEnc));
             if (opts.ber && opts.tcc)
                 TNG_LOG_WARN("[SpecDecoder] Feld '{}': 'tcc' wird bei BER-TLV "
                     "ignoriert (BER-TLV kennt kein TCC-Feld)", f.description);
@@ -341,22 +447,25 @@ namespace TNG_NAMESPACE::spec {
         }
 
         // ── Children ─────────────────────────────────────────────────────────────
-        if (node["children"]) {
+        if (hasKey(node, "children")) {
             const std::string& seEnc = f.tlv ? f.tlv->encoding : childEnc;
+            ryml::ConstNodeRef children = node["children"];
 
-            if (node["children"].IsMap()) {
-                // TLV-Modus: Key = SE-Nummer, Wert = SpecField
-                for (const auto& entry : node["children"]) {
-                    const auto seKey = entry.first.as<std::string>();
-                    const int  seNum = std::stoi(seKey);
-                    f.tlv_children[seNum] = parseSpecField(entry.second, seEnc, seKey);
+            if (children.is_map()) {
+                // TLV-Modus: Key = SE-Nummer (dezimal) oder EMV-Tag (hex, bei
+                // ber:true) - siehe parseTlvChildKey().
+                const bool asHex = f.tlv && f.tlv->ber;
+                for (ryml::ConstNodeRef entry : children.children()) {
+                    const auto seKey = toStdString(entry.key());
+                    const int  seNum = parseTlvChildKey(seKey, asHex, entry, smap);
+                    f.tlv_children[seNum] = parseSpecField(entry, seEnc, seKey, smap, depth + 1);
                 }
             }
             else {
                 // Normal-Modus: Sequence mit Index-Feldern
                 // Kinder rekursiv parsen – parseSpecField löst Encoding korrekt auf
-                for (const auto& child : node["children"])
-                    f.children.push_back(parseSpecField(child, childEnc));
+                for (ryml::ConstNodeRef child : children.children())
+                    f.children.push_back(parseSpecField(child, childEnc, "", smap, depth + 1));
             }
         }
 
@@ -459,13 +568,14 @@ namespace TNG_NAMESPACE::spec {
     }
 
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
-        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber = false)
+        makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber,
+            const std::unordered_map<std::size_t, std::string>& descriptionMap)
     {
         using namespace ::TNG_NAMESPACE;
 
         // ── BER-TLV: variable Tag-/Length-Länge, kein TCC ─────────────────────
         if (ber)
-            return std::make_shared<BERTLVParser>();
+            return std::make_shared<BERTLVParser>(BERTLVParser::DataEncodingMap{}, descriptionMap);
 
         // ── Feste Byte-Anzahl (bisheriges Verhalten, jetzt über
         //    FixedNumericTag/FixedNumericLength statt der ursprünglichen
@@ -474,7 +584,12 @@ namespace TNG_NAMESPACE::spec {
         std::make_shared<ISOTLVParser< \
             FixedNumericTag<TB, codec::Encoder::ENC>, \
             FixedNumericLength<LB, codec::Encoder::ENC>, \
-            HAS_TCC, codec::Encoder::ENC>>()
+            HAS_TCC, codec::Encoder::ENC>>( \
+                ISOTLVParser< \
+                    FixedNumericTag<TB, codec::Encoder::ENC>, \
+                    FixedNumericLength<LB, codec::Encoder::ENC>, \
+                    HAS_TCC, codec::Encoder::ENC>::DataEncodingMap{}, \
+                descriptionMap)
 
         // tag_bytes == 2, len_bytes == 2
         if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, true, EBCDIC);
@@ -502,7 +617,12 @@ namespace TNG_NAMESPACE::spec {
         return std::make_shared<ISOTLVParser<
             FixedNumericTag<2, codec::Encoder::EBCDIC>,
             FixedNumericLength<2, codec::Encoder::EBCDIC>,
-            false, codec::Encoder::EBCDIC>>();
+            false, codec::Encoder::EBCDIC>>(
+                ISOTLVParser<
+                    FixedNumericTag<2, codec::Encoder::EBCDIC>,
+                    FixedNumericLength<2, codec::Encoder::EBCDIC>,
+                    false, codec::Encoder::EBCDIC>::DataEncodingMap{},
+                descriptionMap);
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
@@ -525,7 +645,21 @@ namespace TNG_NAMESPACE::spec {
                     if (opts.encoding == "ASCII")  return codec::Encoder::ASCII;
                     return codec::Encoder::EBCDIC;
                     }();
-                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber));
+
+                // Aus 'children' deklarierte Beschreibungen an den Laufzeit-
+                // Parser weiterreichen (siehe description_for() in
+                // ISOTLVParser) - macht 'children: <tag>: {description: ...}'
+                // erstmals tatsächlich wirksam, statt rein dokumentarisch zu
+                // sein. Format/Typisierung pro Tag bleiben bewusst
+                // zurückgestellt (siehe Konversation) - jedes SE/Tag wird
+                // weiterhin als BinaryField dekodiert, nur die Beschreibung
+                // wird aus der Spec übernommen.
+                std::unordered_map<std::size_t, std::string> descriptionMap;
+                for (const auto& [tag, child] : f.tlv_children)
+                    if (child.has_explicit_description)
+                        descriptionMap[static_cast<std::size_t>(tag)] = child.description;
+
+                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber, descriptionMap));
             }
             else {
                 auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
@@ -593,19 +727,20 @@ namespace TNG_NAMESPACE::spec {
         // Preprocessor läuft und baut gleichzeitig die SourceMap auf (sofern
         // trackSourceMap - siehe Kommentar bei preprocessWithSourceMap()).
         // Die Sidecar (.smap) wird automatisch geschrieben/validiert.
-        auto [yaml, smap] = SpecPreProcessor::preprocessWithSourceMap(path, trackSourceMap);
+        auto [tree, smap] = SpecPreProcessor::preprocessWithSourceMap(path, trackSourceMap);
+        ryml::ConstNodeRef yaml = tree.crootref();
         validateSpecYaml(yaml, &smap);
 
         LoadedSpec result;
-        result.desc = yaml["spec"].as<std::string>("<unnamed>");
-        result.hdr_sz = yaml["header"] ? yaml["header"].as<std::size_t>() : 0;
-        result.defaultEncoding = toUpper(yaml["encoding"].as<std::string>(""));
+        result.desc = getStr(yaml, "spec", "<unnamed>");
+        result.hdr_sz = getSizeT(yaml, "header", 0);
+        result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
 
-        for (const auto& entry : yaml["fields"]) {
-            const auto de = entry.first.as<std::string>();
+        for (ryml::ConstNodeRef entry : yaml["fields"].children()) {
+            const auto de = toStdString(entry.key());
             const int  deNum = std::stoi(de);
             result.fields[deNum] = parseSpecField(
-                entry.second, result.defaultEncoding, de, &smap);
+                entry, result.defaultEncoding, de, &smap);
         }
         return result;
     }

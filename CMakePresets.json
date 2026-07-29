@@ -65,7 +65,7 @@
     },
     {
       "name": "msvc-debug-static",
-      "displayName": "Debug (MSVC) - fmt/yaml-cpp/... statisch in iso8583.dll",
+      "displayName": "Debug (MSVC) - fmt/... statisch in iso8583.dll",
       "inherits": "msvc-debug",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
@@ -73,7 +73,7 @@
     },
     {
       "name": "msvc-release-static",
-      "displayName": "Release (MSVC) - fmt/yaml-cpp/... statisch in iso8583.dll",
+      "displayName": "Release (MSVC) - fmt/... statisch in iso8583.dll",
       "inherits": "msvc-release",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"

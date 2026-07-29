@@ -6,9 +6,15 @@
 //
 // Problem:
 //   Der Preprocessor expandiert !use, !template und !include_files zu einem
-//   flachen, prozessierten YAML-Dokument. Zeilen-/Spaltenangaben aus YAML::Mark
-//   beziehen sich danach auf das prozessierte Dokument – nicht auf die originale
+//   flachen, prozessierten YAML-Dokument. Zeilen-/Spaltenangaben aus dem
+//   YAML-Parser (yaml-cpp: YAML::Mark, rapidyaml: ryml::Location) beziehen
+//   sich danach auf das prozessierte Dokument – nicht auf die originale
 //   Datei die der User bearbeitet hat.
+//
+// Hinweis: SourceMap selbst hat keinerlei Abhängigkeit zur jeweiligen
+// YAML-Bibliothek (reine int/string-Buchhaltung + JSON-Sidecar via
+// nlohmann::json) - nur der Preprocessor, der sie befüllt, kennt die
+// konkrete Bibliothek.
 //
 // Lösung:
 //   Während der Preprocessor läuft, baut er eine SourceMap auf:

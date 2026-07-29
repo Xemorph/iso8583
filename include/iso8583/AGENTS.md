@@ -311,6 +311,43 @@ fields:
     description: "ICC Data (BER-TLV)"
     # No 'type: nested', 'children', or 'tlv:' block — BER-TLV tags are
     # dynamic (not a fixed, pre-declared SE list), so none is needed.
+  "057":                  # BER-TLV with per-tag descriptions (optional)
+    type: nested
+    format: lllbinary
+    length: 999
+    description: "ICC Data with declared tags"
+    tlv:
+      ber: true
+    children:             # map = TLV mode; keys are HEX tags (ber: true)
+      "9F26":              # real EMV tag: Application Cryptogram
+        format: binary
+        length: 8
+        description: "Application Cryptogram"
+      "5A":                 # real EMV tag: Application PAN
+        format: binary
+        length: 10
+        description: "Application PAN"
+    # Only 'description' is currently wired to the decoded field (each SE/tag
+    # is still decoded as a raw BinaryField — 'format'/'length' here are
+    # documentation only, not yet enforced at decode time). Undeclared tags
+    # fall back to a generic "SE<n>" description automatically.
+  "048":                  # Mastercard-style fixed TLV — SE keys are DECIMAL
+    type: nested
+    format: lllchar
+    length: 999
+    description: "Additional Data"
+    tlv:
+      tag_bytes: 2
+      len_bytes: 2
+    children:
+      "26":                 # decimal SE number (NOT hex — no 'ber: true' here)
+        format: char
+        length: 10
+        description: "Some Subelement"
+      "0x1A":               # explicit '0x' prefix forces hex even here (== 26)
+        format: char
+        length: 5
+        description: "Same Subelement, written in hex"
   "061":                  # nested field with children
     type: nested
     format: binary
@@ -324,7 +361,23 @@ fields:
 ```
 
 **Directives:**
-- `!include_files [a.yml, b.yml]` — load external definition files (root level)
+- `!include_files [a.yml, b.yml]` — load external definition files (root level).
+  **Must be followed by a `---` document separator** before the rest of the
+  spec content (`spec:`, `encoding:`, `fields:`, ...) — `!include_files` and
+  the remaining content are two separate YAML documents in the same file.
+  Omitting `---` is a parse error (strict YAML 1.2; earlier versions of this
+  library tolerated it, real-world spec files written for those versions may
+  need a one-time `---` insertion after their `!include_files [...]` block).
+  Example:
+  ```yaml
+  !include_files
+  - common_definitions.yml
+  ---
+  spec: "My Spec"
+  encoding: ebcdic
+  fields:
+    "000": !use mti_field
+  ```
 - `!use <name>` — substitute a named definition
 - `!template P(F, N)` — variable-length shorthand, e.g. `LL(CHAR, 19)` → `{ type: scalar, format: LLCHAR, length: 19 }`
 - `!merge [...]` — merge maps, later entries overwrite earlier ones
@@ -341,6 +394,22 @@ fields:
   (see `BERTLVParser` in `src/_tlv.hh`). Requires `ISO8583_BERTLV` (see
   above) if any tag exceeds the `int16_t` range, e.g. real 2-byte EMV tags
   like `9F26`.
+
+**TLV `children` key notation:** when `type: nested` is combined with an
+explicit `tlv:` block and a `children:` **map** (as opposed to the
+`bertlv` format shorthand above, which needs no `children` at all), each
+key names an SE number or BER tag:
+- `tlv: {ber: true}` → keys are **hexadecimal** (`"9F26"`, `"5A"`, `"1A"`),
+  matching how EMV Book 3 / ISO 7816 conventionally write tags.
+- Fixed-format TLV (Mastercard/Visa, `tag_bytes`/`len_bytes` given) → keys
+  are **decimal** SE numbers (`"26"`), unchanged from earlier versions.
+- An explicit `"0x"` prefix (e.g. `"0x1A"`) forces hexadecimal regardless of
+  TLV mode.
+- Only `description` is currently propagated to the decoded field (each
+  SE/tag is still decoded as a raw `BinaryField` — `format`/`length` in
+  `children` remain documentation only, not yet enforced at decode time).
+  Tags without a declared `children` entry fall back to a generic
+  `"SE<n>"` description automatically.
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
 
