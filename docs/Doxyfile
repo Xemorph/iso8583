@@ -22,8 +22,26 @@ RECURSIVE              = YES
 
 # Legacy- und externe Third-Party-Dateien ausschließen
 EXCLUDE_PATTERNS       = */detail/extern/* \
+                         *_codec_impl.hh \
                          *.LEGACY
 EXCLUDE                = include/iso8583/detail/extern
+
+# detail/_codec_impl.hh enthält NUR die Template-Definitionen der Funktionen,
+# die in _codec.hh deklariert (und dokumentiert) sind. Ohne Ausschluss erzeugt
+# Doxygen für jede Funktion zwei Member-Knoten (Deklaration + Definition) mit
+# identischer ID im XML → Breathe: "Duplicate C++ declaration" / "Duplicate ID".
+# Die übrigen detail/-Header bleiben drin: _components.hh / _interfaces.hh
+# definieren die dokumentierten Klassen (ISOMessage, ISOParserPtrBase, ...).
+
+# kAsciiToEbcdic wird per Lambda initialisiert (static const ... = [](){...}()).
+# Breathe's C++-Parser kann Lambda-Initialisatoren nicht parsen
+# ("Invalid C++ declaration: Expected identifier in nested name" →
+#  "Parsing of expression failed" → mit -W ein Build-Fehler).
+# Primärer Schutz: #ifndef DOXYGEN-Guard um die Variable in _codec.hh
+# (Doxygen definiert DOXYGEN beim Preprocessing, der C++-Build ist unbeeinflusst).
+# EXCLUDE_SYMBOLS hier als redundanter Sicherheitsnetz (wirkt je nach
+# Doxygen-Version nicht auf Namespace-Variablen).
+EXCLUDE_SYMBOLS        = iso8583::codec::kAsciiToEbcdic
 
 # Alles extrahieren – auch ungedokumentete Mitglieder
 EXTRACT_ALL            = YES
@@ -54,9 +72,13 @@ ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
 # Makronamen entsprechen den Quellen in include/iso8583/config.h – nicht ändern.
+# __DOXYGEN__=1: aktiviert die #ifndef __DOXYGEN__-Guards in den Headern
+# (z.B. um Lambda-initialisierte Lookup-Tabellen aus dem Breathe-Parser
+#  herauszuhalten); echte C++-Builds sehen diese Definition nie.
 PREDEFINED             = TNG_EXPORT= \
                          TNG_NAMESPACE=iso8583 \
                          TNG_KEY_TYPE=int16_t \
+                         __DOXYGEN__=1 \
                          "ISOComponentPtrBaseSmartPtr=std::shared_ptr<ISOComponentPtrBase>" \
                          "ISOFieldParserPtrBaseSmartPtr=std::shared_ptr<ISOFieldParserPtrBase>" \
                          "ISOParserPtrBaseSmartPtr=std::shared_ptr<ISOParserPtrBase>" \

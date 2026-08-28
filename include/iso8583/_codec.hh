@@ -104,6 +104,11 @@ namespace TNG_NAMESPACE::codec {
     /// ASCII → EBCDIC lookup table – inverse of kEbcdicToAscii.
     /// Built as a class-level static to avoid C++23 requirement on
     /// static locals inside constexpr functions (C++20 only allows it in C++2b).
+    /// \note Nur für die Doku ausgeblendet: Breathe's C++-Parser kann
+    ///       Lambda-Initialisatoren nicht verarbeiten (Build-Fehler bei -W).
+    ///       Doxygen definiert __DOXYGEN__ (siehe PREDEFINED in docs/Doxyfile);
+    ///       echte C++-Builds sind nicht betroffen.
+#ifndef __DOXYGEN__
     static inline const std::array<uint8_t, 256> kAsciiToEbcdic = []() {
         std::array<uint8_t, 256> tbl{};
         tbl.fill(0x6F); // '?' in EBCDIC as fallback for unmapped chars
@@ -115,6 +120,7 @@ namespace TNG_NAMESPACE::codec {
         }
         return tbl;
     }();
+#endif
 
     // -- Enums -----------------------------------------------------------------
 
