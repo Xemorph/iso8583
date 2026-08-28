@@ -1,0 +1,61 @@
+# -----------------------------------------------------------------------------
+# .clangd — Projektkonfiguration für clangd
+#
+# Damit IDEs mit clangd-Integration (Zed, VS Code + clangd-Erweiterung,
+# Neovim, Emacs, KDevelop, ...) die iso8583-Header ohne MSVC-Werkzeugkette
+# finden. clangd nutzt im besten Fall die echten Compile-Commands aus dem
+# CMake-Build-Tree (alle vcpkg-Includes, ISO8583_DLL, BERTLV usw.); ohne
+# konfigurierten Build greifen die Fallback-Flags unten.
+#
+# Empfohlener Einmal-Schritt (macht clangd zu 100 % korrekt):
+#
+#   cmake --preset debug            # erzeugt build/debug/compile_commands.json
+#   cmake --build --preset debug
+#
+# Danach automatisch: Zed & Co. laden clangd, dieses liest .clangd und
+# compile_commands.json — fertig.
+#
+# WICHTIG: Zwei Fragmente, getrennt durch "---". Ein "If" gilt für das ganze
+# Fragment, in dem er steht — wäre er zusammen mit CompileFlags in einem
+# Block, würden die Fallback-Flags nur für Dateien unter build/ gelten.
+# -----------------------------------------------------------------------------
+
+---
+# (1) Hauptkonfiguration: Compile-Commands + Fallback-Flags.
+CompileFlags:
+  # Bevorzugt: echte Compile-Commands aus dem Build-Tree.
+  #     clangd sucht standardmäßig nur in Elternverzeichnissen und in
+  #     "build"-Nebendateien — unsere DB liegt tiefer in build/<preset>/,
+  #     daher hier explizit die Route nennen.
+  #
+  #     Falls du in einem anderen Tree arbeitest (z.B. release oder
+  #     debug-bertlv), einfach diese eine Zeile anpassen. Wichtig: der
+  #     Tree muss zur Bibliothek-Abi passen (BERTLV=int32_t-Keys!), sonst
+  #     meldet clangd falsche Fehler an virtual-Override-Signaturen.
+  CompilationDatabase: build/debug
+
+  # Fallback-Flags, die IMMER zusätzlich angehängt werden — und das
+  # einzige, was gilt, wenn ein File keinen Eintrag in der DB hat
+  # (z.B. frisch geklont, noch kein Build-Tree vorhanden). Sie reichen
+  # aus, um die öffentlichen Header zu parsen (Standardbibliothek +
+  # Projektkopfzeilen + gebündelte extern-Header). vcpkg-Header
+  # (fmt, nlohmann-json, ryml, robin-map) fehlen erst, bis der Build-
+  # Tree konfiguriert ist — danach übersteuert die DB diese Flags.
+  #
+  # -std=c++20 explizit: MSVC-Commands tragen /std:c++20, das clangd
+  # übersetzt; ohne DB-Entry würde clangd sonst den eigenen Default
+  # nutzen. C++20 ist Projekt-Standard (P0980: constexpr-Container in
+  # _codec_impl.hh, siehe CMakeLists.txt).
+  Add:
+    - "-xc++"
+    - "-std=c++20"
+    - "-Iinclude"
+    - "-Isrc"
+
+---
+# (2) Generierte Dateien aus dem Build-Tree nicht im Hintergrund
+#     indexieren (spart RAM/CPU; niemand editiert CMake-Output-Header).
+If:
+  PathMatch: "build/.*"
+Index:
+  Background: Skip

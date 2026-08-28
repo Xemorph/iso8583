@@ -1,0 +1,15 @@
+# EBCDIC-Spec für den TCP-Gateway-Demo (z.B. mainframe-/Host-Protokolle).
+# Start: iso8583_tcp_gateway 9000 spec_ebcdic.yml
+#   dann: python send_test.py 127.0.0.1 9000 ebcdic
+spec:     "TCP Gateway (EBCDIC)"
+encoding: ebcdic
+
+fields:
+  "000": { format: numeric,  length: 4,  description: "Message Type Indicator" }
+  "001": { format: bitmap,   length: 8,  description: "Primary Bitmap" }
+  "002": { format: llchar,   length: 19, description: "Primary Account Number" }
+  "003": { format: numeric,  length: 6,  description: "Processing Code" }
+  "004": { format: numeric,  length: 12, description: "Amount, Transaction" }
+  "011": { format: numeric,  length: 6,  description: "Systems Trace Audit Number" }
+  "041": { format: llchar,   length: 11, description: "Card Acceptor Terminal Identification" }
+  "049": { format: numeric,  length: 3,  description: "Currency Code, Transaction" }

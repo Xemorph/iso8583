@@ -17,7 +17,7 @@ jobs:
         build_type: [ Debug, Release ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -31,9 +31,9 @@ jobs:
       - uses: lukka/get-cmake@latest
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@v11.6
         with:
-          vcpkgGitCommitId: '06a7fdd564234908731c59ac46a624f808e87b1c'
+          vcpkgGitCommitId: '1f5e0348089e8a9b187f57d42866ebc871e815da'
 
       - name: Configure
         run: >
@@ -57,7 +57,7 @@ jobs:
             --timeout 30
 
       - name: Upload test results
-        if: always()
+        if: ${{ always() && !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results-linux-${{ matrix.build_type }}
@@ -74,7 +74,7 @@ jobs:
         build_type: [ Debug, Release ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -87,9 +87,9 @@ jobs:
         run: choco install ninja --no-progress -y
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@v11.6
         with:
-          vcpkgGitCommitId: '06a7fdd564234908731c59ac46a624f808e87b1c'
+          vcpkgGitCommitId: '1f5e0348089e8a9b187f57d42866ebc871e815da'
 
       - name: Configure
         shell: cmd
@@ -115,7 +115,7 @@ jobs:
           --timeout 30
 
       - name: Upload test results
-        if: always()
+        if: ${{ always() && !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results-windows-${{ matrix.build_type }}
@@ -132,6 +132,10 @@ jobs:
     steps:
       - name: Check all jobs passed
         run: |
+          if [ "$ACT" = "true" ]; then
+            echo "Running under act – skipping result check"
+            exit 0
+          fi
           linux="${{ needs.build-linux.result }}"
           windows="${{ needs.build-windows.result }}"
           if [ "$linux" != "success" ] || [ "$windows" != "success" ]; then

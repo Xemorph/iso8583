@@ -1,47 +1,49 @@
-# AGENTS.md — libiso8583 public API
+# AGENTS.md — libiso8583 öffentliche API
 
-This file is the primary reference for AI agents and code-generation tools
-working with the `include/iso8583/` directory.  Read it before generating or
-modifying any code that uses libiso8583.
-
----
-
-## What this library does
-
-libiso8583 is a C++17 library for **parsing and building ISO 8583 financial
-messages** — the protocol used by Visa, Mastercard, and most payment networks.
-
-Core workflow:
-
-```
-YAML spec file  ──► SpecDecoder::loadFromYaml()      ──► ISOParserPtrBase
-                │
-                └──► SpecDecoder::loadBothFromYaml()  ──► ISOParserPtrBase
-                                                        └──► ISOSpec (introspection)
-
-ISOParserPtrBase + raw wire bytes  ──► ISOMessage::unparse()  ──► ISOMessage (decoded)
-ISOMessage                         ──► ISOParserPtrBase::parse() ──► wire bytes
-```
+Diese Datei ist die primäre Referenz für KI-Agenten und Code-Generierungs-
+werkzeuge, die mit dem Verzeichnis `include/iso8583/` arbeiten. Lies sie,
+bevor du Code generierst oder änderst, der libiso8583 nutzt.
 
 ---
 
-## Namespace and key type
+## Was diese Bibliothek macht
+
+libiso8583 ist eine C++20-Bibliothek zum **Parsen und Bauen von ISO-8583-
+Finanznachrichten** — dem Protokoll von Visa, Mastercard und den meisten
+Zahlungsverkehrssystemen.
+
+Kern-Workflow:
+
+```
+YAML-Spec   ──► SpecDecoder::loadFromYaml()      ──► ISOParserPtrBase
+           │
+           └──► SpecDecoder::loadBothFromYaml()   ──► ISOParserPtrBase
+                                                      └──► ISOSpec (Introspektion)
+
+ISOParserPtrBase + rohe Wire-Bytes ──► Message::unparse() ──► Message (dekodiert)
+Message                        ──► ISOParserPtrBase::parse() ──► Wire-Bytes
+```
+
+---
+
+## Namespace und Schlüsseltyp
 
 ```cpp
-// Everything lives in namespace tng::
-using namespace tng;   // optional convenience
+// Alles lebt im Namespace iso8583::
+using namespace iso8583;   // optionale Bequemlichkeit
 
-// DE numbers (data element keys) are int16_t by default
-TNG_KEY_TYPE  key = 2;   // expands to tng::key_type = int16_t
-// Special value -1 = root ISOMessage (not itself a sub-field)
-// Special value -2 = reserved internally for TLV TCC fields
+// DE-Nummern (Data-Element-Keys) sind standardmäßig int16_t
+TNG_KEY_TYPE key = 2;   // entspricht iso8583::key_type = int16_t
+// Sonderwert -1 = die Wurzel-Message (kein Sub-Feld)
+// Sonderwert -2 = intern reserviert für TLV-TCC-Felder
 ```
 
 ### Konfigurierbarer Schlüsseltyp (BER-TLV / EMV)
 
-`TNG_KEY_TYPE` ist standardmäßig `int16_t` (-32768…32767). Reale 2-Byte-EMV-Tags
-mit erstem Byte `>= 0x80` (z.B. `9F26`, `5F24` - praktisch alle `9Fxx`/`5Fxx`-Tags)
-ergeben als Big-Endian-Wert `> 32767` und passen dort nicht hinein.
+`TNG_KEY_TYPE` ist standardmäßig `int16_t` (-32768…32767). Reale
+2-Byte-EMV-Tags mit erstem Byte `>= 0x80` (z. B. `9F26`, `5F24` — praktisch
+alle `9Fxx`/`5Fxx`-Tags) ergeben als Big-Endian-Wert `> 32767` und passen
+nicht hinein.
 
 Für volle BER-TLV/EMV-Tag-Unterstützung `ISO8583_BERTLV` definieren (schaltet
 automatisch auf `int32_t` um):
@@ -60,7 +62,7 @@ cmake -DISO8583_BERTLV=ON ...
 ```
 
 Wer einen noch größeren (oder anderen) Schlüsseltyp braucht, kann ihn frei
-festlegen - das überstimmt auch `ISO8583_BERTLV`:
+festlegen — das überstimmt auch `ISO8583_BERTLV`:
 
 ```cpp
 #define ISO8583_KEY_TYPE int64_t
@@ -76,166 +78,178 @@ Konsumenten identisch gesetzt werden.
 
 ---
 
-## Public headers — what to include
+## Public-Header — was zu includieren ist
 
-| Header | Use when |
+| Header | Wann verwenden |
 |---|---|
-| `<iso8583/iso8583.h>` | Always: pulls in everything below |
-| `<iso8583/ISOMessage.hh>` | Working with messages and field types |
-| `<iso8583/ISOSpec.hh>` | Loading a YAML spec file; introspecting the loaded spec (`ISOSpec`, `SpecFieldInfo`, `SpecFieldFormat`) |
-| `<iso8583/ISOLog.hh>` | Configuring library logging |
-| `<iso8583/ISOParser.hh>` | Implementing a custom parser (advanced) |
-| `<iso8583/_codec.hh>` | Using codec enums/functions directly (advanced) |
+| `<iso8583/iso8583.h>` | Immer: zieht alles darunter mit |
+| `<iso8583/ISOMessage.hh>` | Arbeiten mit Nachrichten und Feldtypen (`Message`, `OpaqueField`, `BinaryField`, …) |
+| `<iso8583/ISOSpec.hh>` | Laden einer YAML-Spec; Introspektion des geladenen Specs (`ISOSpec`, `SpecFieldInfo`, `SpecFieldFormat`) |
+| `<iso8583/ISOLog.hh>` | Konfigurieren des Bibliothek-Loggings |
+| `<iso8583/ISOUtils.hh>` | Hilfsfunktionen (`utils::makeBitmap()`, `flatten()`, `getOrThrow()`, …) |
+| `<iso8583/POSDataCode.hh>` | `pos::POSDataCode` (Dekodierung der POS-Fähigkeiten, DE61) |
+| `<iso8583/Currency.hh>` | `currency::Currency` (ISO-4217-Nachschlagentabelle) |
+| `<iso8583/ISOParser.hh>` | Implementieren eines eigenen Parsers (fortgeschritten) |
+| `<iso8583/_codec.hh>` | Codec-Enums/-Funktionen direkt verwenden (fortgeschritten) |
 
-Headers inside `detail/` are implementation details — do **not** include them
-directly.
+Header in `detail/` sind Implementierungsdetails — sie dürfen **nicht**
+direkt eingebunden werden.
 
 ---
 
-## Field types
+## Feldtypen
 
-| C++ type | Value type | Typical use |
+| C++-Typ | Wertetyp | Typischer Einsatz |
 |---|---|---|
-| `ISOOpaqueField` | `std::string` | Text, numeric, EBCDIC/BCD decoded to string |
-| `ISOBinaryField` | `std::vector<uint8_t>` | PIN block, ICC/EMV data, cryptograms |
-| `ISOBitmap` | `dynamic_bitset<>` | Primary / secondary bitmap |
-| `ISOCodeField` | `int32_t` | Integer response codes |
-| `tng::ISOMessage` | `ISO_MAP` (field map) | Composite / nested sub-message |
+| `iso8583::OpaqueField` | `std::string` | Text, Nummern, EBCDIC/BCD als Zeichenkette |
+| `iso8583::BinaryField` | `std::vector<uint8_t>` | PIN-Block, ICC/EMV-Daten, Kryptogramme |
+| `iso8583::FastBinaryField` | `std::vector<std::byte>` | Binär mit `std::byte`-Speicher (intern) |
+| `iso8583::Bitmap` | `dynamic_bitset<>` | Primäre/sekundäre Bitmap |
+| `iso8583::CodeField` | `int32_t` | Numerische Antwortcodes |
+| `iso8583::Message` | `ISO_MAP` (Feld-Map) | Composite / verschachtelte Sub-Nachricht |
+| `iso8583::ISOTaggedField` | — | Dekodiertes TLV-SE (Tag + verwiesenes Feld) |
 
-All types inherit from `ISOComponentPtrBase` and are always held in
-`std::shared_ptr`.
+Alle Typen erben von `ISOComponentPtrBase` und werden immer in
+`std::shared_ptr` gehalten.
+
+> Die alten Namen `ISOOpaqueField`, `ISOBinaryField`, `ISOBitmap`,
+> `ISOCodeField`, `ISOFastBinaryField` und `ISOMessage` sind deprecated
+> Aliase (ein Release-Zyklus) — neuen Code immer mit den neuen Namen
+> schreiben.
 
 ---
 
-## Decoding a message (unparse = wire bytes → fields)
+## Eine Nachricht dekodieren (unparse = Wire-Bytes → Felder)
 
 ```cpp
 #include <iso8583/iso8583.h>
 
-// 1. Load spec once — cache this, it is expensive
-auto parser = tng::spec::SpecDecoder::loadFromYaml("mastercard.yml");
+// 1. Spec einmal laden — zwischenspeichern, es ist teuer
+auto parser = iso8583::spec::SpecDecoder::loadFromYaml("mastercard.yml");
 
-// 2. Create message and attach parser
-auto msg = std::make_shared<tng::ISOMessage>();
+// 2. Nachricht anlegen und Parser zuordnen
+auto msg = std::make_shared<iso8583::Message>();
 msg->parser(parser);
 
-// 3. Decode
+// 3. Dekodieren
 std::vector<uint8_t> raw = get_from_network();
 msg->unparse(msg, raw);
 
-// 4. Read fields
-if (auto pan = msg->tryGet<ISOOpaqueField>(2))          // optional – field may be absent
+// 4. Felder lesen
+if (auto pan = msg->tryGet<OpaqueField>(2))       // optional – Feld kann fehlen
     std::cout << (*pan)->value() << "\n";
 
-auto amount  = tng::ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 4, "000000000000");
-auto mti_str = msg->mti();  // e.g. "0200"
+auto amount = iso8583::utils::getOrDefault<OpaqueField>(*msg, 4, "000000000000");
+auto mti_str = msg->mti();  // z. B. "0200"
 
-// 5. MTI classification
+// 5. MTI-Klassifikation
 if (msg->isAuthorization() && msg->isRequest())  { /* 01xx */ }
 if (msg->isFinancial()     && msg->isResponse()) { /* 021x */ }
+// weitere Klassifikationen: isFileAction(), isReversal(), isChargeback(),
+// isReconciliation(), isAdministrative(), isFeeCollection(),
+// isNetworkManagement(), isRetransmission()
 ```
 
 ---
 
-## Building a message (parse = fields → wire bytes)
+## Eine Nachricht bauen (parse = Felder → Wire-Bytes)
 
 ```cpp
-auto msg = std::make_shared<tng::ISOMessage>("0200");  // MTI in constructor
+auto msg = std::make_shared<iso8583::Message>("0200");  // MTI im Konstruktor
 msg->parser(parser);
 
-// Simple fields
-msg->set(2,  "4111111111111111");   // PAN          – ISOOpaqueField
+// Einfache Felder
+msg->set(2,  "4111111111111111");   // PAN          – OpaqueField
 msg->set(3,  "000000");             // Proc. code
-msg->set(4,  "000000010000");       // Amount (cents)
+msg->set(4,  "000000010000");       // Amount (Cents)
 msg->set(11, "000001");             // STAN
 
-// Binary field — value must be an uppercase hex string
-msg->set(52, "0102030405060708");   // PIN block     – ISOBinaryField
+// Binärfeld — Wert muss eine Hex-Zeichenkette in Großbuchstaben sein
+msg->set(52, "0102030405060708");   // PIN-Block     – BinaryField
 
-// Nested field via dot-notation
-msg->set("48.72.1", "ABC");         // DE48 → SE72 → tag 1
-msg->set("3.1",     "00");          // DE3 sub-field 1
+// Verschachtelte Felder über Punkt-Notation
+msg->set("48.72.1", "ABC");         // DE48 → SE72 → Tag 1
+msg->set("3.1",     "00");          // DE3, Sub-Feld 1
 
-// Encode to wire bytes
+// In Wire-Bytes kodieren
 std::vector<uint8_t> wire = parser->parse(msg);
 ```
 
 ---
 
-## Reading fields — choose the right accessor
+## Felder lesen — den richtigen accessor wählen
 
 ```cpp
-// get<T>()  — returns nullptr if missing or wrong type
-auto f = msg->get<ISOOpaqueField>(2);
+// get<T>()  — liefert nullptr, wenn das Feld fehlt oder der Typ abweicht
+auto f = msg->get<OpaqueField>(2);
 if (f) use(f->value());
 
-// tryGet<T>() — returns std::optional<shared_ptr<T>>
-if (auto opt = msg->tryGet<ISOOpaqueField>(35))
+// tryGet<T>() — liefert std::optional<shared_ptr<T>>
+if (auto opt = msg->tryGet<OpaqueField>(35))
     use((*opt)->value());
 
-// tryGetValue<T>() — returns std::optional<ValueType> (copy)
-if (auto val = msg->tryGetValue<ISOOpaqueField>(11))
-    use(*val);  // val is std::optional<std::string>
+// tryGetValue<T>() — liefert std::optional<ValueType> (Kopie)
+if (auto val = msg->tryGetValue<OpaqueField>(11))
+    use(*val);  // val ist std::optional<std::string>
 
-// tryGetValueRef<T>() — returns optional reference_wrapper (zero-copy)
-if (auto ref = msg->tryGetValueRef<ISOBinaryField>(55))
-    use(ref->get());  // zero-copy access to std::vector<uint8_t>
+// tryGetValueRef<T>() — liefert optional reference_wrapper (zero-copy)
+if (auto ref = msg->tryGetValueRef<BinaryField>(55))
+    use(ref->get());  // Zero-Copy-Zugriff auf std::vector<uint8_t>
 
-// ISOUtils helpers
-auto pan  = tng::ISOUtils::getOrThrow<ISOOpaqueField>(*msg, 2);   // throws if absent
-auto curr = tng::ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 49, "978");
-tng::ISOUtils::ifPresent<ISOOpaqueField>(*msg, 11, [](const std::string& stan) {
+// utils-Hilfsfunktionen
+auto pan  = iso8583::utils::getOrThrow<OpaqueField>(*msg, 2);   // wirft, wenn fehlt
+auto curr = iso8583::utils::getOrDefault<OpaqueField>(*msg, 49, "978");
+iso8583::utils::ifPresent<OpaqueField>(*msg, 11, [](const std::string& stan) {
     log("STAN: {}", stan);
 });
 ```
 
 ---
 
-## Spec introspection (ISOSpec)
+## Spec-Introspektion (ISOSpec)
 
-`loadBothFromYaml` returns both a parser and an `ISOSpec` object that lets you
-query the structure of the loaded spec at runtime.
+`loadBothFromYaml` liefert sowohl einen Parser als auch ein `ISOSpec`-Objekt,
+mit dem sich die Struktur der geladenen Spec zur Laufzeit abfragen lässt.
 
 ```cpp
 #include <iso8583/iso8583.h>
 
-auto [parser, spec] = tng::spec::SpecDecoder::loadBothFromYaml("mastercard.yml");
+auto [parser, spec] = iso8583::spec::SpecDecoder::loadBothFromYaml("mastercard.yml");
 
-// Attach parser to messages as usual
+// Parser wie gewohnt an die Nachricht hängen
 msg->parser(parser);
 
-// --- Introspection ---
+// --- Introspektion ---
 
-// Name and global encoding from the YAML "spec:" / "encoding:" keys
-spec->name();      // e.g. "Mastercard GMC"
-spec->encoding();  // e.g. "EBCDIC"
+// Name und globale Encoding aus den YAML-Keys "spec:" / "encoding:"
+spec->name();      // z. B. "Mastercard GMC"
+spec->encoding();  // z. B. "EBCDIC"
 
-// Check whether a DE is defined
-spec->has(2);      // true if DE002 exists
+// Prüfen, ob ein DE definiert ist
+spec->has(2);      // true, wenn DE002 existiert
 
-// Query a single field
+// Ein einzelnes Feld abfragen
 if (auto f = spec->field(2)) {
     f->description;            // "Primary Account Number"
     f->format.type;            // "CHAR"
-    f->format.prefix_digits;   // 2  (= LL prefix)
+    f->format.prefix_digits;   // 2  (= LL-Präfix)
     f->format.max_length;      // 19
     f->encoding;               // "EBCDIC"
     f->is_nested;              // false
     f->is_bitmap;              // false
 }
 
-// Query a nested field and its children
+// Verschachteltes Feld und seine Kinder abfragen
 if (auto pos = spec->field(61)) {
     pos->is_nested;            // true
-    pos->children.size();      // number of sub-fields
+    pos->children.size();      // Anzahl der Sub-Felder
     pos->children[0].description;           // "POS Terminal Attendance"
-    pos->children[0].format.prefix_digits;  // 0  (fixed)
+    pos->children[0].format.prefix_digits;  // 0  (fix)
 }
 
-// Iterate all defined DEs in key order
+// Alle definierten DEs in Key-Reihenfolge durchlaufen
 for (const auto& f : spec->fields())
-    fmt::print("DE{:03d}  {:<30}  {}{}  max={}
-",
+    fmt::print("DE{:03d}  {:<30}  {}{}  max={}\n",
         f.key, f.description,
         f.format.prefix_digits > 0
             ? std::string(f.format.prefix_digits, 'L') : "FIX",
@@ -243,95 +257,119 @@ for (const auto& f : spec->fields())
         f.format.max_length);
 ```
 
-### SpecFieldFormat fields
+### SpecFieldFormat-Mitglieder
 
-| Member | Type | Meaning |
+| Mitglied | Typ | Bedeutung |
 |---|---|---|
-| `type` | `std::string` | Base format: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"` |
-| `prefix_digits` | `int` | `0`=fixed, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
-| `max_length` | `int` | Maximum payload length in logical units (chars, digits, or bytes) |
+| `type` | `std::string` | Basisformat: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"` |
+| `prefix_digits` | `int` | `0`=fix, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
+| `max_length` | `int` | Maximale Nutzdatenlänge in logischen Einheiten (Zeichen, Ziffern oder Bytes) |
 
-### SpecFieldInfo fields
+### SpecFieldInfo-Mitglieder
 
-| Member | Type | Meaning |
+| Mitglied | Typ | Bedeutung |
 |---|---|---|
-| `key` | `TNG_KEY_TYPE` | DE number |
-| `description` | `std::string` | Human-readable name from spec YAML |
-| `format` | `SpecFieldFormat` | Wire format (see above) |
+| `key` | `TNG_KEY_TYPE` | DE-Nummer |
+| `description` | `std::string` | Menschlesbarer Name aus der Spec-YAML |
+| `format` | `SpecFieldFormat` | Wire-Format (s. o.) |
 | `encoding` | `std::string` | `"EBCDIC"`, `"ASCII"`, `"BCD"`, `"BINARY"`, `""` (neutral) |
-| `is_nested` | `bool` | `true` for composite sub-message DEs |
-| `is_bitmap` | `bool` | `true` for the bitmap DE |
-| `children` | `vector<SpecFieldInfo>` | Sub-fields of nested DEs (empty for leaves) |
+| `is_nested` | `bool` | `true` für composite Sub-Nachrichten-DEs |
+| `is_bitmap` | `bool` | `true` für das Bitmap-DE |
+| `children` | `vector<SpecFieldInfo>` | Sub-Felder verschachtelter DEs (leer bei Blättern) |
 
-### When to use loadFromYaml vs loadBothFromYaml
+### Wann loadFromYaml vs. loadBothFromYaml
 
 | | `loadFromYaml` | `loadBothFromYaml` |
 |---|---|---|
-| Parsing / building messages | ✓ | ✓ |
-| Querying field names / formats at runtime | ✗ | ✓ |
-| UI field lists, validators, documentation | ✗ | ✓ |
-| Overhead | minimal | one extra pass over the field map |
+| Nachrichten parsen/bauen | ✓ | ✓ |
+| Feldnamen/-formate zur Laufzeit abfragen | ✗ | ✓ |
+| UI-Feldlisten, Validatoren, Dokumentation | ✗ | ✓ |
+| Overhead | minimal | ein zusätzlicher Durchlauf über die Feld-Map |
+
+### Caching (`loadFromYamlCached`, `loadBothFromYamlCached`)
+
+Beide Cached-Varianten halten das Ergebnis prozessweit pro absolutem Pfad.
+Ein wiederholter Aufruf für dieselbe (ungeänderte) Datei ist nur ein
+sperrgeschützter Map-Lookup — kein YAML-Parsing, kein Preprocessing, kein
+Rebuild des Feld-Parser-Baums. Bevorzugt `...Cached` überall dort, wo dieselbe
+Spec während der Prozesslebensdauer mehr als einmal geladen wird.
+
+- `CacheValidation::CheckEveryCall` (Default): prüft bei jedem Call die
+  `last_write_time()` der Datei — erkennt Änderungen automatisch, kostet pro
+  Call einen `stat()`-artigen Systemaufruf.
+- `CacheValidation::TrustUntilInvalidated`: kein Dateisystem-Zugriff bei
+  Cache-Treffer (~25 ns), erkennt Dateiänderungen aber **nicht** — selbst mit
+  `SpecDecoder::invalidateCache(path)` invalidate, wenn die Datei sich geändert
+  hat (z. B. über einen eigenen File-Watcher).
+- `SpecDecoder::clearCache()` leert beide Caches vollständig.
+
+```cpp
+// Startup: Parser + Spec geladen und prozessweit wiederverwendet
+static auto [parser, spec] =
+    iso8583::spec::SpecDecoder::loadBothFromYamlCached("mastercard.yml");
+```
 
 ---
 
-## YAML spec format
+## YAML-Spezifikationsformat
 
 ```yaml
 spec:     "My Spec"
 encoding: ebcdic          # global: ascii | bcd | ebcdic | binary
 
-definitions:              # reusable snippets
+definitions:              # wiederverwendbare Bausteine
   pan_field:
     type: scalar
     format: llchar
     length: 19
 
 fields:
-  "000":                  # MTI — always key 000
+  "000":                  # MTI — immer Key 000
     type: scalar
     format: numeric
     length: 4
-  "001":                  # Bitmap — always key 001
+  "001":                  # Bitmap — immer Key 001
     type: scalar
     format: bitmap
     length: 8
-  "002": !use pan_field   # reference a definition
-  "003":                  # explicit field
+  "002": !use pan_field   # Definition referenzieren
+  "003":                  # explizites Feld
     type: scalar
     format: numeric
     length: 6
-    encoding: bcd         # override global encoding for this field
-  "055":                  # variable-length binary
+    encoding: bcd         # globale Encoding für dieses Feld überschreiben
+  "055":                  # variable binäre Länge
     !merge
     - !template LLL(BINARY, 255)
     - description: "ICC Data"
-  "056":                  # BER-TLV container (EMV ICC data) — scalar-only
-    format: lllbertlv     # LLL-prefix + BER-TLV payload (ISO/IEC 8825-1)
+  "056":                  # BER-TLV-Container (EMV ICC-Daten) — nur scalar
+    format: lllbertlv     # LLL-Präfix + BER-TLV-Payload (ISO/IEC 8825-1)
     length: 999
     description: "ICC Data (BER-TLV)"
-    # No 'type: nested', 'children', or 'tlv:' block — BER-TLV tags are
-    # dynamic (not a fixed, pre-declared SE list), so none is needed.
-  "057":                  # BER-TLV with per-tag descriptions (optional)
+    # Kein 'type: nested', 'children' oder 'tlv:'-Block — BER-TLV-Tags sind
+    # dynamisch (keine feste, vorab deklarierte SE-Liste), daher nicht nötig.
+  "057":                  # BER-TLV mit Tag-Beschreibungen (optional)
     type: nested
     format: lllbinary
     length: 999
     description: "ICC Data with declared tags"
     tlv:
       ber: true
-    children:             # map = TLV mode; keys are HEX tags (ber: true)
-      "9F26":              # real EMV tag: Application Cryptogram
+    children:             # Map = TLV-Modus; Keys sind HEX-Tags (ber: true)
+      "9F26":              # reales EMV-Tag: Application Cryptogram
         format: binary
         length: 8
         description: "Application Cryptogram"
-      "5A":                 # real EMV tag: Application PAN
+      "5A":                 # reales EMV-Tag: Application PAN
         format: binary
         length: 10
         description: "Application PAN"
-    # Only 'description' is currently wired to the decoded field (each SE/tag
-    # is still decoded as a raw BinaryField — 'format'/'length' here are
-    # documentation only, not yet enforced at decode time). Undeclared tags
-    # fall back to a generic "SE<n>" description automatically.
-  "048":                  # Mastercard-style fixed TLV — SE keys are DECIMAL
+    # Momentan wird nur 'description' an das dekodierte Feld übergeben (jedes
+    # SE/Tag wird weiterhin als rohes BinaryField dekodiert — 'format'/'length'
+    # hier sind nur Dokumentation und werden beim Decode noch nicht erzwungen).
+    # Nicht deklarierte Tags fallen automatisch auf eine generische
+    # "SE<n>“-Beschreibung zurück.
+  "048":                  # Mastercard-artiges fixes TLV — SE-Keys DEZIMAL
     type: nested
     format: lllchar
     length: 999
@@ -340,15 +378,15 @@ fields:
       tag_bytes: 2
       len_bytes: 2
     children:
-      "26":                 # decimal SE number (NOT hex — no 'ber: true' here)
+      "26":                 # dezimale SE-Nummer (NICHT hex — hier kein 'ber: true')
         format: char
         length: 10
         description: "Some Subelement"
-      "0x1A":               # explicit '0x' prefix forces hex even here (== 26)
+      "0x1A":               # explizites '0x'-Präfix erzwingt hier hex (== 26)
         format: char
         length: 5
         description: "Same Subelement, written in hex"
-  "061":                  # nested field with children
+  "061":                  # verschachteltes Feld mit Kindern
     type: nested
     format: binary
     length: 26
@@ -356,19 +394,19 @@ fields:
       - format: numeric
         length: 1
         description: "POS Terminal Attendance"
-      - format: remaining   # consumes all leftover bytes — no length prefix
+      - format: remaining   # konsumiert alle restlichen Bytes — kein Längenpräfix
         description: "POS Postal Code"
 ```
 
-**Directives:**
-- `!include_files [a.yml, b.yml]` — load external definition files (root level).
-  **Must be followed by a `---` document separator** before the rest of the
-  spec content (`spec:`, `encoding:`, `fields:`, ...) — `!include_files` and
-  the remaining content are two separate YAML documents in the same file.
-  Omitting `---` is a parse error (strict YAML 1.2; earlier versions of this
-  library tolerated it, real-world spec files written for those versions may
-  need a one-time `---` insertion after their `!include_files [...]` block).
-  Example:
+**Direktiven:**
+- `!include_files [a.yml, b.yml]` — externe Definitionsdateien laden
+  (Root-Ebene). **Muss von einem `---`-Dokumenttrenner gefolgt werden**,
+  bevor der Rest der Spec folgt (`spec:`, `encoding:`, `fields:`, …) —
+  `!include_files` und der verbleibende Inhalt sind zwei separate YAML-
+  Dokumente in derselben Datei. Weglassen von `---` ist ein Parse-Fehler
+  (strikt YAML 1.2; frühere Versionen dieser Bibliothek tolerierten es,
+  reale Spec-Dateien, die für diese Versionen geschrieben wurden, brauchen
+  evtl. einmalig ein `---` nach dem `!include_files [...]`-Block). Beispiel:
   ```yaml
   !include_files
   - common_definitions.yml
@@ -378,38 +416,38 @@ fields:
   fields:
     "000": !use mti_field
   ```
-- `!use <name>` — substitute a named definition
-- `!template P(F, N)` — variable-length shorthand, e.g. `LL(CHAR, 19)` → `{ type: scalar, format: LLCHAR, length: 19 }`
-- `!merge [...]` — merge maps, later entries overwrite earlier ones
-- `!include <name>` — **deprecated** alias for `!use` (emits a warning)
+- `!use <name>` — benannte Definition substituieren
+- `!template P(F, N)` — Kurzform für variable Längen, z. B. `LL(CHAR, 19)` → `{ type: scalar, format: LLCHAR, length: 19 }`
+- `!merge [...]` — Maps mergen, spätere Einträge überschreiben frühere
+- `!include <name>` — **deprecated** Alias für `!use` (emittiert eine Warnung)
 
-**Format/encoding combinations:**
+**Format/Encoding-Kombinationen:**
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
 - `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
-- `remaining` — reads all bytes remaining in the parent buffer
-- `bertlv` (optionally `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV container
-  (ISO/IEC 8825-1, EMV Book 3 Annex B); **scalar-only**, must NOT be combined
-  with `type: nested`, `children`, or a `tlv:` block. Produces a nested
-  `ISOMessage` at runtime whose child keys are the raw BER tag values
-  (see `BERTLVParser` in `src/_tlv.hh`). Requires `ISO8583_BERTLV` (see
-  above) if any tag exceeds the `int16_t` range, e.g. real 2-byte EMV tags
-  like `9F26`.
+- `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
+- `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
+  (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**, darf NICHT mit
+  `type: nested`, `children` oder einem `tlv:`-Block kombiniert werden.
+  Erzeugt zur Laufzeit eine verschachtelte `Message`, deren Kind-Keys die
+  rohen BER-Tag-Werte sind (siehe `BERTLVParser` in `src/_tlv.hh`). Benötigt
+  `ISO8583_BERTLV` (s. o.), wenn ein Tag außerhalb des `int16_t`-Bereichs
+  liegt, z. B. reale 2-Byte-EMV-Tags wie `9F26`.
 
-**TLV `children` key notation:** when `type: nested` is combined with an
-explicit `tlv:` block and a `children:` **map** (as opposed to the
-`bertlv` format shorthand above, which needs no `children` at all), each
-key names an SE number or BER tag:
-- `tlv: {ber: true}` → keys are **hexadecimal** (`"9F26"`, `"5A"`, `"1A"`),
-  matching how EMV Book 3 / ISO 7816 conventionally write tags.
-- Fixed-format TLV (Mastercard/Visa, `tag_bytes`/`len_bytes` given) → keys
-  are **decimal** SE numbers (`"26"`), unchanged from earlier versions.
-- An explicit `"0x"` prefix (e.g. `"0x1A"`) forces hexadecimal regardless of
-  TLV mode.
-- Only `description` is currently propagated to the decoded field (each
-  SE/tag is still decoded as a raw `BinaryField` — `format`/`length` in
-  `children` remain documentation only, not yet enforced at decode time).
-  Tags without a declared `children` entry fall back to a generic
-  `"SE<n>"` description automatically.
+**TLV-`children`-Key-Notation:** Wenn `type: nested` mit einem expliziten
+`tlv:`-Block und einer `children:`-**Map** (im Gegensatz zur `bertlv`-
+Format-Kurzform oben, die gar keine `children` braucht) kombiniert wird,
+benennt jeder Key eine SE-Nummer oder ein BER-Tag:
+- `tlv: {ber: true}` → Keys sind **hexadezimal** (`"9F26"`, `"5A"`, `"1A"`),
+  passend zur EMV-Book-3-/ISO-7816-Schreibweise.
+- Fixformat-TLV (Mastercard/Visa, mit `tag_bytes`/`len_bytes`) → Keys sind
+  **dezimale** SE-Nummern (`"26"`), unverändert zu früheren Versionen.
+- Ein explizites `"0x"`-Präfix (z. B. `"0x1A"`) erzwingt Hexadezimal,
+  unabhängig vom TLV-Modus.
+- Momentan wird nur `description` an das dekodierte Feld übergeben (jedes
+  SE/Tag wird weiterhin als rohes `BinaryField` dekodiert — `format`/`length`
+  in `children` bleiben Dokumentation, noch nicht beim Decode erzwungen).
+  Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
+  generische `"SE<n>"`-Beschreibung zurück.
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
 
@@ -420,109 +458,112 @@ key names an SE number or BER tag:
 ```cpp
 #include <iso8583/ISOLog.hh>
 
-// Option A — level only (default is WARN)
-tng::log::setLevel(tng::log::Level::DEBUG);
+// Option A — nur Level (Default ist WARN)
+iso8583::log::setLevel(iso8583::log::Level::DEBUG);
 
-// Option B — custom logger
-class MyLogger : public tng::log::ISOLogger {
+// Option B — eigener Logger
+class MyLogger : public iso8583::log::ISOLogger {
 public:
-    void log(tng::log::Level level, std::string_view file,
+    void log(iso8583::log::Level level, std::string_view file,
              int line, std::string_view message) override {
         fmt::print("[iso8583] {}\n", message);
     }
 };
 static MyLogger g_logger;
-tng::log::setLogger(&g_logger);
+iso8583::log::setLogger(&g_logger);
 
-// Option C — Quill bridge (when libiso8583 is a DLL)
-// Include quill BEFORE ISOLog.hh to activate QuillBridge:
+// Option C — Quill-Bridge (wenn libiso8583 eine DLL ist)
+// quill VOR ISOLog.hh includieren, um QuillBridge zu aktivieren:
 #include <quill/LogMacros.h>
 #include <iso8583/ISOLog.hh>
-static tng::log::QuillBridge bridge(myQuillLogger);
-tng::log::setLogger(&bridge);
-tng::log::setLevel(tng::log::Level::DEBUG);
+static iso8583::log::QuillBridge bridge(myQuillLogger);
+iso8583::log::setLogger(&bridge);
+iso8583::log::setLevel(iso8583::log::Level::DEBUG);
 ```
 
-**Important (DLL):** Do not use `setQuillLogger()` when libiso8583 is a DLL.
-Quill's per-process singleton is split at the DLL boundary — use `QuillBridge`
-instead so that log macros expand in the host EXE's Quill instance.
+**Wichtig (DLL):** Nicht `setQuillLogger()` verwenden, wenn libiso8583 eine
+DLL ist. Quills Prozess-spezifisches Singleton wird an der DLL-Grenze
+geteilt — stattdessen `QuillBridge` verwenden, damit die Log-Makros in der
+Quill-Instanz des hostenden EXE expandiert werden.
 
 ---
 
-## Wire position tracking
+## Wire-Positions-Tracking
 
-After `unparse()`, every field carries its position in the original buffer:
+Nach `unparse()` trägt jedes Feld seine Position im Originalpuffer mit sich:
 
 ```cpp
-auto de2 = msg->get<ISOOpaqueField>(2);
-de2->wire_offset();  // byte offset in the original raw buffer
-de2->wire_length();  // bytes consumed (including length-prefix)
+auto de2 = msg->get<OpaqueField>(2);
+de2->wire_offset();  // Byte-Offset im Original-Rohpuffer
+de2->wire_length();  // verbrauchte Bytes (inkl. Längenpräfix)
 ```
 
-Use `ISOUtils::flatten()` to get a flat map of all leaf fields:
+Mit `iso8583::utils::flatten()` eine flache Map aller Blätterfelder erhalten:
 
 ```cpp
-auto flat = tng::ISOUtils::flatten(*msg);
-// flat["2"]      = "4111111111111111"
+auto flat = iso8583::utils::flatten(*msg);
+// flat["2"]       = "4111111111111111"
 // flat["48.72.1"] = "ABC"
 ```
 
 ---
 
-## Headers
+## Header
 
 ```cpp
-// Attach before encoding/decoding
-auto hdr = std::make_shared<tng::BASE1Header>("000001", "000002");
+// Vor dem Kodieren/Dekodieren anhängen
+auto hdr = std::make_shared<iso8583::BASE1Header>("000001", "000002");
 msg->header(hdr);
 
-// Read after decoding
-auto h = std::dynamic_pointer_cast<tng::BASE1Header>(msg->header());
+// Nach dem Dekodieren lesen
+auto h = std::dynamic_pointer_cast<iso8583::BASE1Header>(msg->header());
 if (h && h->isRejected())
     handle_reject(h->getRejectCode());
 ```
 
-Available header types: `tng::BaseHeader`, `tng::BASE1Header` (Visa),
-`tng::WLP_FOHeader` (Worldline).
+Verfügbare Header-Typen: `iso8583::BaseHeader`, `iso8583::BASE1Header`
+(Visa), `iso8583::WLP_FOHeader` (Worldline).
 
 ---
 
-## Common mistakes to avoid
+## Typische Fehler, die zu vermeiden sind
 
-| Mistake | Correct approach |
+| Fehler | Korrekte Vorgehensweise |
 |---|---|
-| Including `detail/` headers directly | Use `<iso8583/iso8583.h>` |
-| Calling `msg->unparse()` without a parser | Call `msg->parser(parser)` first |
-| Using `int` or `int32_t` as DE keys | Use `TNG_KEY_TYPE` (`int16_t`) |
-| `setQuillLogger()` with a DLL build | Use `QuillBridge` + `setLogger()` |
-| Setting a `BITMAP` field manually | Bitmaps are computed automatically |
-| Setting a `NESTED` field with a plain string | Use dot-notation: `msg->set("3.1", "00")` |
-| Passing a hex string to a non-BINARY field | Only `ISOBinaryField` accepts hex input |
-| Passing raw bytes to `ISOBinaryField` | Pass an uppercase hex string, e.g. `"DEADBEEF"` |
-| `msg->mti()` before checking `hasMTI()` | Throws `std::logic_error` if MTI is absent |
+| `detail/`-Header direkt includieren | `<iso8583/iso8583.h>` verwenden |
+| `msg->unparse()` ohne Parser | Zuerst `msg->parser(parser)` aufrufen |
+| `int` oder `int32_t` als DE-Keys | `TNG_KEY_TYPE` (`int16_t`) verwenden |
+| Deprecated Namen wie `ISOOpaqueField`/`ISOMessage` in neuem Code | `OpaqueField`/`Message` (Namespace `iso8583::`) verwenden |
+| `setQuillLogger()` mit einem DLL-Build | `QuillBridge` + `setLogger()` verwenden |
+| Ein `BITMAP`-Feld manuell setzen | Bitmaps werden automatisch berechnet |
+| Ein `NESTED`-Feld mit einer simplen Zeichenkette setzen | Punkt-Notation: `msg->set("3.1", "00")` |
+| Hex-Zeichenkette an ein nicht-BINARY-Feld | Nur `BinaryField` akzeptiert Hex-Eingabe |
+| Rohe Bytes an `BinaryField` übergeben | Hex-Zeichenkette in Großbuchstaben, z. B. `"DEADBEEF"` |
+| `msg->mti()` vor der Prüfung von `hasMTI()` | Wirft `std::logic_error`, wenn kein MTI gesetzt ist |
 
 ---
 
-## Thread safety
+## Thread-Sicherheit
 
-| Operation | Lock type |
+| Operation | Sperrentyp |
 |---|---|
-| `set`, `unset`, `reset`, `unparse` | Exclusive write lock |
-| `get`, `tryGet`, `has`, `size` | Shared read lock |
+| `set`, `unset`, `reset`, `unparse` | Exklusive Schreibsperre |
+| `get`, `tryGet`, `has`, `size` | Geteilte Lesesperre |
 
-Concurrent reads from multiple threads are safe.
-Never modify a message while another thread is reading it without external synchronisation.
+Gleichzeitiges Lesen aus mehreren Threads ist sicher.
+Eine Nachricht niemals ändern, während ein anderer Thread liest, ohne externe
+Synchronisation.
 
 ---
 
-## Key numeric DE ranges
+## Wichtige numerische DE-Bereiche
 
-| Range | Meaning |
+| Bereich | Bedeutung |
 |---|---|
-| -1 | Root `ISOMessage` (not a sub-field) |
-| 0 | MTI slot |
-| 1 | Primary bitmap slot |
-| 2–64 | Primary bitmap DEs |
-| 65–128 | Secondary bitmap DEs |
-| 129–192 | Tertiary bitmap DEs |
-| Sub-field keys start at 0 | Indexed within their parent nested message |
+| -1 | Wurzel-`Message` (kein Sub-Feld) |
+| 0 | MTI-Slot |
+| 1 | Primärer Bitmap-Slot |
+| 2–64 | DEs der primären Bitmap |
+| 65–128 | DEs der sekundären Bitmap |
+| 129–192 | DEs der tertiären Bitmap |
+| Sub-Feld-Keys starten bei 0 | Innerhalb der übergeordneten verschachtelten Nachricht indiziert |

@@ -43,7 +43,7 @@ target_include_directories(libiso8583_tests
         ${CMAKE_SOURCE_DIR}/src
 )
 
-target_compile_features(libiso8583_tests PRIVATE cxx_std_17)
+target_compile_features(libiso8583_tests PRIVATE cxx_std_20)
 
 include(CTest)
 include(Catch)

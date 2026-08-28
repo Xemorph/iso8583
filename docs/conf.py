@@ -1,5 +1,5 @@
 """
-Sphinx configuration for libiso8583 documentation.
+Sphinx-Konfiguration für die libiso8583-Dokumentation.
 
 Build:
     pip install sphinx breathe furo myst-parser
@@ -11,27 +11,34 @@ import subprocess
 import sys
 from pathlib import Path
 
-# ── Project info ──────────────────────────────────────────────────────────────
+# ── Projektinformationen ──────────────────────────────────────────────────────
 project   = "libiso8583"
-author    = "TNG"
-release   = "0.1.1-alpha"
+author    = "iso8583-Kontributoren"
+release   = "0.2.0"
 copyright = f"2024, {author}"
 
-# ── Extensions ────────────────────────────────────────────────────────────────
+# ── Erweiterungen ─────────────────────────────────────────────────────────────
 extensions = [
-    "breathe",          # bridges Doxygen XML → Sphinx RST/MD
-    "myst_parser",      # allows .md files as Sphinx pages (AGENTS.md, CLAUDE.md)
+    "breathe",          # verbindet Doxygen-XML mit Sphinx RST/MD
+    "myst_parser",      # erlaubt .md-Dateien als Sphinx-Seiten (AGENTS.md, …)
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.viewcode",
     "sphinx.ext.todo",
 ]
 
-# Prefix section labels with the document name to avoid duplicate label warnings
-# when the same heading appears in multiple files (e.g. "Field types" in
-# api/isomessage.rst and agents.md).
+# Abschnitts-Labels um den Dokumentnamen ergänzen, um Duplikat-Warnungen zu
+# vermeiden, wenn dieselbe Überschrift in mehreren Dateien vorkommt
+# (z. B. "Feldtypen" in api/isomessage.rst und agents.md).
 autosectionlabel_prefix_document = True
 
-# ── Source ────────────────────────────────────────────────────────────────────
+# Harmlose, wiederkäuende Warnungen unterdrücken:
+# - misc.highlighting_failure: Pygments hat keinen "cmake"-Lexer,
+#   wechselt aber automatisch in relaxed Mode (AGENTS.md-CMake-Blöcke).
+suppress_warnings = [
+    "misc.highlighting_failure",
+]
+
+# ── Quelldateien ──────────────────────────────────────────────────────────────
 source_suffix = {
     ".rst": "restructuredtext",
     ".md":  "markdown",
@@ -39,31 +46,31 @@ source_suffix = {
 master_doc = "index"
 exclude_patterns = ["_build", "_doxygen", "Thumbs.db", ".DS_Store", "README.md"]
 
-# ── Theme: Furo (clean, modern, responsive) ───────────────────────────────────
+# ── Theme: Furo (sauber, modern, responsiv) ───────────────────────────────────
 html_theme = "furo"
-html_static_path = []   # set to ["_static"] once you add custom CSS/JS
+html_static_path = []   # auf ["_static"] setzen, sobald eigenes CSS/JS dazu kommt
 
 html_theme_options = {
     "sidebar_hide_name":        False,
     "navigation_with_keys":     True,
-    "source_repository":        "https://github.com/YOUR-ORG/libiso8583/",
+    "source_repository":        "https://github.com/Xemorph/iso8583/",
     "source_branch":            "main",
     "source_directory":         "include/",
     "footer_icons": [
         {
             "name":  "GitHub",
-            "url":   "https://github.com/YOUR-ORG/libiso8583",
+            "url":   "https://github.com/Xemorph/iso8583",
             "html":  """<svg …/>""",
             "class": "fa-brands fa-github",
         },
     ],
 }
 
-# ── Breathe: point at Doxygen XML output ─────────────────────────────────────
+# ── Breathe: auf die Doxygen-XML-Ausgabe zeigen ───────────────────────────────
 breathe_projects        = {"libiso8583": "./_doxygen/xml"}
 breathe_default_project = "libiso8583"
 
-# ── MyST: allow Markdown features ────────────────────────────────────────────
+# ── MyST: Markdown-Erweiterungen erlauben ─────────────────────────────────────
 myst_enable_extensions = [
     "colon_fence",
     "deflist",
@@ -72,8 +79,8 @@ myst_enable_extensions = [
 ]
 myst_heading_anchors = 3
 
-# ── Auto-run Doxygen before Sphinx builds (optional) ─────────────────────────
-# Uncomment if you want `sphinx-build` to also run doxygen automatically.
+# ── Doxygen automatisch vor Sphinx-Builds ausführen (optional) ────────────────
+# Kommentar entfernen, wenn `sphinx-build` Doxygen automatisch ausführen soll.
 #
 # def run_doxygen(_):
 #     repo_root = Path(__file__).parent.parent

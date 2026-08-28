@@ -4,6 +4,8 @@ out/
 cmake-build-*/
 
 # -- vcpkg --------------------------------------------------------------------
+vcpkg
+vcpkg/
 vcpkg_installed/
 
 # -- CMake --------------------------------------------------------------------
@@ -14,6 +16,8 @@ install_manifest.txt
 CTestTestfile.cmake
 Testing/
 _deps/
+.cache/
+__cmake_systeminformation/
 
 # -- MSVC / Visual Studio -----------------------------------------------------
 *.sln
@@ -45,6 +49,7 @@ _deps/
 .vs/
 .vscode/
 .idea/
+.zed/
 *.swp
 *.swo
 *~

@@ -1,18 +1,18 @@
 libiso8583
 ==========
 
-C++17 library for parsing and building ISO 8583 financial messages.
+Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Getting started
+   :caption: Einstieg
 
    quickstart
    agents
 
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference
+   :caption: API-Referenz
 
    api/isomessage
    api/isospec
@@ -30,6 +30,6 @@ C++17 library for parsing and building ISO 8583 financial messages.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Project
+   :caption: Projekt
 
    changelog

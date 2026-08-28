@@ -13,13 +13,13 @@
 
 /// @brief The C++ namespace used by libiso8583.
 ///
-/// All public types live in this namespace (`iso8583::ISOMessage`, `iso8583::log::Level`, …).
+/// All public types live in this namespace (`iso8583::Message`, `iso8583::log::Level`, …).
 /// The macro allows downstream consumers to rename the namespace if required,
-/// though the default `tng` is strongly recommended.
+/// though the default `iso8583` is strongly recommended.
 #define TNG_NAMESPACE iso8583
 
 /// @brief Library version string in `MAJOR.MINOR.PATCH-STAGE` format.
-#define TNG_CORE_VERSION   "0.1.1-alpha"
+#define TNG_CORE_VERSION   "0.2.0"
 
 // ── DLL visibility ───────────────────────────────────────────────────────────
 //
@@ -102,11 +102,11 @@ namespace TNG_NAMESPACE {
     /// Standardmäßig `int16_t` (Bereich -32768…32767). Wird `ISO8583_BERTLV`
     /// definiert (oder `ISO8583_KEY_TYPE` explizit gesetzt), ist der Typ
     /// stattdessen `int32_t` (bzw. der explizit gewählte Typ) - siehe oben.
-    /// Special value −1 is used for the root `ISOMessage` that is not itself
-    /// a sub-field, and −2 is used internally for TLV TCC fields.
+    /// Sonderwert -1 steht für die Wurzel-Message, die selbst kein Sub-Feld
+    /// ist; -2 ist intern für TLV-TCC-Felder reserviert.
     using key_type = ISO8583_KEY_TYPE;
 }
-/// @brief Backward-compatible macro alias for `tng::key_type`.
+/// @brief Backward-compatible macro alias for `iso8583::key_type`.
 ///
 /// Existing code that uses `TNG_KEY_TYPE` continues to work unchanged.
 #define TNG_KEY_TYPE ::TNG_NAMESPACE::key_type

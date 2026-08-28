@@ -1,70 +1,70 @@
-# Documentation setup for libiso8583
+# Doku-Aufbau für libiso8583
 
-## Prerequisites
+## Voraussetzungen
 
 ```bash
-# Doxygen (C++ XML extraction)
+# Doxygen (C++-XML-Extraktion)
 sudo apt install doxygen graphviz    # Linux
 brew install doxygen graphviz        # macOS
 choco install doxygen.install        # Windows
 
-# Python tools (Sphinx + Breathe + theme)
+# Python-Tools (Sphinx + Breathe + Theme)
 pip install -r docs/requirements.txt
 ```
 
-## Build locally
+## Lokaler Build
 
 ```bash
-# 1. Run Doxygen — extracts C++ API into docs/_doxygen/xml/
+# 1. Doxygen ausführen – extrahiert die C++-API nach docs/_doxygen/xml/
 doxygen docs/Doxyfile
 
-# 2. Run Sphinx — renders HTML into docs/_build/html/
+# 2. Sphinx ausführen – rendert das HTML nach docs/_build/html/
 sphinx-build -b html docs docs/_build/html
 
-# Open in browser
+# Im Browser öffnen
 open docs/_build/html/index.html      # macOS
 xdg-open docs/_build/html/index.html # Linux
 start docs/_build/html/index.html     # Windows
 ```
 
-## Structure
+## Struktur
 
 ```
 docs/
-├── Doxyfile                  ← Doxygen config (reads include/, outputs XML)
-├── conf.py                   ← Sphinx config (Breathe + Furo + MyST)
-├── requirements.txt          ← pip dependencies
-├── index.rst                 ← Table of contents
-├── quickstart.md             ← Getting started guide
-├── agents.md                 ← AI agent reference (wraps include/AGENTS.md)
-├── changelog.md
+├── Doxyfile                  ← Doxygen-Konfiguration (liest include/, schreibt XML)
+├── conf.py                   ← Sphinx-Konfiguration (Breathe + Furo + MyST)
+├── requirements.txt          ← pip-Abhängigkeiten
+├── index.rst                 ← Inhaltsverzeichnis
+├── quickstart.md             ← Einstieg (Installation & Grundgebrauch)
+├── agents.md                 ← KI-Agenten-Referenz (bindet include/iso8583/AGENTS.md ein)
+├── changelog.md              ← Änderungsprotokoll (spiegelt CHANGELOG.md im Repo-Root)
 ├── api/
-│   ├── isomessage.rst        ← ISOMessage, field types, ISOUtils
-│   ├── isospec.rst           ← SpecDecoder::loadFromYaml
-│   ├── isolog.rst            ← Logging API
-│   ├── isoparser.rst         ← Custom parser base classes
-│   ├── codec.rst             ← Encoding enums
-│   └── interfaces.rst        ← Abstract base classes
+│   ├── isomessage.rst        ← ISOMessage, Feldtypen, ISOUtils
+│   ├── isospec.rst           ← YAML-Spec-Loader (SpecDecoder)
+│   ├── isolog.rst            ← Logging-API
+│   ├── isoparser.rst         ← Basisklassen für eigene Parser
+│   ├── codec.rst             ← Encoding-Enums
+│   └── interfaces.rst        ← Abstrakte Basisklassen
 └── internals/
-    ├── yaml_format.md        ← YAML spec format reference
-    └── encoding.md           ← Encoding system explanation
+    ├── yaml_format.md        ← Referenz für das YAML-Spezifikationsformat
+    └── encoding.md           ← Erläuterung des Encodings-Systems
 ```
 
-## Continuous deployment
+## Kontinuierliche Veröffentlichung
 
-The `.github/workflows/docs.yml` workflow:
-- Builds on every push that touches `include/` or `docs/`
-- Deploys to GitHub Pages automatically on push to `main`
+Der Workflow `.github/workflows/docs.yml`:
+- Baut bei jedem Push, der `include/` oder `docs/` betrifft
+- Veröffentlicht automatisch auf GitHub Pages bei Push auf `main`
 
-**Enable GitHub Pages:**
+**GitHub Pages aktivieren:**
 1. Repo → Settings → Pages
 2. Source → **GitHub Actions**
-3. Next push to `main` deploys automatically
+3. Der nächste Push auf `main` veröffentlicht automatisch
 
-## Updating the docs
+## Doku aktualisieren
 
-| What changed | What to do |
+| Was sich geändert hat | Was zu tun ist |
 |---|---|
-| C++ `///` doc comments in `include/` | Re-run Doxygen + Sphinx |
-| Prose in `docs/*.md` / `docs/*.rst` | Re-run Sphinx only |
-| `include/iso8583/AGENTS.md` | Re-run Sphinx (it is `{include}`d) |
+| C++-`///`-Dokukommentare in `include/` | Doxygen + Sphinx neu ausführen |
+| Fließtext in `docs/*.md` / `docs/*.rst` | Nur Sphinx neu ausführen |
+| `include/iso8583/AGENTS.md` | Sphinx neu ausführen (wird per `{include}` eingebunden) |

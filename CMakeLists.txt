@@ -1,7 +1,15 @@
 cmake_minimum_required(VERSION 3.21)
 
+# -----------------------------------------------------------------------------
+# Compile-Commands-Export für clangd / IDEs (Zed, VS Code + clangd, Neovim, ...)
+# -----------------------------------------------------------------------------
+# Erzeugt compile_commands.json in jedem Build-Tree (auch VS-Multiconfig-Trees).
+# clangd findet es über .clangd (root); ohne einen konfigurierten Build-Tree
+# greifen die Fallback-Flags aus .clangd.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 project(libiso8583
-    VERSION 0.1.1
+    VERSION 0.2.0
     DESCRIPTION "ISO 8583 financial transaction message parser/encoder"
     LANGUAGES CXX
 )
@@ -13,14 +21,23 @@ option(ISO8583_BUILD_SHARED   "Shared Library (.dll/.so) bauen"          ON)
 option(ISO8583_ENABLE_ICONV   "libiconv für EBCDIC-Konvertierung nutzen" ON)
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
+option(ISO8583_BUILD_EXAMPLES "Beispielprojekte bauen (tcp_gateway)"      OFF)
 option(ISO8583_BERTLV         "DE-Schlüsseltyp auf int32_t erweitern (für volle \
 BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie 9F26, die als Big-Endian-Wert \
 > 32767 nicht in int16_t passen)" OFF)
 
 # -----------------------------------------------------------------------------
-# C++17 global enforced
+# C++20 global enforced
+#
+# C++20 (nicht C++17) ist Pflicht, weil _codec_impl.hh constexpr-Funktionen
+# (as<>/to<>) enthält, die lokale std::string/std::vector-Objekte konstruieren.
+# std::string/std::vector sind erst seit C++20 (P0980: Container als
+# literal type, mit libstdc++-12/clang-13+) als constexpr zulässig.
+# Ältere GCC-11-/C++17-Combos können die Header daher nicht instanziieren
+# (GCC-11: static_assert in verworfener if-constexpr; GCC-12/clang-13:
+# "variable of non-literal type ... cannot be defined in a constexpr function").
 # -----------------------------------------------------------------------------
-set(CMAKE_CXX_STANDARD          17)
+set(CMAKE_CXX_STANDARD          20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
 
@@ -356,4 +373,11 @@ endif()
 if(ISO8583_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# -----------------------------------------------------------------------------
+# Beispiele (optional, z.B. minimaler TCP-Gateway)
+# -----------------------------------------------------------------------------
+if(ISO8583_BUILD_EXAMPLES)
+    add_subdirectory(examples/tcp_gateway)
 endif()

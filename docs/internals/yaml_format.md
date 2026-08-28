@@ -1,27 +1,27 @@
-# YAML spec format
+# YAML-Spezifikationsformat
 
-## Minimal spec
+## Minimale Spec
 
 ```yaml
-spec:     "My Spec"
+spec:     "Meine Spec"
 encoding: ebcdic       # global: ascii | bcd | ebcdic | binary
 
 fields:
-  "000":               # MTI — always slot 000
+  "000":               # MTI — immer Slot 000
     type: scalar
     format: numeric
     length: 4
-  "001":               # Primary bitmap — always slot 001
+  "001":               # Primär-Bitmap — immer Slot 001
     type: scalar
     format: bitmap
     length: 8
-  "002":               # Primary Account Number
+  "002":               # Primäre Kontonummer
     type: scalar
     format: llchar
     length: 19
 ```
 
-## Definitions and reuse
+## Definitionen und Wiederverwendung
 
 ```yaml
 definitions:
@@ -29,13 +29,13 @@ definitions:
     type: scalar
     format: llchar
     length: 19
-    description: "Primary Account Number"
+    description: "Primäre Kontonummer"
 
 fields:
   "002": !use pan_field
 ```
 
-## Multi-file specs
+## Multi-Datei-Specs
 
 ```yaml
 # mastercard.yml
@@ -47,35 +47,81 @@ spec: "Mastercard GMC"
 encoding: ebcdic
 
 fields:
-  "002": !use pan_field   # defined in base.yml
+  "002": !use pan_field   # in base.yml definiert
 ```
 
-## Directives
+## Direktiven
 
-| Directive | Effect |
+| Direktive | Wirkung |
 |---|---|
-| `!include_files [a.yml, b.yml]` | Load external files; merge their `definitions` |
-| `!use <name>` | Substitute a named definition |
-| `!template P(F, N)` | Variable-length shorthand, e.g. `LL(CHAR, 19)` |
-| `!merge [...]` | Merge maps; later entries overwrite earlier ones |
-| `!include <name>` | Deprecated alias for `!use` |
+| `!include_files [a.yml, b.yml]` | Externe Dateien laden; deren `definitions` werden zusammengeführt |
+| `!use <name>` | Benannte Definition substituieren |
+| `!template P(F, N)` | Kurzschreibweise für variable Länge, z. B. `LL(CHAR, 19)` |
+| `!merge [...]` | Maps zusammenführen; spätere Einträge überschreiben frühere |
+| `!include <name>` | Veralteter Alias für `!use` |
 
-## Format reference
+## Format-Referenz
 
-| Format | Description |
+Die Tabelle spiegelt die Parser-Dispatch-Tabelle aus `src/_spec.cc`
+(`parserTable()`). Formate sind groß-/kleinschreibungsunabhängig; der
+Effekt des Format-Strings hängt vom aufgelösten Encoding ab
+(Feld-Encoding > globales `encoding` > leer).
+
+### Encoding-neutral
+
+Diese Formate lesen/schreiben immer Rohtext, unabhängig von jeder
+Encoding-Einstellung:
+
+| Format | Parser | Beschreibung |
+|---|---|---|
+| `binary` (fixe Länge) | `IF_BINARY` | Rohe Bytes, keine Präfix-Logik |
+| `bitmap` | `IFB_BITMAP` | Primäre oder sekundäre Bitmap |
+| `nop` / `unused` | `IF_NOP` | Skip/Platzhalter, keine Bytes verbraucht |
+| `remaining` | `IF_REMAINING` / `IFE_REMAINING` | Alle restlichen Bytes des Eltern-Buffers |
+
+> **Hinweis:** `LBINARY`, `LLBINARY`, `LLLBINARY` (und `LLLLBINARY`)
+> sind **nicht** encoding-neutral, da ihr Längen-Präfix das
+> Spec-Encoding (EBCDIC/BCD/ASCII) verwendet.
+
+### ASCII
+
+| Format | Parser | Beschreibung |
+|---|---|---|
+| `numeric` | `IFA_NUMERIC` | ASCII-Ziffern |
+| `char` | `IFA_CHAR` | ASCII-Zeichenkette |
+| `nopad_char` | `IFA_NOPAD_CHAR` | ASCII-Zeichenkette ohne Padding |
+| `lchar` … `llllchar` | `IFA_LCHAR` … | 1–4-stelliges ASCII-Längenpräfix + `char`-Daten |
+| `lnum` / `llnum` | `IFA_LNUM` / `IFA_LLNUM` | 1/2-stelliges ASCII-Längenpräfix + Ziffern |
+| `lbinary` … `lllbinary` | `IFA_LBINARY` … | ASCII-Längenpräfix + Binärdaten |
+
+### BCD
+
+| Format | Parser | Beschreibung |
+|---|---|---|
+| `numeric` | `IFB_NUMERIC` | BCD-Ziffern (2 Ziffern/Byte) |
+| `lchar` / `llchar` / `lllchar` | `IFB_LCHAR` … | BCD-Längenpräfix + BCD-Zeichendaten |
+| `lbinary` … `lllbinary` | `IFB_LBINARY` … | BCD-Längenpräfix + Binärdaten |
+
+### EBCDIC
+
+| Format | Parser | Beschreibung |
+|---|---|---|
+| `binary` / `lbinary` … `llllbinary` | `IFE_BINARY` … | EBCDIC-Längenpräfix + Binärdaten |
+| `numeric` / `lnum` | `IFE_NUMERIC` / `IFE_LNUM` | EBCDIC-Ziffern |
+| `char` / `nopad_char` | `IFE_CHAR` / `IFE_NOPAD_CHAR` | EBCDIC-Zeichenketten |
+| `lchar` / `llchar` / `lllchar` | `IFE_LCHAR` … | EBCDIC-Längenpräfix + EBCDIC-Zeichendaten |
+
+### TLV / BER-TLV
+
+| Format | Beschreibung |
 |---|---|
-| `numeric` | BCD or ASCII/EBCDIC digits |
-| `char` | Character string |
-| `binary` | Raw bytes (fixed length, encoding-neutral) |
-| `bitmap` | Primary or secondary bitmap |
-| `nop` | Skip / placeholder (no bytes consumed) |
-| `llchar` | 2-digit length prefix + char data |
-| `lllchar` | 3-digit length prefix + char data |
-| `llbinary` | 2-digit length prefix + binary data |
-| `lllbinary` | 3-digit length prefix + binary data |
-| `remaining` | All remaining bytes of the parent buffer |
+| `tlv` (über `tlv:`-Knoten) | Festes TLV mit `tag_bytes`, `len_bytes`, `tcc` (Mastercard/Visa-SE) |
+| `...bertlv` (z. B. `lllbertlv`) | Dynamischer BER-TLV/EMV-Tags; die Kinderliste entfällt, das Präfix verhält sich wie `...binary` |
 
-## Nested fields
+Präfix-Zeichen: `L` (max. 9), `LL` (max. 99), `LLL` (max. 999),
+`LLLL` (max. 9999).
+
+## Verschachtelte Felder
 
 ```yaml
 "061":
@@ -89,26 +135,24 @@ fields:
     - format: numeric
       length: 1
       description: "POS Terminal Attendance"
-    - format: remaining          # trailing optional field — no length prefix
+    - format: remaining          # optionales Schlussfeld — kein Längenpräfix
       description: "POS Postal Code"
 ```
 
-Access nested fields via dot-notation:
+Verschachtelte Felder werden über Punkt-Notation adressiert:
 
 ```cpp
-msg->set("61.1", "0");   // sub-field 1 of DE61
+msg->set("61.1", "0");   // Unterfeld 1 von DE61
 ```
 
-## Template shorthand
+## Template-Kurzschreibweise
 
 ```yaml
 "002": !template LL(CHAR, 19)
-# expands to: { type: scalar, format: LLCHAR, length: 19 }
+# expandiert zu: { type: scalar, format: LLCHAR, length: 19 }
 
 "055":
   !merge
   - !template LLL(BINARY, 255)
   - description: "ICC / EMV Data"
 ```
-
-Prefix letters: `L` (max 9), `LL` (max 99), `LLL` (max 999), `LLLL` (max 9999).

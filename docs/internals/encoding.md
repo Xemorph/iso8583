@@ -1,26 +1,32 @@
-# Encoding system
+# Encoding-System
 
-## Resolution order
+## Auflösungsreihenfolge
 
 ```
-Field encoding  >  Global YAML encoding  >  "" (encoding-neutral formats only)
+Feld-Encoding  >  globales YAML-Encoding  >  "" (nur für encoding-neutrale Formate)
 ```
 
-## Encoding-neutral formats
+Jedes Feld-Ergebnis entsteht in `resolveEncoding()`:
+encoding-neutrale Formate liefern immer das leere Encoding, alle
+anderen Formate übernehmen das optionale Feld-`encoding` oder das
+globale `encoding` der Spec.
 
-The following formats always read/write raw bytes, regardless of any encoding
-setting.  They do not use the global encoding and do not have an encoding-aware
-length prefix:
+## Encoding-neutrale Formate
 
-- `BINARY` (fixed length, no prefix)
+Die folgenden Formate lesen/schreiben immer Rohtext, unabhängig von
+jeder Encoding-Einstellung. Sie verwenden weder das globale Encoding
+noch ein encoding-awarees Längenpräfix:
+
+- `BINARY` (fixe Länge, kein Präfix)
 - `BITMAP`
 - `NOP` / `UNUSED`
 - `REMAINING`
 
-**Note:** `LBINARY`, `LLBINARY`, `LLLBINARY`, `LLLLBINARY` are **not** encoding-neutral
-because their length prefix uses the spec encoding (EBCDIC/BCD/ASCII).
+**Hinweis:** `LBINARY`, `LLBINARY`, `LLLBINARY`, `LLLLBINARY` sind
+**nicht** encoding-neutral, da ihr Längenpräfix das Spec-Encoding
+(EBCDIC/BCD/ASCII) verwendet.
 
-## Per-field override
+## Feldweise Override
 
 ```yaml
 spec:     "Mixed Spec"
@@ -29,16 +35,24 @@ encoding: ebcdic        # global
 fields:
   "002":
     format: numeric
-    encoding: bcd        # overrides global for this field only
+    encoding: bcd        # überschreibt global nur für dieses Feld
   "052":
-    format: binary       # encoding-neutral — ignores global
+    format: binary       # encoding-neutral — ignoriert global
 ```
 
-## Encoding values
+## Encoding-Werte
 
-| Value | Length prefix | Data |
+| Wert | Längenpräfix | Daten |
 |---|---|---|
-| `ascii` | ASCII digits `'0'`–`'9'` | ASCII text |
-| `bcd` | BCD nibbles | BCD-encoded digits |
-| `ebcdic` | EBCDIC digits `0xF0`–`0xF9` | EBCDIC text |
-| `binary` | Big-endian bytes | Raw bytes |
+| `ascii` | ASCII-Ziffern `'0'`–`'9'` | ASCII-Text |
+| `bcd` | BCD-Nibbles | BCD-kodierte Ziffern |
+| `ebcdic` | EBCDIC-Ziffern `0xF0`–`0xF9` | EBCDIC-Text |
+| `binary` | Big-Endian-Bytes | Rohe Bytes |
+
+## Kinder-Vererbung
+
+Encoding-neutrale Felder geben das **globale** Encoding an ihre
+Kinder weiter; encoding-bewusste Felder geben ihr eigenes
+aufgelöstes Encoding weiter. Dadurch bleibt eine EBCDIC- oder BCD-
+Spec konsistent, auch wenn zwischengeschaltete Container (z. B. ein
+`binary`-DE) encoding-neutral sind.

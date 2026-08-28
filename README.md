@@ -1,6 +1,6 @@
 # libiso8583
 
-Eine C++17-Bibliothek zum **Parsen und Erzeugen von ISO-8583-Finanznachrichten**
+Eine C++20-Bibliothek zum **Parsen und Erzeugen von ISO-8583-Finanznachrichten**
 — dem Protokoll, das Visa, Mastercard und die meisten Zahlungsnetzwerke nutzen.
 
 Nachrichtenformate werden deklarativ über YAML-Spec-Dateien beschrieben, nicht
@@ -27,7 +27,7 @@ einem anderen Kontext einsetzt.**
 
 ## Voraussetzungen
 
-- C++17-fähiger Compiler (GCC, Clang, MSVC)
+- C++20-fähiger Compiler (GCC, Clang, MSVC)
 - CMake ≥ 3.21
 - [vcpkg](https://vcpkg.io) im Manifest-Modus (Abhängigkeiten werden über
   `vcpkg.json` automatisch aufgelöst)
@@ -52,6 +52,30 @@ Wichtige CMake-Optionen (siehe `CMakeLists.txt`):
 | `ISO8583_BUILD_TESTS`  | `OFF` | Unit-Tests bauen (benötigt Catch2) |
 | `ISO8583_BERTLV`       | `OFF` | DE-Schlüsseltyp auf `int32_t` erweitern (volle BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie `9F26`) |
 | `ISO8583_INSTALL`      | `ON` | Install-Targets erzeugen |
+
+## IDE-Integration (clangd / Zed / VS Code + clangd)
+
+Das Repo enthält eine [`.clangd`](.clangd)-Konfiguration, damit IDEs mit
+clangd-Integration (Zed, VS Code + clangd-Erweiterung, Neovim, Emacs, KDevelop,
+…) die `iso8583/`-Header **ohne MSVC-Werkzeugkette** finden:
+
+- **Mit Build-Tree (empfohlen):** Nach `cmake --preset debug` liegt eine
+  `compile_commands.json` in `build/debug/` (Export wird durch
+  `CMAKE_EXPORT_COMPILE_COMMANDS ON` in der Root-`CMakeLists.txt` aktiviert).
+  `.clangd` verweist per `CompilationDatabase: build/debug` darauf — clangd
+  liest damit die echten Compile-Commands, inklusive aller vcpkg-Header
+  (`fmt`, `nlohmann-json`, `ryml`, `robin-map`) und der `ISO8583_DLL`/BERTLV-
+  Definitionen. Arbeitest du in einem anderen Tree (z.B. `release` oder
+  `debug-bertlv`), einfach diese eine Zeile in `.clangd` umstellen.
+- **Ohne Build-Tree (frisch geklont):** Greifen die Fallback-Flags aus
+  `.clangd` (`-std=c++20`, `-Iinclude`, `-Isrc`). Damit sind die öffentlichen
+  Header und die gebündelten extern-Header vollständig nutzbar; vcpkg-Header
+  (u.a. `nlohmann/json.hpp`) fehlen erst, bis ein Build-Tree konfiguriert ist.
+
+Hinweis: Die MSVC-Commands des Build-Trees nutzen die mitgelieferte MSVC-
+Standardbibliothek. Sehr alte clangd-Versionen (getestet: 17) stoßen mit
+MSVC-2026-STL-Headern auf `STL1000: Unexpected compiler version` — Zeds
+eingebundenes clangd (aktuell 20+) ist davon nicht betroffen.
 
 ## Einbindung in ein anderes CMake-Projekt
 

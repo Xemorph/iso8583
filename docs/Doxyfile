@@ -1,13 +1,13 @@
-# Doxyfile for libiso8583
-# Doxygen parses the C++ headers and produces XML that Breathe feeds into Sphinx.
-# Run: doxygen docs/Doxyfile  (from the repo root)
+# Doxyfile für libiso8583
+# Doxygen parst die C++-Header und erzeugt XML, das Breathe an Sphinx weitergibt.
+# Aufruf: doxygen docs/Doxyfile  (ab Repo-Root)
 
 PROJECT_NAME           = "libiso8583"
-PROJECT_NUMBER         = "0.1.1-alpha"
-PROJECT_BRIEF          = "C++17 ISO 8583 financial message parser and builder"
+PROJECT_NUMBER         = "0.2.0"
+PROJECT_BRIEF          = "C++20 ISO 8583 Finanznachrichten-Parser und -Builder"
 PROJECT_LOGO           =
 
-# Output: only XML (Sphinx/Breathe reads this, not the HTML)
+# Ausgabe: nur XML (davon liest Sphinx/Breathe, nicht das HTML)
 OUTPUT_DIRECTORY       = docs/_doxygen
 GENERATE_HTML          = NO
 GENERATE_LATEX         = NO
@@ -15,44 +15,45 @@ GENERATE_XML           = YES
 XML_OUTPUT             = xml
 XML_PROGRAMLISTING     = YES
 
-# Input: only the public headers
+# Eingang: nur die öffentlichen Header
 INPUT                  = include/iso8583
 FILE_PATTERNS          = *.hh *.h
 RECURSIVE              = YES
 
-# Exclude legacy and extern third-party files
+# Legacy- und externe Third-Party-Dateien ausschließen
 EXCLUDE_PATTERNS       = */detail/extern/* \
                          *.LEGACY
 EXCLUDE                = include/iso8583/detail/extern
 
-# Extract everything – including undocumented members
+# Alles extrahieren – auch ungedokumentete Mitglieder
 EXTRACT_ALL            = YES
 EXTRACT_PRIVATE        = NO
 EXTRACT_STATIC         = YES
 
-# Markdown support
+# Markdown-Support
 MARKDOWN_SUPPORT       = YES
 AUTOLINK_SUPPORT       = YES
 
-# Brief/detail parsing
-# QT_AUTOBRIEF + JAVADOC_AUTOBRIEF both OFF: avoids Breathe crash on
-# docSect2TypeSub nodes that occur when Doxygen parses @code blocks inside
-# sections created by autobrief splitting on the first period.
+# Brief/Detail-Verarbeitung
+# QT_AUTOBRIEF + JAVADOC_AUTOBRIEF beide aus: verhindert einen Breathe-Crash
+# an docSect2TypeSub-Knoten, die entstehen, wenn Doxygen @code-Blöcke in
+# Abschnitten parst, die durch Autobrief am ersten Punkt geteilt werden.
 JAVADOC_AUTOBRIEF      = NO
 QT_AUTOBRIEF           = NO
 MULTILINE_CPP_IS_BRIEF = NO
 
-# Disable @section/@subsection processing to prevent Breathe's
-# 'docSect2TypeSub has no attribute title' bug (Breathe issue #830).
-# All sectioning in /// comments should use plain prose instead.
+# @section/@subsection-Auswertung deaktiviert, um den Breathe-Bug
+# 'docSect2TypeSub has no attribute title' zu vermeiden (Breathe-Issue #830).
+# Abschnittsgliederung in ///-Kommentaren sollte stattdessen in Fließtext erfolgen.
 ALIASES                = "section{1}=\par \1" \
                          "subsection{1}=\par \1"
 
-# Make Doxygen understand C++17
+# Doxygen soll C++20 verstehen
 EXTENSION_MAPPING      = hh=C++ h=C++
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
+# Makronamen entsprechen den Quellen in include/iso8583/config.h – nicht ändern.
 PREDEFINED             = TNG_EXPORT= \
                          TNG_NAMESPACE=iso8583 \
                          TNG_KEY_TYPE=int16_t \
@@ -61,7 +62,7 @@ PREDEFINED             = TNG_EXPORT= \
                          "ISOParserPtrBaseSmartPtr=std::shared_ptr<ISOParserPtrBase>" \
                          "ISOHeaderSmartPtr=std::shared_ptr<ISOHeader>"
 
-# Warnings
+# Warnungen
 WARN_IF_UNDOCUMENTED   = YES
 WARN_NO_PARAMDOC       = NO
 QUIET                  = NO

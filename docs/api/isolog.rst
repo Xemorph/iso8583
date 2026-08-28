@@ -1,5 +1,10 @@
-ISOLog — Logging API
+ISOLog — Logging-API
 ====================
+
+Die Bibliothek protokolliert intern über den abstrakten Logger
+``ISOLogger``. Standardmäßig wird die Konsole mit
+``Level::WARN`` verwendet; per ``setLevel`` lässt sich der
+Level ändern oder das Logging vollständig stilllegen.
 
 .. doxygenenum:: iso8583::log::Level
    :project: libiso8583
@@ -7,13 +12,6 @@ ISOLog — Logging API
 .. doxygenclass:: iso8583::log::ISOLogger
    :project: libiso8583
    :members:
-
-.. note::
-
-   ``tng::log::QuillBridge`` is a header-only class activated only when
-   ``<quill/LogMacros.h>`` is included before ``ISOLog.hh`` (i.e. when
-   ``QUILL_VERSION`` is defined).  It is not extracted by Doxygen in a
-   standard build — see :ref:`quickstart:logging` for usage.
 
 .. doxygenfunction:: iso8583::log::setLevel
    :project: libiso8583
@@ -23,3 +21,15 @@ ISOLog — Logging API
 
 .. doxygenfunction:: iso8583::log::setLogger
    :project: libiso8583
+
+.. doxygenfunction:: iso8583::log::setQuillLogger
+   :project: libiso8583
+
+.. note::
+
+   ``iso8583::log::QuillBridge`` ist eine header-only-Klasse, die
+   nur aktiv ist, wenn ``<quill/LogMacros.h>`` vor ``ISOLog.hh``
+   eingebunden wird (d. h. ``QUILL_VERSION`` definiert ist). In
+   einem Standard-Build extrahiert Doxygen sie nicht – die
+   Verwendung ist in der Logging-Sektion von :doc:`../quickstart`
+   beschrieben.

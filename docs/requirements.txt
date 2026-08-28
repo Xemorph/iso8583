@@ -1,4 +1,4 @@
-# Python dependencies for building the documentation
+# Python-Abhängigkeiten für den Build der Dokumentation
 # pip install -r docs/requirements.txt
 
 sphinx>=7.0
