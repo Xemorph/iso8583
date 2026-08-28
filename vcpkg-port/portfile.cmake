@@ -1,6 +1,6 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO            your-org/libiso8583        # ← Bitte anpassen
+    REPO            Xemorph/iso8583
     REF             v${VERSION}
     SHA512          0                          # ← Nach erstem Tag befüllen
     HEAD_REF        main
