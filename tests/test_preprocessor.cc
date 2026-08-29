@@ -291,6 +291,50 @@ fields:
     REQUIRE_NOTHROW(spec::SpecDecoder::loadFromYaml(spec_path));
 }
 
+TEST_CASE("Preprocessor - !merge-seq definition from !include_files file survives same-tree merge", "[preprocessor][include_files][merge]") {
+    // Regressionsfall: Eine Definition, deren Wert eine !merge-fuehrende SEQ
+    // ist (Form `d: !merge` / `- type: scalar` / `- !template ...`), verlor
+    // bei der same-tree merge_with() in rapidyaml v0.15.2 das val_tag.
+    // processUse() erkannte das Feld daraufhin nicht mehr, und SpecDecoder
+    // schmierte: 'Unbekannte Format/Encoding-Kombination ... format: <leer>'.
+    // Reproduktion des echten Falls (bmp_35 'Track 2 Data' in gmc.yml).
+    TempDir dir;
+
+    dir.write("defs.yml", R"(
+definitions:
+  track2:
+    !merge
+    - type: scalar
+    - !template LL(CHAR, 37)
+    - description: "Track 2 Data"
+)");
+
+    auto spec_path = dir.write("spec.yml", R"(
+!include_files
+- defs.yml
+---
+spec: "Merge-Sek Def Test"
+encoding: EBCDIC
+
+fields:
+  "000":
+    type: scalar
+    format: numeric
+    length: 4
+  "035": !use track2
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(spec_path);
+    REQUIRE(parser != nullptr);
+    REQUIRE(spec != nullptr);
+    auto track2 = spec->field(35);
+    REQUIRE(track2.has_value());
+    CHECK(track2->format.type == "CHAR");
+    CHECK(track2->format.prefix_digits == 2);
+    CHECK(track2->format.max_length == 37);
+    CHECK(track2->description == "Track 2 Data");
+}
+
 // =============================================================================
 // Fehlerbehandlung
 // =============================================================================

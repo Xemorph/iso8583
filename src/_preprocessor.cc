@@ -618,6 +618,22 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                             propagateOrigins(def, out, wsOrigins, wsOrigins);
                             out.set_key(def.key());  // ZULETZT (siehe KRITISCHE REGEL)
 
+                            // ryml-Quirk (empirisch in v0.15.2 verifiziert): Eine
+                            // SAME-TREE merge_with() (src und dst beide in ws)
+                            // entwertet das val_tag eines SEQ-Wertes - nach der
+                            // Kopie bleibt has_val_tag() true, liefert aber ein
+                            // LEERES val_tag() zurueck. Eine Definition, deren
+                            // Wert eine !merge-fuehrende Seq ist (klassische
+                            // "Track 2 Data"-Form: `d: !merge / - type: scalar`),
+                            // verliert so ihr Tag; processUse() erkennt es nicht
+                            // mehr, und das Feld landet als kaputte Seq mit
+                            // leeren First-Child (format: '' / <dummy>). Der
+                            // fields-Pfad ist unbeeindruckt (er schreibt via
+                            // processNode() neu); hier wird das Tag aus dem
+                            // weiterhin lesbaren Quelldokument wiederhergestellt.
+                            if (def.has_val_tag() && !def.val_tag().empty())
+                                out.set_val_tag(def.val_tag());
+
                             defOrigins[defName] = absStr;
                         }
                     }
