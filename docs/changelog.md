@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1
+
+### Bugfix: `!merge`-Tag bei Sequenz-Definitionen ging beim Vorverarbeiten verloren
+
+Felder, die über `!use` auf eine `!merge`-Definition referenzieren, deren Wert
+eine **Sequenz** ist (z. B. `bmp_35: !merge` → Liste aus `!template`-/
+`scalar`-Einträgen), wurden nicht mehr expandiert. Die Definitions-Extraktion
+verwendet eine gleichbaum-interne `merge_with()` des rapidyaml-Parsers
+(v0.15.2), die anschließend das `!merge`-Val-Tag des Zielknotens leerstellt —
+obwohl `has_val_tag()` weiter `true` meldet. Map-basierte Definitionen waren
+nicht betroffen, deshalb fiel der Fehler nur bei sequenziellen `!merge`-
+Definitionen auf. Die ungeexpandierte Sequenz erreichte den SpecDecoder,
+deren erstes Element ohne `format` (leer) blieb: fünf `<dummy>`-WARNs gefolgt
+von `ERR Unbekannte Format/Encoding-Kombination`.
+
+Behoben, indem das Val-Tag nach der Extraktion aus dem (weiterhin lesbaren)
+Quellknoten wiederhergestellt wird, bevor der Self-Merge es leeren kann.
+Ergänzend ein Regressionstest, der das reale Muster (`!merge`-Sequenz-
+Definition in einer `!include_files`-Datei, per `!use` referenziert)
+abdeckt. Keine Änderung an bestehenden Specs nötig.
+
 ## 0.2.0
 
 ### Neu: hexadezimale Tag-Notation für BER-TLV `children`

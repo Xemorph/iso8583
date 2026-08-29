@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.21)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(libiso8583
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "ISO 8583 financial transaction message parser/encoder"
     LANGUAGES CXX
 )
