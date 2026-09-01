@@ -1,6 +1,6 @@
 {
   "name": "libiso8583",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "builtin-baseline": "1f5e0348089e8a9b187f57d42866ebc871e815da",
   "dependencies": [
     "nlohmann-json",

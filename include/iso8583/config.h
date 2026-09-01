@@ -19,7 +19,7 @@
 #define TNG_NAMESPACE iso8583
 
 /// @brief Library version string in `MAJOR.MINOR.PATCH-STAGE` format.
-#define TNG_CORE_VERSION   "0.2.0"
+#define TNG_CORE_VERSION   "0.2.1"
 
 // ── DLL visibility ───────────────────────────────────────────────────────────
 //
@@ -111,9 +111,16 @@ namespace TNG_NAMESPACE {
 /// Existing code that uses `TNG_KEY_TYPE` continues to work unchanged.
 #define TNG_KEY_TYPE ::TNG_NAMESPACE::key_type
 
-// A higher step? The users can decide themself which map they gonna use, but the map must have
-// a KEY_TYPE and a VALUE_TYPE. Where the VALUE_TYPE is fix 'std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase >'
-//#define TNG_MAP_TYPE std::unordered_map< TNG_KEY_TYPE, TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr >
+// ── Field map type ───────────────────────────────────────────────────────────
+//
+// ISO_MAP (defined in detail/_components.hh) is a FIXED typedef:
+//
+//   typedef detail::flat_map<TNG_KEY_TYPE, std::shared_ptr<ISOComponentPtrBase>> ISO_MAP;
+//   (detail::flat_map is an alias for tsl::robin_map)
+//
+// It is NOT user-configurable: the container is part of the public API
+// (Message::value()/keys()) and of the library ABI. There is no TNG_MAP_TYPE
+// hook — do not attempt to redefine or replace the map type.
 
 
 // ── Template helper ──────────────────────────────────────────────────────────
