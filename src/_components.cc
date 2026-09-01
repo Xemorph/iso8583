@@ -572,11 +572,31 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::parse(::TNG_NAMESPACE::ISOCompon
     if (!p_) return {};
 
     recalcBitmap();
-    return p_->parse(c);
+    try {
+        return p_->parse(c);
+    } catch (const std::exception& e) {
+        // Letztes Netz (Encode-Richtung): nicht bereits positionierte Fehler
+        // (z.B. EILSEQ aus iconv) sauber und kontextreich neu werfen.
+        if (std::string(e.what()).rfind("[ISO8583]", 0) == 0)
+            throw;
+        throw std::runtime_error(std::string("[ISO8583] ISOMessage::parse: ") + e.what());
+    }
 }
 
 std::size_t TNG_NAMESPACE::ISOMessage::unparse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c, const std::vector<uint8_t>& b) {
-    return (p_ ? p_->unparse(c, b) : SIZE_MAX);
+    if (!p_) return SIZE_MAX;
+    try {
+        return p_->unparse(c, b);
+    } catch (const std::exception& e) {
+        // Letztes Netz (Decode-Richtung): jeder Fehler, der nicht bereits von
+        // ISOBaseParser positioniert wurde, wird als sauberes std::runtime_error
+        // mit Kontext neu geworfen – ein nackter std::system_error mit
+        // "unknown error" (MSVC-strerror-Besonderheit bei POSIX-errno-Werten)
+        // darf die Bibliothek nie verlassen.
+        if (std::string(e.what()).rfind("[ISO8583]", 0) == 0)
+            throw;
+        throw std::runtime_error(std::string("[ISO8583] ISOMessage::unparse: ") + e.what());
+    }
 }
 
 void TNG_NAMESPACE::ISOMessage::header(const std::vector<uint8_t>& b) {

@@ -65,7 +65,16 @@ namespace iconv_wrapper
 
     void iconv::reset(void) const noexcept
     {
-        ::iconv(convdesc, nullptr, nullptr, nullptr, nullptr);
+        // POSIX/libiconv: der Reset wird ausgelöst, wenn *inbuf UND *outbuf
+        // auf NULL zeigen — es also Zeiger AUF Null-Pointer übergeben werden.
+        // Der frühere Aufruf iconv(cd, nullptr, nullptr, nullptr, nullptr)
+        // übergeben die Null-Pointer selbst und löste den Reset NICHT aus;
+        // der zustandsbehaftete IBM-1047-Konverter trug seinen Shift/Escape-
+        // Zustand daher von Konvertierung zu Konvertierung mit (Cross-Field-
+        // Kontamination, s. issues/a).
+        char* pin = nullptr;
+        char* pout = nullptr;
+        ::iconv(convdesc, &pin, nullptr, &pout, nullptr);
     }
 
     void iconv::do_iconv(std::string* pout,
@@ -92,7 +101,19 @@ namespace iconv_wrapper
                     *pinpos = (inbuf_tmp - inbuf);
                 }
                 pout->resize(outbuf - &pout->at(0));
-                throw std::system_error(errno, std::system_category());
+                // MSVCs strerror() kennt POSIX-Fehlerwerte wie EILSEQ nicht und
+                // liefert dort "unknown error". Wir geben die Bedeutung daher
+                // explizit mit, statt auf strerror() zu vertrauen.
+                // (EILSEQ: 42 auf Darwin/libiconv-Builds, 133 auf glibc)
+#ifndef EILSEQ
+                constexpr int EILSEQ = 42;
+#endif
+                const char* hint =
+                    (errno == EILSEQ) ? " (EILSEQ: ungueltige oder nicht abbildbare Byte-Sequenz)"
+                    : (errno == EINVAL) ? " (EINVAL: ungueltiges Argument)"
+                    : "";
+                throw std::system_error(errno, std::system_category(),
+                    "iconv() failed with errno=" + std::to_string(errno) + hint);
             }
             std::string::size_type pos = (outbuf - &pout->at(0));
             pout->resize(pout->size() * 2);

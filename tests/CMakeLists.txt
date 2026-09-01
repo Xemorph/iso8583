@@ -20,6 +20,7 @@ add_executable(libiso8583_tests
     test_tlv_parser.cc
     test_iso_utils.cc
     test_utils_protect.cc
+    test_incompatible_input.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über
@@ -41,6 +42,11 @@ target_link_libraries(libiso8583_tests
 target_include_directories(libiso8583_tests
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+)
+
+# Quellbaum-Wurzel für Fixture-Tests (z.B. issues/a)
+target_compile_definitions(libiso8583_tests PRIVATE
+    ISO8583_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_compile_features(libiso8583_tests PRIVATE cxx_std_20)

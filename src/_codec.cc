@@ -13,6 +13,9 @@
 // damit die Definitionen sichtbar sind.
 #define CODEC_IMPL_SOURCE
 #include <iso8583/_codec.hh>
+#include "_logger.hh"   // TNG_LOG_ERROR für Konvertierungsfehler
+#include <sstream>
+#include <stdexcept>
 
 namespace TNG_NAMESPACE::codec {
 
@@ -31,16 +34,74 @@ namespace TNG_NAMESPACE::codec {
         // und schützt vorsorglich vor Shift-State-Resten - für EBCDIC
         // (zustandslos) zwar nicht nötig, aber robuster, falls die Zielcodepage
         // jemals gegen eine zustandsbehaftete getauscht wird.
+
+        // Kompakte Hex-Darstellung der Eingabe für Fehlermeldungen (Bytes
+        // durch Leerzeichen getrennt, kein nachstehendes Leerzeichen).
+        static std::string hexdump(const std::string& s, std::size_t max_bytes = 64) {
+            static const char* digits = "0123456789abcdef";
+            std::string out;
+            out.reserve(std::min(s.size(), max_bytes) * 3 + 4);
+            for (std::size_t i = 0; i < s.size() && i < max_bytes; ++i) {
+                if (!out.empty()) out.push_back(' ');
+                const unsigned char c = static_cast<unsigned char>(s[i]);
+                out.push_back(digits[c >> 4]);
+                out.push_back(digits[c & 0xF]);
+            }
+            if (s.size() > max_bytes) out += " ...";
+            return out;
+        }
+
+        // Wandelt einen Fehler der System-iconv in die Exceptions-Konvention der
+        // Bibliothek um: sauberes, kontextreiches std::runtime_error statt eines
+        // nackten std::system_error (dessen what() unter MSVC bei POSIX-Werten
+        // wie EILSEQ nur "unknown error" lautet).
+        static void throw_conversion_error(
+            const char* direction, const std::string& input,
+            std::string::size_type pos, const std::exception& e) {
+            const auto* se = dynamic_cast<const std::system_error*>(&e);
+            const int err = se ? static_cast<int>(se->code().value()) : -1;
+            TNG_LOG_ERROR("[codec] {}-Konvertierung fehlgeschlagen (errno={}, EILSEQ={}): Eingabe ({} B): {}",
+                direction, err, (err == 42 || err == 133) ? 1 : 0,
+                input.size(), hexdump(input));
+            std::string what = std::string(direction) + "-Konvertierung fehlgeschlagen: ";
+            if (pos < input.size())
+                what += "Byte 0x" + hexdump(std::string(1, input[pos])) +
+                        " an Position " + std::to_string(pos) + " ist nicht konvertierbar";
+            else
+                what += "Eingabe ist nicht konvertierbar";
+            what += " (errno=" + std::to_string(err) +
+                    (err == 42 || err == 133 ? "/EILSEQ" : "") + "). ";
+            what += (std::string(direction) == "EBCDIC->ASCII")
+                    ? "Das Feld enthaelt vermutlich binäre Daten statt gueltiger EBCDIC-Zeichen. "
+                    : "Der Wert enthaelt vermutlich Zeichen, die in IBM-1047 nicht darstellbar sind. ";
+            what += "Eingabe (" + std::to_string(input.size()) + " B): " + hexdump(input);
+            throw std::runtime_error(std::move(what));
+        }
+
         std::string ebcdic_to_ascii_cached(const std::string& data) {
-            thread_local iconv_wrapper::iconv enc("IBM-1047", "");
-            enc.reset();
-            return enc.convert(data);
+            std::string out;
+            std::string::size_type pinpos = 0;
+            try {
+                thread_local iconv_wrapper::iconv enc("IBM-1047", "");
+                enc.reset();
+                enc.convert(data, &pinpos, &out);
+                return out;
+            } catch (const std::exception& e) {
+                throw_conversion_error("EBCDIC->ASCII", data, pinpos, e);
+            }
         }
 
         std::string ascii_to_ebcdic_cached(const std::string& data) {
-            thread_local iconv_wrapper::iconv enc("", "IBM-1047");
-            enc.reset();
-            return enc.convert(data);
+            std::string out;
+            std::string::size_type pinpos = 0;
+            try {
+                thread_local iconv_wrapper::iconv enc("", "IBM-1047");
+                enc.reset();
+                enc.convert(data, &pinpos, &out);
+                return out;
+            } catch (const std::exception& e) {
+                throw_conversion_error("ASCII->EBCDIC", data, pinpos, e);
+            }
         }
 
     } // namespace detail

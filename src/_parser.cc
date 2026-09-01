@@ -214,6 +214,12 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
 
     // Header
     if (hdr_sz_ != 0) {
+        if (b.size() < hdr_sz_) {
+            throw std::runtime_error(
+                "[ISO8583] Byte-Image zu kurz für Header: benötigt " +
+                std::to_string(hdr_sz_) + " Bytes, vorhanden " +
+                std::to_string(b.size()) + " Bytes");
+        }
         std::vector<uint8_t> h(hdr_sz_, 0x00);
         std::memcpy(h.data(), b.data(), hdr_sz_);
         consumed += hdr_sz_;
@@ -231,7 +237,15 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         auto mti = p->create_component(::TNG_NAMESPACE::Message::MTI_KEY);
         mti->description(p->description());
         mti->wire_offset(base_offset + consumed);
-        const std::size_t mti_bytes = p->unparse(mti, b, consumed);
+        std::size_t mti_bytes;
+        try {
+            mti_bytes = p->unparse(mti, b, consumed);
+        } catch (const std::exception& e) {
+            // Feld-Fehler (z.B. EILSEQ aus iconv bei binären Bytes in EBCDIC-Feldern)
+            // in die Positions-Exception-Konvention der Bibliothek übersetzen.
+            throw std::runtime_error("[ISO8583] MTI @ Offset " +
+                std::to_string(base_offset + consumed) + ": " + e.what());
+        }
         mti->wire_length(mti_bytes);
         consumed += mti_bytes;
         m->set(mti);
@@ -249,7 +263,13 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
         bitmap->description(l_.at(1)->description());
         bitmap->wire_offset(base_offset + consumed);
-        const std::size_t bmp_bytes = l_.at(1)->unparse(bitmap, b, consumed);
+        std::size_t bmp_bytes;
+        try {
+            bmp_bytes = l_.at(1)->unparse(bitmap, b, consumed);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("[ISO8583] Bitmap @ Offset " +
+                std::to_string(base_offset + consumed) + ": " + e.what());
+        }
         bitmap->wire_length(bmp_bytes);
         consumed += bmp_bytes;
         bmp = bitmap->value();
@@ -293,7 +313,23 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
                 auto de = ptr->create_component(i);
                 de->description(ptr->description());
                 de->wire_offset(base_offset + consumed);
-                const std::size_t de_bytes = ptr->unparse(de, b, consumed);
+                std::size_t de_bytes;
+                try {
+                    de_bytes = ptr->unparse(de, b, consumed);
+                } catch (const std::exception& e) {
+                    // Feld-Fehler (z.B. EILSEQ aus iconv bei binären Bytes in
+                    // EBCDIC-Feldern) in die Positions-Exception-Konvention der
+                    // Bibliothek übersetzen: sauberes, positioniertes
+                    // std::runtime_error statt Crash/nacktem std::system_error.
+                    // Bereits positionierte Fehler (z.B. aus Nested-Sub-Parsern)
+                    // werden nur um den äußeren Feld-Kontext ergänzt.
+                    char de_key[16];
+                    std::snprintf(de_key, sizeof(de_key), "DE%03d", static_cast<int>(i));
+                    throw std::runtime_error(
+                        std::string("[ISO8583] ") + de_key + " '" +
+                        std::string(ptr->description()) + "' @ Offset " +
+                        std::to_string(base_offset + consumed) + ": " + e.what());
+                }
                 de->wire_length(de_bytes);
                 consumed += de_bytes;
                 m->set(de);
