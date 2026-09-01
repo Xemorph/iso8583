@@ -22,6 +22,7 @@ option(ISO8583_ENABLE_ICONV   "libiconv für EBCDIC-Konvertierung nutzen" ON)
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
 option(ISO8583_BUILD_EXAMPLES "Beispielprojekte bauen (tcp_gateway)"      OFF)
+option(ISO8583_BUILD_FUZZERS  "libFuzzer-Ziele bauen (nur clang, s. tests/fuzz)" OFF)
 option(ISO8583_BERTLV         "DE-Schlüsseltyp auf int32_t erweitern (für volle \
 BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie 9F26, die als Big-Endian-Wert \
 > 32767 nicht in int16_t passen)" OFF)
@@ -373,6 +374,14 @@ endif()
 if(ISO8583_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# -----------------------------------------------------------------------------
+# Fuzz-Ziele (libFuzzer, nur clang — bei Nicht-clang-Toolchain wird gewarnt
+# und uebersprungen; s. tests/fuzz/CMakeLists.txt)
+# -----------------------------------------------------------------------------
+if(ISO8583_BUILD_FUZZERS)
+    add_subdirectory(tests/fuzz)
 endif()
 
 # -----------------------------------------------------------------------------

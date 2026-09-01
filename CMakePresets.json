@@ -44,6 +44,38 @@
     },
 
     {
+      "name": "debug-asan",
+      "displayName": "Debug + AddressSanitizer (MSVC /fsanitize=address, statisch)",
+      "description": "Sanitizer-Preset: MSVC-ASan mit statischer CRT (/MTd), statischem iso8583 und x64-windows-static-Triplet. ASan-Runzeit wird statisch verlinkt -> kein DLL-Suche-Problem unter ctest.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":                "Debug",
+        "ISO8583_BUILD_TESTS":             "ON",
+        "ISO8583_BUILD_SHARED":            "OFF",
+        "VCPKG_TARGET_TRIPLET":            "x64-windows-static",
+        "CMAKE_MSVC_RUNTIME_LIBRARY":      "MultiThreadedDebug",
+        "CMAKE_C_FLAGS":                   "/fsanitize=address /Zi",
+        "CMAKE_CXX_FLAGS":                 "/fsanitize=address /Zi",
+        "CMAKE_EXE_LINKER_FLAGS":          "/fsanitize=address",
+        "CMAKE_STATIC_LIBRARY_LINK_FLAGS": "/fsanitize=address"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "ThreadSanitizer (nur Linux-CI mit clang)",
+      "description": "TSan-Preset: nur unter Linux mit clang verwendbar (Compiler z.B. via CMAKE_C(XX)_COMPILER=clang in der CI setzen). Auf Windows/MSVC nicht konfigurierbar.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE":                "Debug",
+        "ISO8583_BUILD_TESTS":             "ON",
+        "ISO8583_BUILD_SHARED":            "OFF",
+        "CMAKE_CXX_FLAGS":                 "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS":          "-fsanitize=thread",
+        "CMAKE_SHARED_LIBRARY_LINK_FLAGS": "-fsanitize=thread"
+      }
+    },
+
+    {
       "name": "msvc-debug",
       "displayName": "Debug (MSVC)",
       "inherits": "base",
@@ -87,6 +119,10 @@
       "configurePreset": "debug"
     },
     {
+      "name": "debug-asan",
+      "configurePreset": "debug-asan"
+    },
+    {
       "name": "debug-bertlv",
       "configurePreset": "debug-bertlv"
     },
@@ -128,6 +164,12 @@
       "filter": {
         "exclude": { "label": "slow" }
       }
+    },
+    {
+      "name": "debug-asan",
+      "displayName": "Alle Tests (Debug + ASan)",
+      "configurePreset": "debug-asan",
+      "output": { "outputOnFailure": true, "verbosity": "default" }
     },
     {
       "name": "debug-bertlv",
