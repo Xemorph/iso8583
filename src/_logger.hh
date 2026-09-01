@@ -6,7 +6,6 @@
 #include <fmt/format.h>
 
 namespace TNG_NAMESPACE::log {
-    ISOLogger* getExternalLogger();
     Level      getLevel();
 }
 
@@ -19,7 +18,7 @@ namespace TNG_NAMESPACE::log {
 
 #define TNG_LOG_IMPL(LEVEL_ENUM, vfmt, ...)                                       \
     do {                                                                           \
-        if (auto* _ext = ::TNG_NAMESPACE::log::getExternalLogger()) {             \
+        if (auto* _ext = ::TNG_NAMESPACE::log::currentLogger()) {             \
             if (::TNG_NAMESPACE::log::Level::LEVEL_ENUM >=                        \
                 ::TNG_NAMESPACE::log::getLevel()) {                         \
                 _ext->log(::TNG_NAMESPACE::log::Level::LEVEL_ENUM,               \

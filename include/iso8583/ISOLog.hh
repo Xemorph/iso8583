@@ -129,6 +129,15 @@ namespace TNG_NAMESPACE::log {
     ///               Must remain valid until the library is no longer used.
     TNG_EXPORT void setLogger(ISOLogger* logger);
 
+    /// @brief Returns the custom logger currently registered via @ref setLogger.
+    ///
+    /// Primarily used by the internal TNG_LOG_* macros, which are also
+    /// instantiated in translation units outside the library (e.g. unit
+    /// tests including internal headers, or user code instantiating the
+    /// field-parser templates). Returns `nullptr` if no custom logger is
+    /// registered.
+    TNG_EXPORT ISOLogger* currentLogger();
+
     /// @brief Injects a `quill::Logger*` as a `void*` to avoid a public Quill dependency.
     ///
     /// Cast your `quill::Logger*` to `void*` at the call site:

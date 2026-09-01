@@ -720,6 +720,8 @@ namespace TNG_NAMESPACE::spec {
         std::string              desc;
         std::string              defaultEncoding;
         std::size_t              hdr_sz = 0;
+        // [ISO8583] strikte Dekodierung (YAML-Root-Key `strict:`, Default: true)
+        bool                     strict = true;
         std::map<int, SpecField> fields;
     };
 
@@ -734,6 +736,7 @@ namespace TNG_NAMESPACE::spec {
         LoadedSpec result;
         result.desc = getStr(yaml, "spec", "<unnamed>");
         result.hdr_sz = getSizeT(yaml, "header", 0);
+        result.strict = getBool(yaml, "strict", true);
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
 
         for (ryml::ConstNodeRef entry : yaml["fields"].children()) {
@@ -757,6 +760,9 @@ namespace TNG_NAMESPACE::spec {
                 ? buildFieldParser(loaded.fields.at(i))
                 : std::make_shared<IF_NOP>());
         }
+        // [ISO8583] strict-Modus (YAML-Key `strict:`, Default true) auf alle
+        // Feld-Parserv inkl. verschachtelter Sub-Parserv propagieren.
+        parser->strict(loaded.strict);
         return parser;
     }
 

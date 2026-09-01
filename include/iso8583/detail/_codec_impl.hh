@@ -115,7 +115,7 @@ namespace TNG_NAMESPACE::codec {
     // as<T, e>
     // -------------------------------------------------------------------------
     template <typename T, Encoder e>
-    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length) {
+    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid) {
         if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
             // -- Binärer Rückgabepfad -----------------------------------------
             if constexpr (Encoder::HEX_EBCDIC == e) {
@@ -141,9 +141,13 @@ namespace TNG_NAMESPACE::codec {
             if constexpr (Encoder::EBCDIC == e) {
                 std::string data(text.begin() + offset, text.begin() + offset + length);
 #if ENABLE_ICONV
+                // ICONV-Pfad: rejectInvalid wird ignoriert - iconv ist inhärent
+                // strikt (EILSEQ -> positioniertes std::runtime_error, siehe
+                // _codec.cc). Der Table-Pfad (unten) wendet rejectInvalid an.
+                (void)rejectInvalid;
                 return detail::ebcdic_to_ascii_cached(data);
 #else
-                detail::e2a_n(data.data(), data.size());
+                detail::e2a_n(data.data(), data.size(), rejectInvalid);
                 return data;
 #endif
             }
@@ -174,7 +178,7 @@ namespace TNG_NAMESPACE::codec {
     // b must already be sized; only the bytes at [offset, offset+required) are written.
     // -------------------------------------------------------------------------
     template <Encoder e, typename T>
-    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset) {
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid) {
 
         if constexpr (std::is_same_v<T, std::string>) {
             // ── String-Encoding ───────────────────────────────────────────────
@@ -190,13 +194,24 @@ namespace TNG_NAMESPACE::codec {
                 // non-digit characters; for digits and common alphanumerics
                 // the reverse-table approach matches the decoder exactly.
 #if ENABLE_ICONV
+                (void)rejectInvalid; // iconv ist inhärent strikt (EILSEQ)
                 const std::string res = detail::ascii_to_ebcdic_cached(std::string(value));
                 for (std::size_t i = 0; i < res.size(); ++i)
                     b[offset + i] = static_cast<uint8_t>(res[i]);
 #else
                 // Use the class-level kAsciiToEbcdic table (defined in _codec.hh).
-                for (std::size_t i = 0; i < value.size(); ++i)
-                    b[offset + i] = kAsciiToEbcdic[static_cast<unsigned char>(value[i])];
+                // strict-Modus: Zeichen ohne IBM-1047-Mapping (Fallback 0x6F '?')
+                // werden verworfen, statt still durch '?' ersetzt zu werden.
+                for (std::size_t i = 0; i < value.size(); ++i) {
+                    const unsigned char c = static_cast<unsigned char>(value[i]);
+                    if (rejectInvalid && kAsciiToEbcdic[c] == 0x6F && c != '?')
+                        throw std::runtime_error(
+                            "ASCII->EBCDIC-Konvertierung fehlgeschlagen: Zeichen " +
+                            detail::hex_byte(c) + " an Position " + std::to_string(i) +
+                            " ist in IBM-1047 nicht darstellbar (strict-Modus). "
+                            "Eingabe (" + std::to_string(value.size()) + " B)");
+                    b[offset + i] = kAsciiToEbcdic[c];
+                }
 #endif
             }
             else if constexpr (Encoder::BCD == e) {

@@ -7,7 +7,13 @@ namespace {
 
 namespace TNG_NAMESPACE::log {
 
-    ISOLogger* getExternalLogger() { return g_external_logger; }
+    // [ISO8583] Öffentliche, exportierte Logger-Zugriffe (s. ISOLog.hh).
+    // currentLogger() muss exportiert sein, weil die TNG_LOG_*-Makros auch
+    // in Translation-Units AUSERHALLB der Bibliothek-DLL instanziiert werden
+    // (Unit-Tests, die interne Headers inkludieren, oder Anwender, die die
+    // Feld-Parser-Templates instantiieren). Damit verweist die Log-Funktion
+    // über die DLL-Grenze korrekt auf den registrierten Logger.
+    ISOLogger* currentLogger() { return g_external_logger; }
     Level      getLevel() { return g_level; }
 
     void setLevel(Level lvl) { g_level = lvl; }

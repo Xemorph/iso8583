@@ -11,6 +11,7 @@
 #include <iso8583/_codec.hh>
 
 #include "_padder.hh"
+#include "_logger.hh"   // TNG_LOG_* für die Fail-closed-Abfragen (B1/B2/B6)
 
 //using namespace std::string_literals; // available since C++14
 using namespace nonstd::literals;
@@ -58,6 +59,21 @@ namespace TNG_NAMESPACE {
         // Set length of header if applicable
         void headerLength(std::size_t hdrSz) {
             hdr_sz_ = hdrSz;
+        }
+
+        // [ISO8583] Strikter Modus (Default: true, s. ISOParserPtrBase::strict_).
+        // Setzt den eigenen Modus UND propagiert ihn rekursiv auf alle
+        // Feld-Parserv (inklusive der Inner-Parserv von NESTED-Feldern),
+        // damit auch verschachtelte Sub-Nachrichten konsistent strikt/legacy
+        // decodieren.
+        using ISOParserPtrBase::strict; // Getter `bool strict() const` bleiben sichtbar
+        void strict(bool v) const noexcept override {
+            ISOParserPtrBase::strict(v);
+            for (const auto& fp : l_) {
+                fp->strict(v);
+                if (auto sub = fp->subParser())
+                    sub->strict(v);
+            }
         }
 
         // Checks if the bitmap has to be emitted
@@ -257,8 +273,20 @@ namespace TNG_NAMESPACE {
             }
             else if constexpr (std::is_same_v< T, std::string >) {
                 std::string data = nonstd::to_string((nonstd::string_view)std::dynamic_pointer_cast< ISOOpaqueField >(c)->value());
-                if (data.size() > de_l_)
+                // [ISO8583] B2: Überdimensionierter Wert (Serialisierung zu groß).
+                // strict: positioniert verwerfen; nicht-strikt: Legacy (loggen +
+                // Feld auslassen) - ohne Abfrage würde der Wert still entsorgt,
+                // ohne dass ein Fehler ersichtlich wäre.
+                if (data.size() > de_l_) {
+                    if (strict_)
+                        throw std::runtime_error(
+                            "Serialisierung zu groß: " + std::to_string(data.size()) +
+                            " Einheiten > Maximum " + std::to_string(de_l_) +
+                            " (Feld " + d_ + ")");
+                    TNG_LOG_ERROR("[codec] Serialisierung zu groß (nicht-strikt): {} Einheiten > Maximum {} - Feld wird ausgelassen",
+                        data.size(), de_l_);
                     return std::vector<uint8_t>{};
+                }
                 codec::pad<p_>(data, de_l_); // Padding data
                 std::vector<uint8_t> b_img(codec::parsed_length<pe_, l_>() + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
@@ -268,8 +296,29 @@ namespace TNG_NAMESPACE {
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
                 std::vector<uint8_t> data = std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value();
                 std::size_t pl = codec::parsed_length<pe_, l_>();
-                if (pl == 0 && data.size() != de_l_)
+                // [ISO8583] B2: FIX-Feld mit passender Länge / prefixed Feld
+                // mit zu großem Wert. strict: verwerfen; nicht-strikt: Legacy
+                // (loggen; bei prefixed Feldern kann das Präfix dadurch
+                // unterdimensioniert bleiben).
+                if (pl == 0 && data.size() != de_l_) {
+                    if (strict_)
+                        throw std::runtime_error(
+                            "Serialisierung zu groß: " + std::to_string(data.size()) +
+                            " Bytes != FIX-Länge " + std::to_string(de_l_) +
+                            " (Feld " + d_ + ")");
+                    TNG_LOG_ERROR("[codec] Serialisierung zu groß (nicht-strikt): {} Bytes != FIX-Länge {} - Feld wird ausgelassen",
+                        data.size(), de_l_);
                     return std::vector<uint8_t>{};
+                }
+                if (pl > 0 && data.size() > de_l_) {
+                    if (strict_)
+                        throw std::runtime_error(
+                            "Serialisierung zu groß: " + std::to_string(data.size()) +
+                            " Bytes > Maximum " + std::to_string(de_l_) +
+                            " (Feld " + d_ + ")");
+                    TNG_LOG_ERROR("[codec] Serialisierung zu groß (nicht-strikt): {} Bytes > Maximum {} - Längenprfix könnte unterdimensioniert sein",
+                        data.size(), de_l_);
+                }
                 std::vector<uint8_t> b_img(pl + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
                 codec::to<e_>(data, b_img, pl);
@@ -354,7 +403,17 @@ namespace TNG_NAMESPACE {
                     if (l == 0 || l > de_l_)
                         l = de_l_;
 
-                std::size_t ll = codec::parsed_length<pe_, l_>();
+                const std::size_t ll = codec::parsed_length<pe_, l_>();
+
+                // [ISO8583] B6: Längenprefix-Vorguard (beide Modi - Sicherheit):
+                // Der Prefix selbst muss vollständig im Puffer liegen, sonst
+                // wären die Decode-Lesungen (decode_length) unterhalb des
+                // Pufferendes ein OOB-Read.
+                if (ll > 0 && (o > b.size() || o + ll > b.size()))
+                    throw std::runtime_error(
+                        "Längenprefix am Pufferende abgeschnitten: benötigt " + std::to_string(ll) +
+                        " Prefix-Bytes ab Offset " + std::to_string(o) + ", im Puffer vorhanden " +
+                        std::to_string(o < b.size() ? b.size() - o : 0) + " Bytes");
 
                 // Truncation:
                 // -----------
@@ -366,19 +425,28 @@ namespace TNG_NAMESPACE {
                 // Beispiel:
                 // Bei Nichteinhaltung wird BCD sonst auf halbe Länge gekürzt
                 //    (6 Bytes = 12 BCD-Ziffern, aber 6 < 12 würde fälschlicherweise truncaten).
-                if (o + ll <= b.size()) { // 4+0 <= 7
+                //
+                // [ISO8583] B1: Feldinhalt am Pufferende abgeschnitten.
+                // strict: positioniertes std::runtime_error (Fail-closed, P2);
+                // nicht-strikt: Legacy (loggen + auf verfügbare Einheiten kürzen).
+                {
                     const std::size_t available_bytes = b.size() - (o + ll);
                     const std::size_t needed_bytes = codec::required_sz_for_as<e_>(l);
                     if (available_bytes < needed_bytes) {
+                        if (strict_)
+                            throw std::runtime_error(
+                                "Feld am Pufferende abgeschnitten: erwartet " + std::to_string(l) +
+                                " logische Einheiten (" + std::to_string(needed_bytes) +
+                                " Bytes), verbleiben nur " + std::to_string(available_bytes) +
+                                " Bytes ab Offset " + std::to_string(o + ll));
+                        TNG_LOG_WARN("[codec] Feld am Pufferende abgeschnitten (nicht-strikt): erwartet {} Einheiten ({} Bytes), verbleiben {} Bytes - Wert wird gekürzt",
+                            l, needed_bytes, available_bytes);
                         // Wie viele vollständige logische Einheiten passen in available_bytes?
                         if constexpr (TNG_NAMESPACE::codec::Encoder::BCD == e_)
                             l = available_bytes * 2;  // 1 Byte = 2 BCD-Ziffern
                         else
                             l = available_bytes;
                     }
-                }
-                else {
-                    l = 0;
                 }
 
                 // Skip allocation of temporary function stack variable
@@ -397,7 +465,13 @@ namespace TNG_NAMESPACE {
             }
             else {
                 // byte2bitset
+                // [ISO8583] A1: OOB-Guards (beide Modi - Sicherheit): Bitmap-
+                // Offset und -Bytes müssen vollständig im Puffer liegen.
                 {
+                    if (o >= b.size())
+                        throw std::runtime_error(
+                            "Bitmap-Offset " + std::to_string(o) +
+                            " liegt außerhalb des Puffers (Größe " + std::to_string(b.size()) + ")");
                     bool  b1 = (b[o] & 0x80) == 0x80;
                     bool b65 = (b.size() > o + 8) && ((b[o + 8] & 0x80) == 0x80);
                     std::size_t mbits = de_l_ << 3;
@@ -405,13 +479,20 @@ namespace TNG_NAMESPACE {
                                       (mbits > 64 && b1)         ?   128 :
                                       (mbits < 64)               ? mbits : 64;
 
+                    const std::size_t bmp_bytes = len >> 3;
+                    if (o + bmp_bytes > b.size())
+                        throw std::runtime_error(
+                            "Bitmap am Pufferende abgeschnitten: benötigt " + std::to_string(bmp_bytes) +
+                            " Bytes ab Offset " + std::to_string(o) + ", im Puffer vorhanden " +
+                            std::to_string(b.size() - o) + " Bytes");
+
                     dynamic_bitset<> bmp(len+1);
                     for (std::size_t i = 0; i < len; ++i)
-                        if ((b[o + (i >> 3)] & 0x80 >> i % 8) > 0)
+                        if ((b[o + (i >> 3)] & (0x80 >> (i % 8))) > 0)
                             bmp.set(i+1);
 
                     len = bmp[1] ? 128 : 64;
-                    if (de_l_ > 16 && bmp[1] && bmp[65])
+                    if (de_l_ > 16 && bmp.size() > 65 && bmp[1] && bmp[65])
                         len = 192;
 
                     (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::Bitmap >(c)->value(bmp);

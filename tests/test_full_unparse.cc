@@ -251,15 +251,25 @@ TEST_CASE("Full unparse - wire offsets accumulate correctly", "[unparse][wire]")
 // Full unparse: empty buffer handling
 // =============================================================================
 
-TEST_CASE("Full unparse - empty buffer returns 0", "[unparse][error]") {
+TEST_CASE("Full unparse - empty buffer handling", "[unparse][error]") {
     auto parser = std::make_shared<ISOBaseParser>("EmptyParser", 0);
     parser->add(std::make_shared<IFE_NUMERIC>(4, "MTI"));
 
     auto msg = std::make_shared< Message >();
     msg->parser(parser);
 
-    std::vector<uint8_t> empty;
-    REQUIRE_NOTHROW(msg->unparse(msg, empty));
+    // strict (Default): leeres Byte-Image ist keine gültige ISO-8583-Nachricht.
+    {
+        std::vector<uint8_t> empty;
+        REQUIRE_THROWS_AS(msg->unparse(msg, empty), std::runtime_error);
+    }
+
+    // Legacy (strict=false): altes Verhalten (Warnlog, 0 Bytes zurück).
+    parser->strict(false);
+    {
+        std::vector<uint8_t> empty;
+        REQUIRE_NOTHROW(msg->unparse(msg, empty));
+    }
 }
 
 TEST_CASE("Full unparse - no parser set returns SIZE_MAX", "[unparse][error]") {

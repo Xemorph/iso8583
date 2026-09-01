@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 find_package(Catch2 CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 add_executable(libiso8583_tests
@@ -21,6 +22,7 @@ add_executable(libiso8583_tests
     test_iso_utils.cc
     test_utils_protect.cc
     test_incompatible_input.cc
+    test_strict_mode.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über
@@ -36,6 +38,7 @@ target_link_libraries(libiso8583_tests
     PRIVATE
         iso8583::iso8583
         Catch2::Catch2WithMain
+        fmt::fmt
         Threads::Threads
 )
 
@@ -50,6 +53,14 @@ target_compile_definitions(libiso8583_tests PRIVATE
 )
 
 target_compile_features(libiso8583_tests PRIVATE cxx_std_20)
+
+# MSVC: interne Headers (src/*.hh) werden hier direkt eingebunden und ziehen
+# über TNG_LOG_* (src/_logger.hh) fmt/format.h mit. fmt stellt eine
+# Static-Assertion, die /utf-8 als Kompilierungsoption erfordert - daher
+# dasselbe Flag wie für das iso8583-Ziel (s. Haupt-CMakeLists.txt).
+if(MSVC)
+    target_compile_options(libiso8583_tests PRIVATE /utf-8)
+endif()
 
 include(CTest)
 include(Catch)

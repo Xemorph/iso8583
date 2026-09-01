@@ -186,42 +186,96 @@ TEST_CASE("wire_length for variable field equals prefix + data", "[wire][positio
 // =============================================================================
 
 TEST_CASE("Truncated buffer - field shorter than declared", "[error][truncated]") {
-    auto buf = B({ 0xF0, 0xF1, 0xF2 });
-    IFE_NUMERIC parser(8, "TruncatedField");
-    auto component = std::make_shared< OpaqueField >(4);
-    REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
-    CHECK(component->value().size() <= 3);
+    // strict (Default): positionierter std::runtime_error statt stummer Kürzung.
+    {
+        auto buf = B({ 0xF0, 0xF1, 0xF2 });
+        IFE_NUMERIC parser(8, "TruncatedField");
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_THROWS_AS(parser.unparse(component, buf, 0), std::runtime_error);
+    }
+    // Legacy (strict=false): Verwarnung + Kürzung auf verfügbare Einheiten.
+    {
+        auto buf = B({ 0xF0, 0xF1, 0xF2 });
+        IFE_NUMERIC parser(8, "TruncatedField");
+        parser.strict(false);
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
+        CHECK(component->value().size() <= 3);
+    }
 }
 
 TEST_CASE("Truncated buffer - prefix ok but data truncated", "[error][truncated]") {
-    // Prefix says length=10 but only 3 data bytes available
-    auto buf = B({ 0xF1, 0xF0,           // EBCDIC '1','0' -> length 10
-                   0xC1, 0xC2, 0xC3 });
-    IFE_LLCHAR parser(10, "TruncatedVarField");
-    auto component = std::make_shared< OpaqueField >(44);
-    REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
-    CHECK(component->value().size() <= 3);
+    // Prefix sagt length=10, aber nur 3 Daten-Bytes vorhanden.
+    const auto mkbuf = [] { return B({ 0xF1, 0xF0,   // EBCDIC '1','0' -> length 10
+                                       0xC1, 0xC2, 0xC3 }); };
+    // strict (Default): Fail-closed.
+    {
+        IFE_LLCHAR parser(10, "TruncatedVarField");
+        auto component = std::make_shared< OpaqueField >(44);
+        REQUIRE_THROWS_AS(parser.unparse(component, mkbuf(), 0), std::runtime_error);
+    }
+    // Legacy (strict=false): Kürzung auf verfügbare Einheiten.
+    {
+        IFE_LLCHAR parser(10, "TruncatedVarField");
+        parser.strict(false);
+        auto component = std::make_shared< OpaqueField >(44);
+        REQUIRE_NOTHROW(parser.unparse(component, mkbuf(), 0));
+        CHECK(component->value().size() <= 3);
+    }
 }
 
 TEST_CASE("Offset at buffer end - no crash", "[error][offset]") {
-    auto buf = B({ 0xF0, 0xF1, 0xF2 });
-    IFE_NUMERIC parser(6, "OffsetField");
-    auto component = std::make_shared< OpaqueField >(4);
-    REQUIRE_NOTHROW(parser.unparse(component, buf, 3));
-    CHECK(component->value().empty());
+    // strict (Default): OOB wird verworfen (aufrufweit kein Crash/UB).
+    {
+        auto buf = B({ 0xF0, 0xF1, 0xF2 });
+        IFE_NUMERIC parser(6, "OffsetField");
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_THROWS_AS(parser.unparse(component, buf, 3), std::runtime_error);
+    }
+    // Legacy (strict=false): leeres Feld statt OOB-Read.
+    {
+        auto buf = B({ 0xF0, 0xF1, 0xF2 });
+        IFE_NUMERIC parser(6, "OffsetField");
+        parser.strict(false);
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_NOTHROW(parser.unparse(component, buf, 3));
+        CHECK(component->value().empty());
+    }
 }
 
 TEST_CASE("Empty buffer - IFE_NUMERIC returns empty field", "[error][empty]") {
-    std::vector<uint8_t> buf;
-    IFE_NUMERIC parser(6, "EmptyField");
-    auto component = std::make_shared< OpaqueField >(4);
-    REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
+    // strict (Default): leeres Byte-Image ist keine gültige Nachricht.
+    {
+        std::vector<uint8_t> buf;
+        IFE_NUMERIC parser(6, "EmptyField");
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_THROWS_AS(parser.unparse(component, buf, 0), std::runtime_error);
+    }
+    // Legacy (strict=false): leeres Feld.
+    {
+        std::vector<uint8_t> buf;
+        IFE_NUMERIC parser(6, "EmptyField");
+        parser.strict(false);
+        auto component = std::make_shared< OpaqueField >(4);
+        REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
+    }
 }
 
 TEST_CASE("Empty buffer - IF_BINARY returns empty field", "[error][empty]") {
-    std::vector<uint8_t> buf;
-    IF_BINARY parser(8, "EmptyBinary");
-    auto component = std::make_shared< BinaryField >(52);
-    REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
-    CHECK(component->value().empty());
+    // strict (Default): Fail-closed.
+    {
+        std::vector<uint8_t> buf;
+        IF_BINARY parser(8, "EmptyBinary");
+        auto component = std::make_shared< BinaryField >(52);
+        REQUIRE_THROWS_AS(parser.unparse(component, buf, 0), std::runtime_error);
+    }
+    // Legacy (strict=false): leeres Feld.
+    {
+        std::vector<uint8_t> buf;
+        IF_BINARY parser(8, "EmptyBinary");
+        parser.strict(false);
+        auto component = std::make_shared< BinaryField >(52);
+        REQUIRE_NOTHROW(parser.unparse(component, buf, 0));
+        CHECK(component->value().empty());
+    }
 }

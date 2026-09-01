@@ -184,9 +184,9 @@ template std::size_t required_sz_for_as<Encoder::EBCDIC> (std::size_t) noexcept;
 // as<T, Encoder>
 // -----------------------------------------------------------------------------
 #define INST_AS_STR(E) \
-    template std::string as<std::string, Encoder::E>(const std::vector<uint8_t>&, std::size_t, std::size_t);
+    template std::string as<std::string, Encoder::E>(const std::vector<uint8_t>&, std::size_t, std::size_t, bool);
 #define INST_AS_BIN(E) \
-    template std::vector<uint8_t> as<std::vector<uint8_t>, Encoder::E>(const std::vector<uint8_t>&, std::size_t, std::size_t);
+    template std::vector<uint8_t> as<std::vector<uint8_t>, Encoder::E>(const std::vector<uint8_t>&, std::size_t, std::size_t, bool);
 
 INST_AS_STR(ASCII)
 INST_AS_STR(BCD)
@@ -202,9 +202,9 @@ INST_AS_BIN(HEX_EBCDIC)
 // to<Encoder, T>
 // -----------------------------------------------------------------------------
 #define INST_STR_TO(E) \
-    template void to<Encoder::E, std::string>(const std::string& value, std::vector<uint8_t>& b, std::size_t offset);
+    template void to<Encoder::E, std::string>(const std::string& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid);
 #define INST_BIN_TO(E) \
-    template void to<Encoder::E, std::vector<uint8_t>>(const std::vector<uint8_t>& value, std::vector<uint8_t>& b, std::size_t offset);
+    template void to<Encoder::E, std::vector<uint8_t>>(const std::vector<uint8_t>& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid);
 
 INST_STR_TO(ASCII)
 INST_STR_TO(EBCDIC)

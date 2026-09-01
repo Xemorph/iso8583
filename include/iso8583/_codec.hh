@@ -120,6 +120,22 @@ namespace TNG_NAMESPACE::codec {
         }
         return tbl;
     }();
+
+    /// [ISO8583] Strenge-Gültigkeits-Tabelle (strict-Modus, Q4): `true` = das
+    /// EBCDIC-Byte gehört zur Legacy-Whitelist (verlustfrei nach ASCII
+    /// konvertierbar). Das einzige Byte, das tatsächlich auf '.' (0x2E) gemappt
+    /// wird und trotzdem gültig ist, ist 0x4B (kanonische EBCDIC-Punkt); alle
+    /// übrigen 0x2E-Einträge in kEbcdicToAscii sind Whitelist-Sentinel.
+    ///
+    /// @note Ab Phase 2 wird diese Tabelle durch die ICU-orakel-generierten
+    ///       strict-Tabellen ersetzt (docs/plans/security-implementation-plan.md).
+    static inline const std::array<bool, 256> kEbcdicValid = []() {
+        std::array<bool, 256> tbl{};
+        for (int i = 0; i < 256; ++i)
+            tbl[static_cast<unsigned char>(i)] =
+                (kEbcdicToAscii[i] != 0x2e) || (i == 0x4B);
+        return tbl;
+    }();
 #endif
 
     // -- Enums -----------------------------------------------------------------
@@ -214,11 +230,15 @@ namespace TNG_NAMESPACE::codec {
     // \param text (byte image) to convert
     // \param offset to convert from
     // \param length of n units to read
+    // \param rejectInvalid [ISO8583] strict-Modus (Table-Pfad): ungültige
+    //       EBCDIC-Bytes werfen ein positioniertes std::runtime_error statt
+    //       das Legacy-'.'-Mapping (0x2E) anzuwenden. Im ICONV-Pfad ignoriert
+    //       (iconv ist inhärent strikt, EILSEQ).
     template <typename T, Encoder e>
-    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length);
+    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid = false);
 
     template <Encoder e, typename T>
-    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset);
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid = false);
 
     // Returns the number of bytes required to convert a std::vector<uint8_t>
     // Mainly used in cooperation with function 'as<T, Encoder>()'
@@ -227,14 +247,36 @@ namespace TNG_NAMESPACE::codec {
 
     // -- Interne Hilfsfunktionen (nicht Teil der öffentlichen API) -------------
     namespace detail {
+        /// Kompakte Hex-Darstellung eines Bytes (z.B. "0x24").
+        static inline std::string hex_byte(unsigned char c) {
+            static const char* digits = "0123456789abcdef";
+            std::string out = "0x";
+            out.push_back(digits[c >> 4]);
+            out.push_back(digits[c & 0xF]);
+            return out;
+        }
+
         /// EBCDIC-Byte in-place nach ASCII konvertieren (nullterminierter String)
         static inline void e2a(char* s) noexcept {
             while (*s) *s++ = kEbcdicToAscii[(unsigned char)*s];
         }
+
         /// EBCDIC-Bytes nach ASCII konvertieren (Puffer + Länge)
-        static inline void e2a_n(char* s, std::size_t n) noexcept {
-            for (std::size_t i = 0; i < n; ++i)
-                s[i] = kEbcdicToAscii[(unsigned char)s[i]];
+        ///
+        /// \param rejectInvalid [ISO8583] strict-Modus: Bytes außerhalb der
+        ///       Legacy-Whitelist (kEbcdicValid) werfen ein positioniertes
+        ///       std::runtime_error statt das Legacy-'.'-Mapping anzuwenden.
+        static inline void e2a_n(char* s, std::size_t n, bool rejectInvalid = false) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const unsigned char bc = static_cast<unsigned char>(s[i]);
+                if (rejectInvalid && !kEbcdicValid[bc])
+                    throw std::runtime_error(
+                        "EBCDIC->ASCII-Konvertierung fehlgeschlagen: Byte " +
+                        hex_byte(bc) + " an Position " + std::to_string(i) +
+                        " ist kein gueltiges EBCDIC-Zeichen (IBM-1047-Whitelist, strict-Modus). "
+                        "Eingabe (" + std::to_string(n) + " B)");
+                s[i] = kEbcdicToAscii[bc];
+            }
         }
 
 #if ENABLE_ICONV

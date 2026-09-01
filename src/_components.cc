@@ -727,6 +727,30 @@ static void setBcdField(std::vector<uint8_t>& header, std::size_t field_offset,
     ::TNG_NAMESPACE::codec::to<::TNG_NAMESPACE::codec::Encoder::BCD>(s, header, byte_off);
 }
 
+namespace {
+    // [ISO8583] Phase-1 (Fail-closed, A5): Beide Header-Typen haben ein fixes
+    // Byte-Layout; Getter/Setter greifen auf feste Offsets in `header` zu.
+    // Zu kurze Byte-Bilder (z. B. nach WLP_FOHeader(vector)/BASE1Header(vector)
+    // mit kurzen Bytes oder manuellem Beschnitt des `header`-Mitglieds)
+    // fuehrten zu Out-of-bounds-Zugriffen (silent UB). Deshalb: Fail-fast beim
+    // Konstruieren und Fail-closed-Guards in jedem Offset-zugreifenden
+    // Getter/Setter.
+    void wlp_fo_ensure(const std::vector<uint8_t>& h) {
+        if (h.size() < TNG_NAMESPACE::WLP_FOHeader::LENGTH)
+            throw std::runtime_error(
+                "[ISO8583] WLP-FO-Header: Byte-Sequenz zu kurz (" + std::to_string(h.size())
+                + " < " + std::to_string(TNG_NAMESPACE::WLP_FOHeader::LENGTH)
+                + " Bytes) - Zugriff abgelehnt (Fail-closed)");
+    }
+    void base1_ensure(const std::vector<uint8_t>& h) {
+        if (h.size() < TNG_NAMESPACE::BASE1Header::LENGTH)
+            throw std::runtime_error(
+                "[ISO8583] BASE1-Header: Byte-Sequenz zu kurz (" + std::to_string(h.size())
+                + " < " + std::to_string(TNG_NAMESPACE::BASE1Header::LENGTH)
+                + " Bytes) - Zugriff abgelehnt (Fail-closed)");
+    }
+}
+
 TNG_NAMESPACE::BASE1Header::BASE1Header() : BASE1Header("000000"_sv, "000000"_sv) {
 }
 TNG_NAMESPACE::BASE1Header::BASE1Header(nonstd::string_view _source, nonstd::string_view _destination)
@@ -747,42 +771,53 @@ TNG_NAMESPACE::BASE1Header::BASE1Header(nonstd::string_view _source, nonstd::str
     source(_source);
     destination(_destination);
 }
-TNG_NAMESPACE::BASE1Header::BASE1Header(const std::vector<uint8_t>& header) : BaseHeader(header) {}
+TNG_NAMESPACE::BASE1Header::BASE1Header(const std::vector<uint8_t>& header) : BaseHeader(header) {
+    // [ISO8583] Phase-1 (A5): Fail-fast auf zu kurze Byte-Bilder, damit keine
+    // nachgelagerten Getter/Setter auf ungueltigen Offsets landen.
+    base1_ensure(header);
+}
 
 // Getter/Setter für die Header-Felder
-int TNG_NAMESPACE::BASE1Header::getHLen() const { return (header[0] & 0xFF); }
-void TNG_NAMESPACE::BASE1Header::setHFormat(int hformat) { header[1] = static_cast<uint8_t>(hformat); }
-int TNG_NAMESPACE::BASE1Header::format() const { return (header[2] & 0xFF); }
-void TNG_NAMESPACE::BASE1Header::format(int format) { header[2] = static_cast<uint8_t>(format); }
-void TNG_NAMESPACE::BASE1Header::setRtCtl(int i) { header[11] = static_cast<uint8_t>(i); }
+int TNG_NAMESPACE::BASE1Header::getHLen() const { base1_ensure(header); return (header[0] & 0xFF); }
+void TNG_NAMESPACE::BASE1Header::setHFormat(int hformat) { base1_ensure(header); header[1] = static_cast<uint8_t>(hformat); }
+int TNG_NAMESPACE::BASE1Header::format() const { base1_ensure(header); return (header[2] & 0xFF); }
+void TNG_NAMESPACE::BASE1Header::format(int format) { base1_ensure(header); header[2] = static_cast<uint8_t>(format); }
+void TNG_NAMESPACE::BASE1Header::setRtCtl(int i) { base1_ensure(header); header[11] = static_cast<uint8_t>(i); }
 void TNG_NAMESPACE::BASE1Header::setFlags(int i) {
+    base1_ensure(header);
     header[12] = static_cast<uint8_t>(i >> 8);
     header[13] = static_cast<uint8_t>(i);
 }
 void TNG_NAMESPACE::BASE1Header::setStatus(int i) {
+    base1_ensure(header);
     header[14] = static_cast<uint8_t>(i >> 16);
     header[15] = static_cast<uint8_t>(i >> 8);
     header[16] = static_cast<uint8_t>(i);
 }
-void TNG_NAMESPACE::BASE1Header::setBatchNumber(int i) { header[17] = static_cast<uint8_t>(i); }
+void TNG_NAMESPACE::BASE1Header::setBatchNumber(int i) { base1_ensure(header); header[17] = static_cast<uint8_t>(i); }
 void TNG_NAMESPACE::BASE1Header::setLen(std::size_t len) {
+    base1_ensure(header);
     len += header.size();
     header[3] = static_cast<uint8_t>(len >> 8);
     header[4] = static_cast<uint8_t>(len);
 }
 
 void TNG_NAMESPACE::BASE1Header::destination(nonstd::string_view dest) {
+    base1_ensure(header);
     setBcdField(header, 5, 3, dest);
 }
 void TNG_NAMESPACE::BASE1Header::source(nonstd::string_view src) {
+    base1_ensure(header);
     setBcdField(header, 8, 3, src);
 }
 std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::source() const {
+    base1_ensure(header);
     src_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 8, 6);
     if (src_cache_.empty()) return std::nullopt;
     return nonstd::string_view(src_cache_);
 }
 std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::destination() const {
+    base1_ensure(header);
     dst_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 5, 6);
     if (dst_cache_.empty()) return std::nullopt;
     return nonstd::string_view(dst_cache_);
@@ -799,7 +834,7 @@ bool TNG_NAMESPACE::BASE1Header::isRejected() const {
     return header.size() >= 26 && (header[22] & 0x80) == 0x80;
 }
 std::string TNG_NAMESPACE::BASE1Header::getRejectCode() const {
-    if (isRejected()) {
+    if (isRejected() && header.size() >= 28) {
         return ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 24, 4);
     }
     return "";
@@ -867,18 +902,38 @@ TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(
     payment(_payment);
 }
 
-TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(const std::vector<uint8_t>& header)
-    : BaseHeader(header)
-{}
+TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(const std::vector<uint8_t>& raw)
+    : BaseHeader(raw)
+{
+    // [ISO8583] Phase-1 (A5): Konvention ist die gepackte EBCDIC-Portion
+    // (pack()-Ausgabe, LENGTH-4 Bytes hinter dem 4-Byte-Laengepraefix).
+    // Alles andere (zu kurz, oder voller Frame inkl. ISO-Payload) wird
+    // Fail-closed abgelehnt; der interne Puffer wird sofort auf LENGTH
+    // normalisiert, damit Getter/Setter direkt gueltige Offsets haben.
+    if (raw.size() != LENGTH - 4)
+        throw std::runtime_error(
+            "[ISO8583] WLP-FO-Header: Konstruktion erwartet genau " + std::to_string(LENGTH - 4)
+            + " Bytes (gepackte EBCDIC-Portion, pack()-Konvention), bekommen "
+            + std::to_string(raw.size()) + " - abgelehnt (Fail-closed)");
+    auto packed = raw;
+    header.assign(4, 0x00);
+    header.insert(header.end(), packed.begin(), packed.end());
+}
 
 
 std::vector<uint8_t> TNG_NAMESPACE::WLP_FOHeader::pack() const {
+    wlp_fo_ensure(header);
     std::string asciiHeader(header.begin() + 4, header.end());
     std::vector<uint8_t> ebcdicHeader(asciiHeader.size(), 0x00);
     ::TNG_NAMESPACE::codec::to<::TNG_NAMESPACE::codec::Encoder::EBCDIC>(asciiHeader, ebcdicHeader, 0);
     return ebcdicHeader;
 }
 std::size_t TNG_NAMESPACE::WLP_FOHeader::unpack(const std::vector<uint8_t>& b) {
+    if (b.size() != LENGTH - 4)
+        throw std::runtime_error(
+            "[ISO8583] WLP-FO-Header: unpack erwartet genau " + std::to_string(LENGTH - 4)
+            + " Bytes (EBCDIC-Teil hinter der Laenge-Vorschaltung), bekommen "
+            + std::to_string(b.size()) + " - abgelehnt (Fail-closed)");
     const auto asciiHeader = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::EBCDIC>(b, 0, b.size());
 
     header.assign(4, 0x00);
@@ -888,6 +943,7 @@ std::size_t TNG_NAMESPACE::WLP_FOHeader::unpack(const std::vector<uint8_t>& b) {
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::length(int len) {
+    wlp_fo_ensure(header);
     header[0] = static_cast<uint8_t>(len >> 24);
     header[1] = static_cast<uint8_t>(len >> 16);
     header[2] = static_cast<uint8_t>(len >> 8);
@@ -895,10 +951,12 @@ void TNG_NAMESPACE::WLP_FOHeader::length(int len) {
 }
 
 int TNG_NAMESPACE::WLP_FOHeader::length() const {
+    wlp_fo_ensure(header);
     return (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::sysId(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() > 10) throw std::invalid_argument("sysId too long");
     std::string str(s);
     std::fill(header.begin() + 4, header.begin() + 14, ' ');
@@ -906,6 +964,7 @@ void TNG_NAMESPACE::WLP_FOHeader::sysId(nonstd::string_view s) {
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::record(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() > 10) throw std::invalid_argument("record too long");
     std::string str(s);
     std::fill(header.begin() + 14, header.begin() + 24, ' ');
@@ -913,30 +972,36 @@ void TNG_NAMESPACE::WLP_FOHeader::record(nonstd::string_view s) {
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::mti(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() != 4) throw std::invalid_argument("mti must be 4 chars");
     std::copy(s.begin(), s.end(), header.begin() + 24);
 }
 void TNG_NAMESPACE::WLP_FOHeader::creationTs() {
+    wlp_fo_ensure(header);
     std::string ts = getFormattedTimestamp();
     if (ts.size() > 26) ts.erase(26);
     if (ts.size() != 26) throw std::runtime_error("Timestamp format error");
     std::copy(ts.begin(), ts.end(), header.begin() + 28);
 }
 void TNG_NAMESPACE::WLP_FOHeader::creationTs(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() != 26) throw std::invalid_argument("creationTs must be 26 chars");
     std::copy(s.begin(), s.end(), header.begin() + 28);
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::version(int v) {
+    wlp_fo_ensure(header);
     if (v < 1 || v > 2) throw std::invalid_argument("version must be 1 or 2");
     header[54] = static_cast<uint8_t>(v);
 }
 
 int TNG_NAMESPACE::WLP_FOHeader::version() const {
+    wlp_fo_ensure(header);
     return header[54];
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::uuid(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() > 20) throw std::invalid_argument("uuid too long");
     std::string str(s);
     std::fill(header.begin() + 55, header.begin() + 75, '0');
@@ -944,6 +1009,7 @@ void TNG_NAMESPACE::WLP_FOHeader::uuid(nonstd::string_view s) {
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::reference(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     if (s.size() > 16) throw std::invalid_argument("reference too long");
     std::string str(s);
     std::fill(header.begin() + 75, header.begin() + 91, '0');
@@ -951,12 +1017,14 @@ void TNG_NAMESPACE::WLP_FOHeader::reference(nonstd::string_view s) {
 }
 
 void TNG_NAMESPACE::WLP_FOHeader::payment(size_t payment) {
+    wlp_fo_ensure(header);
     std::string p = std::to_string(payment);
     if (2 > p.size()) p.insert(0, 2 - p.size(), '0');
     if (p.size() != 2) throw std::invalid_argument("payment must be 2 chars");
     std::copy(p.begin(), p.end(), header.begin() + 91);
 }
 void TNG_NAMESPACE::WLP_FOHeader::payment(nonstd::string_view s) {
+    wlp_fo_ensure(header);
     std::string p(s);
     if (2 > p.size()) p.insert(0, 2 - p.size(), '0');
     if (p.size() != 2) throw std::invalid_argument("payment must be 2 chars");

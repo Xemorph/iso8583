@@ -61,19 +61,18 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
     ::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) const
 {
     if (!c || !c->is_composite()) {
-        TNG_LOG_ERROR("[ISOBaseParser::parse] Null-Komponente oder kein Composite");
-        return {};
+        // [ISO8583] B4: struktureller Fehler -> Fail-closed, statt stummer
+        // Leer-Serialisierung ("parse erfolgreich mit 0 Bytes").
+        throw std::runtime_error("[ISO8583] Parser: Komponente ist null oder kein Composite");
     }
 
     if (l_.empty()) {
-        TNG_LOG_ERROR("[ISOBaseParser::parse] Parser-Liste ist leer – nicht konfiguriert?");
-        return {};
+        throw std::runtime_error("[ISO8583] Parser nicht konfiguriert (keine Felder definiert)");
     }
 
     auto m = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(c);
     if (!m) {
-        TNG_LOG_ERROR("[ISOBaseParser::parse] Komponente ist kein ISOMessage");
-        return {};
+        throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
     }
 
     std::vector<uint8_t> out;
@@ -84,7 +83,13 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
         auto hdr = m->header();
         if (hdr && hdr->size() >= hdr_sz_) {
             std::vector<uint8_t> hdr_bytes = hdr->pack();
-            out.insert(out.end(), hdr_bytes.begin(), hdr_bytes.begin() + hdr_sz_);
+            // [ISO8583] A2: Inkonsistente Header-Serialisierung (gepackte
+            // Bytes < hdr_sz_) wäre früher ein OOB-Read (begin()+hdr_sz_)
+            // und/oder ein verkleinertes Wire-Image (verlorener Präfix).
+            if (hdr_bytes.size() < hdr_sz_)
+                throw std::runtime_error("[ISO8583] Header-Serialisierung inkonsistent: gepackte Bytes " +
+                    std::to_string(hdr_bytes.size()) + " < erwartet " + std::to_string(hdr_sz_));
+            out.insert(out.end(), hdr_bytes.begin(), hdr_bytes.begin() + std::ptrdiff_t(hdr_sz_));
         }
         else
             out.insert(out.end(), hdr_sz_, 0x00);
@@ -194,21 +199,27 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     std::size_t base_offset)
 {
     if (b.empty()) {
+        // [ISO8583] P2: ein leeres Frame kann keine gültige ISO-8583-
+        // Nachricht sein. strict: verwerfen; nicht-strikt: Legacy-Warnung.
+        if (strict_)
+            throw std::runtime_error("[ISO8583] Byte-Image ist leer - keine gültige ISO-8583-Nachricht");
         TNG_LOG_WARN("[ISOBaseParser] Empty byte image received");
         return 0u;
     }
     if (l_.empty()) {
-        TNG_LOG_ERROR("[ISOBaseParser] Field parser list is empty - parser not configured?");
-        return 0u;
+        // [ISO8583] B4: struktureller Fehler -> Fail-closed.
+        throw std::runtime_error("[ISO8583] Parser nicht konfiguriert (keine Felder definiert)");
     }
     if (c == nullptr || !c->is_composite()) {
-        TNG_LOG_WARN("[ISOBaseParser] Invalid component or null-pointer");
-        return 0u;
+        // [ISO8583] B4: struktureller Fehler -> Fail-closed.
+        throw std::runtime_error("[ISO8583] Parser: Komponente ist null oder kein Composite");
     }
 
     auto m = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(c);
-    if (m == nullptr)
-        return 0u;
+    if (m == nullptr) {
+        // [ISO8583] B4: struktureller Fehler -> Fail-closed.
+        throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
+    }
 
     std::size_t consumed = 0u;
 
@@ -248,7 +259,10 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         }
         mti->wire_length(mti_bytes);
         consumed += mti_bytes;
-        m->set(mti);
+        // [ISO8583] B3: set() kann fehlschlagen (z.B. OOM) - dann wäre die
+        // Nachricht nur teilweise dekodiert (stille Datenkorruption).
+        if (!m->set(mti))
+            throw std::runtime_error("[ISO8583] MTI: ISOMessage::set fehlgeschlagen (Speicherfehler?)");
     }
 
     // -- Bitmap ---------------------------------------------------------------
@@ -275,7 +289,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         bmp = bitmap->value();
         bmp.shrink_to_fit();
         bmp_sz = ((bmp.size() - 1 + 63) >> 6) << 3;
-        m->set(bitmap);
+        // [ISO8583] B3: siehe MTI oben.
+        if (!m->set(bitmap))
+            throw std::runtime_error("[ISO8583] Bitmap: ISOMessage::set fehlgeschlagen (Speicherfehler?)");
 
         auto last_idx = bmp.find_first();
         for (auto idx = last_idx; idx != dynamic_bitset<>::npos; ) {
@@ -332,15 +348,26 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
                 }
                 de->wire_length(de_bytes);
                 consumed += de_bytes;
-                m->set(de);
+                // [ISO8583] B3: set() kann fehlschlagen (z.B. OOM) - dann
+                // wäre die Nachricht nur teilweise dekodiert.
+                if (!m->set(de))
+                    throw std::runtime_error("[ISO8583] DE" + std::to_string(i) +
+                        ": ISOMessage::set fehlgeschlagen (Speicherfehler?)");
             }
 
         ++i;
     });
 
-    if (consumed != b.size())
+    if (consumed != b.size()) {
+        // [ISO8583] P2: unkonvertierte Rest-Bytes. strict: verwerfen;
+        // nicht-strikt: Legacy-Logmeldung (Datenverlust bleibt möglich).
+        if (strict_)
+            throw std::runtime_error("[ISO8583] Unverbrauchte Bytes am Pufferende: " +
+                std::to_string(b.size() - consumed) + " von " + std::to_string(b.size()) +
+                " Bytes nicht konvertiert (Nachrichtenstruktur deckt das Byte-Image nicht vollständig ab)");
         TNG_LOG_ERROR("[ISOBaseParser] Byte consumption mismatch: expected={} actual={}",
             b.size(), consumed);
+    }
 
     return consumed;
 }

@@ -157,9 +157,28 @@ namespace TNG_NAMESPACE {
     /// @see iso8583::Message::unparse
     class TNG_EXPORT ISOParserPtrBase
     {
+    protected:
+        // [ISO8583] strikte Dekodierung (Default: true; YAML-Key `strict:`).
+        // mutable: der Modus-Schalter ist keine logische Konstante, soll aber
+        // über `shared_ptr<const ISOParserPtrBase>` (z.B. aus ISOBaseParser::l_)
+        // setzbar bleiben.
+        mutable bool strict_ = true;
     public:
         /// @brief Shared-pointer alias.
         using ISOParserPtrBaseSmartPtr = std::shared_ptr<ISOParserPtrBase>;
+
+        /// @brief Aktiviert/deaktiviert den strikten Modus (Default: `true`).
+        ///
+        /// Strikt: inhärente Fehler (abgeschnittene Felder/Präfixe, nicht
+        /// konvertierbare Bytes, unkonvertierte Rest-Bytes) werfen eine
+        /// positionierte `std::runtime_error`. Nicht-strikt: Legacy-Verhalten
+        /// (Log + bestmögliche Fortsetzung).
+        /// @note `ISOBaseParser::strict()` propagiert den Wert zusätzlich auf
+        ///       alle Feld-Parserv (inklusive verschachtelter Sub-Parsers).
+        virtual void strict(bool v) const noexcept { strict_ = v; }
+
+        /// @brief Liefert den aktuellen strikten-Modus-Status.
+        [[nodiscard]] virtual bool strict() const noexcept { return strict_; }
 
         // [Destructor]
         virtual ~ISOParserPtrBase() = default;
@@ -210,9 +229,19 @@ namespace TNG_NAMESPACE {
     // Forward decleration
     class TNG_EXPORT ISOFieldParserPtrBase
     {
+    protected:
+        // [ISO8583] strikte Dekodierung (Default: true).
+        // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
+        mutable bool strict_ = true;
     public:
         /// @brief Shared-pointer alias.
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
+
+        /// @brief Setzt den strikten Modus dieses Feld-Parsers.
+        void strict(bool v) const noexcept { strict_ = v; }
+
+        /// @brief Liefert den aktuellen strikten-Modus-Status.
+        [[nodiscard]] bool strict() const noexcept { return strict_; }
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;
