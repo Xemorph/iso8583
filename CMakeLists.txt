@@ -62,6 +62,15 @@ find_package(tsl-robin-map  CONFIG REQUIRED)
 
 if(ISO8583_ENABLE_ICONV)
     find_package(Iconv REQUIRED)
+    # [ISO8583] Phase 2 (0.3.0): Der EBCDIC-Codec ist voll tabellenbasiert
+    # (ICU-78.3-Orakel-Pin, s. tools/generate_ebcdic_tables) und nutzt
+    # libiconv nicht mehr. Die Option hält nur noch den deprivierten
+    # iconv-Fallback (src/_iconv_wrapper.cc) am Leben und wird in 0.4
+    # entfernt.
+    message(WARNING "ISO8583_ENABLE_ICONV ist deprecated (0.3.0) und wird in 0.4 entfernt: "
+            "Der EBCDIC-Codec ist seit Phase 2 voll tabellenbasiert (ICU-78.3-Orakel-Pin, "
+            "s. tools/generate_ebcdic_tables) und nutzt libiconv nicht mehr. "
+            "Setze ISO8583_ENABLE_ICONV=OFF, um die libiconv-Abhängigkeit zu entfernen.")
 endif()
 
 # -----------------------------------------------------------------------------

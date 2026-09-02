@@ -290,7 +290,7 @@ namespace TNG_NAMESPACE {
                 codec::pad<p_>(data, de_l_); // Padding data
                 std::vector<uint8_t> b_img(codec::parsed_length<pe_, l_>() + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                codec::to<e_>(data, b_img, codec::parsed_length<pe_, l_>());
+                codec::to<e_>(data, b_img, codec::parsed_length<pe_, l_>(), strict_);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
@@ -321,7 +321,7 @@ namespace TNG_NAMESPACE {
                 }
                 std::vector<uint8_t> b_img(pl + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                codec::to<e_>(data, b_img, pl);
+                codec::to<e_>(data, b_img, pl, strict_);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, dynamic_bitset<> >) {
@@ -452,9 +452,12 @@ namespace TNG_NAMESPACE {
                 // Skip allocation of temporary function stack variable
                 if constexpr (l_ != codec::Length::CONSUME)
                     if constexpr (std::is_same_v< T, std::string >)
-                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l));
+                        // [ISO8583] Q4: strict-Modus gilt auch fuer die Codec-
+                        // Dekodierung (EBCDIC-Whitelist-Pruefung); nicht-strikt
+                        // bleibt die Legacy-Sentinel-Mapping (0x2E '.') erhalten.
+                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l, strict_));
                     else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
-                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l));
+                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l, strict_));
 
                 const std::size_t total = ll + codec::required_sz_for_as<e_>(l); // l= 3 ---> 3
                 // wire_length: hier gesetzt, da erst jetzt die tatsächliche Byte-Länge bekannt ist.

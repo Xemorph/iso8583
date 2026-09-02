@@ -8,12 +8,24 @@
 //
 // Neue Kombinationen: in fmt_types.hh einen neuen Typ anlegen und hier
 // die entsprechenden Instanziierungen ergänzen.
+//
+// [ISO8583] Phase 2: Der EBCDIC-Pfad der Codec-Instanziierungen ist voll
+// tabellenbasiert (kEbcdicToAscii/kAsciiToEbcdic, vom ICU-78.3-Orakel
+// verifiziert – s. tools/generate_ebcdic_tables). Der unten eingeblendete
+// iconv-Block ist NICHT Teil des Codec-Pfads mehr; er hält nur den
+// deprivierten Fallback (ebcdic_to_ascii_cached/ascii_to_ebcdic_cached,
+// ISO8583_ENABLE_ICONV, Entfernung in 0.4) für Integratoren am Leben.
 
 // _codec_impl.hh einbinden BEVOR die expliziten Instanziierungen,
 // damit die Definitionen sichtbar sind.
 #define CODEC_IMPL_SOURCE
 #include <iso8583/_codec.hh>
 #include "_logger.hh"   // TNG_LOG_ERROR für Konvertierungsfehler
+#if ENABLE_ICONV
+// [ISO8583] Phase 2: nur für den deprivierten iconv-Fallback unten (nicht
+// mehr Teil des Codec-Pfads; Entfernung in 0.4).
+#include "_iconv_wrapper.hh"
+#endif
 #include <sstream>
 #include <stdexcept>
 
@@ -21,6 +33,11 @@ namespace TNG_NAMESPACE::codec {
 
 #if ENABLE_ICONV
     namespace detail {
+
+        // [ISO8583] DEPRECATED seit 0.3.0 (Entfernung in 0.4): Dieser Block
+        // wird vom Codec (as</to> EBCDIC-Zweige) NICHT mehr verwendet – der
+        // EBCDIC-Pfad ist voll tabellenbasiert. Die Funktionen sind nur noch
+        // für Integratoren da, die bewusst iconv nutzen wollen.
 
         // Ein iconv_t-Deskriptor pro Thread und Richtung wird einmalig geöffnet
         // und über alle nachfolgenden Aufrufe hinweg wiederverwendet, statt bei

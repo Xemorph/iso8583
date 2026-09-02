@@ -10,10 +10,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-// [iconv]
-#if ENABLE_ICONV
-#include "_iconv_wrapper.hh"
-#endif
 
 // -----------------------------------------------------------------------------
 // _codec.hh
@@ -22,6 +18,11 @@
 //   - Enums (PrefixEncoder, Length, Encoder)
 //   - Konstante Lookup-Tabellen (EBCDIC_DIGITS, HEX_EBCDIC, kEbcdicToAscii)
 //   - Funktionsdeklarationen (Definitionen in src/_codec.cc)
+//
+// [ISO8583] Phase 2: Der EBCDIC-Codec ist voll tabellenbasiert – kein
+// Laufzeit-Converter (kein iconv, kein ICU) wird am EBCDIC-Pfad benötigt.
+// Die Tabellen sind vom gepinnten ICU-78.3-Orakel verifiziert
+// (tools/generate_ebcdic_tables; Regeneration: `update-ebcdic-tables`).
 //
 // Erfahrene Anwender die einen eigenen ISOBaseParser schreiben binden
 // ausschließlich diesen Header ein.
@@ -55,7 +56,7 @@ namespace TNG_NAMESPACE::codec {
 
     // Python kennt "cp1047" nicht als Codec (nur cp037, cp500, cp1140, ...),
     // daher hier über das System-iconv erzeugt statt über Python-codecs:
-    // 
+    //
     // Generated with Python code:
     //
     //```py
@@ -80,6 +81,13 @@ namespace TNG_NAMESPACE::codec {
     //```
     //
     // This will also likely be the fastest method, since the 256-byte table will easily fit in the L1 cache
+    //
+    // [ISO8583] Phase 2 (0.3.0): Diese Tabelle ist der deterministische
+    // EBCDIC-Pfad der Bibliothek. Sie ist byte-genau gegen das gepinnte
+    // ICU-78.3-Orakel verifiziert (256-Byte-Sweep, beide Richtungen – kein
+    // einziger Whitelist-Byte weicht ab). Pin + Regenerator:
+    // tools/generate_ebcdic_tables (CMake-Ziele `update-ebcdic-tables` /
+    // `verify-ebcdic-tables`); verifizierte Orakel-Artefakte: pinned/*.json.
     /// EBCDIC (IBM-1047) → ASCII Konvertierungstabelle (256 Einträge, unbekannte Zeichen → '.')
     static const char kEbcdicToAscii[256] = {
         0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e, 0x2e,
@@ -230,10 +238,11 @@ namespace TNG_NAMESPACE::codec {
     // \param text (byte image) to convert
     // \param offset to convert from
     // \param length of n units to read
-    // \param rejectInvalid [ISO8583] strict-Modus (Table-Pfad): ungültige
-    //       EBCDIC-Bytes werfen ein positioniertes std::runtime_error statt
-    //       das Legacy-'.'-Mapping (0x2E) anzuwenden. Im ICONV-Pfad ignoriert
-    //       (iconv ist inhärent strikt, EILSEQ).
+    // \param rejectInvalid [ISO8583] strict-Modus: ungültige EBCDIC-Bytes
+    //       (außerhalb der IBM-1047-Whitelist) werfen ein positioniertes
+    //       std::runtime_error statt das Legacy-'.'-Mapping (0x2E) anzuwenden.
+    //       Der EBCDIC-Pfad ist voll tabellenbasiert (Phase 2) – das
+    //       Verhalten ist auf jedem Toolchain identisch deterministisch.
     template <typename T, Encoder e>
     static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid = false);
 
@@ -280,16 +289,14 @@ namespace TNG_NAMESPACE::codec {
         }
 
 #if ENABLE_ICONV
-        // Thread-lokal gecachte iconv-Konvertierung (Implementierung in
-        // _codec.cc). as<>/to<> sind beide `static constexpr` deklariert -
-        // `thread_local` innerhalb einer constexpr-Funktion ist aber erst ab
-        // C++23 erlaubt. Deshalb liegt das Caching hier in gewöhnlichen
-        // (nicht-constexpr) Funktionen, an die as<>/to<> für die
-        // EBCDIC+ICONV-Zweige nur delegieren. Das vermeidet außerdem, bei
-        // JEDEM einzelnen Feld iconv_open()/iconv_close() neu aufzurufen -
-        // ca. 5-7x langsamer als ein wiederverwendeter Deskriptor (siehe
-        // Kommentar in _codec.cc).
+        // [ISO8583] DEPRECATED seit 0.3.0 (Entfernung in 0.4): Seit Phase 2
+        // ist der EBCDIC-Codec voll tabellenbasiert und ruft diese Funktionen
+        // NICHT mehr auf. Sie bleiben nur als Fallback für Integratoren
+        // verfügbar, die bewusst eine iconv-basierte Konvertierung nutzen
+        // wollen (ISO8583_ENABLE_ICONV=ON). Implementierung in _codec.cc.
+        /// \deprecated seit 0.3.0 – EBCDIC-Pfad ist tabellenbasiert (Phase 2).
         TNG_EXPORT std::string ebcdic_to_ascii_cached(const std::string& data);
+        /// \deprecated seit 0.3.0 – EBCDIC-Pfad ist tabellenbasiert (Phase 2).
         TNG_EXPORT std::string ascii_to_ebcdic_cached(const std::string& data);
 #endif
 

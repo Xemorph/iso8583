@@ -139,17 +139,15 @@ namespace TNG_NAMESPACE::codec {
         else if constexpr (std::is_same_v<T, std::string>) {
             // -- String-Rückgabepfad ------------------------------------------
             if constexpr (Encoder::EBCDIC == e) {
+                // Voll tabellenbasiert (Phase 2): IBM-1047-Lookup über
+                // kEbcdicToAscii/kEbcdicValid – keine Laufzeit-Converter-
+                // Abhängigkeit mehr (kein iconv/ICU am EBCDIC-Pfad).
+                // strict-Modus (rejectInvalid): Bytes außerhalb der Whitelist
+                // werfen ein positioniertes std::runtime_error; ansonsten
+                // Legacy-'.'-Mapping (0x2E).
                 std::string data(text.begin() + offset, text.begin() + offset + length);
-#if ENABLE_ICONV
-                // ICONV-Pfad: rejectInvalid wird ignoriert - iconv ist inhärent
-                // strikt (EILSEQ -> positioniertes std::runtime_error, siehe
-                // _codec.cc). Der Table-Pfad (unten) wendet rejectInvalid an.
-                (void)rejectInvalid;
-                return detail::ebcdic_to_ascii_cached(data);
-#else
                 detail::e2a_n(data.data(), data.size(), rejectInvalid);
                 return data;
-#endif
             }
             else if constexpr (Encoder::BCD == e) {
                 std::string data;
@@ -188,18 +186,10 @@ namespace TNG_NAMESPACE::codec {
                     b[offset + i] = static_cast<uint8_t>(value[i]);
             }
             else if constexpr (Encoder::EBCDIC == e) {
-                // ASCII → EBCDIC: invert the kEbcdicToAscii lookup table.
-                // We build a reverse table lazily at compile-time (constexpr).
-                // For runtime use, a direct iconv call is more accurate for
-                // non-digit characters; for digits and common alphanumerics
-                // the reverse-table approach matches the decoder exactly.
-#if ENABLE_ICONV
-                (void)rejectInvalid; // iconv ist inhärent strikt (EILSEQ)
-                const std::string res = detail::ascii_to_ebcdic_cached(std::string(value));
-                for (std::size_t i = 0; i < res.size(); ++i)
-                    b[offset + i] = static_cast<uint8_t>(res[i]);
-#else
-                // Use the class-level kAsciiToEbcdic table (defined in _codec.hh).
+                // Voll tabellenbasiert (Phase 2): ASCII → EBCDIC über die
+                // inverse Lookup-Tabelle kAsciiToEbcdic (definiert in
+                // _codec.hh, vom ICU-78.3-Orakel verifiziert – keine
+                // Laufzeit-Converter-Abhängigkeit mehr).
                 // strict-Modus: Zeichen ohne IBM-1047-Mapping (Fallback 0x6F '?')
                 // werden verworfen, statt still durch '?' ersetzt zu werden.
                 for (std::size_t i = 0; i < value.size(); ++i) {
@@ -212,7 +202,6 @@ namespace TNG_NAMESPACE::codec {
                             "Eingabe (" + std::to_string(value.size()) + " B)");
                     b[offset + i] = kAsciiToEbcdic[c];
                 }
-#endif
             }
             else if constexpr (Encoder::BCD == e) {
                 // Digits → BCD packed (2 digits per byte).

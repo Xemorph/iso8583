@@ -696,7 +696,14 @@ static std::string getFormattedTimestamp() {
     auto dp = date::floor<date::days>(tp);
     date::year_month_day ymd{ dp };
     auto time = date::make_time(tp - dp);
-
+    // Subsekunden als 6-stellige Mikrosekunden (WLP-FO erwartet
+    // "YYYY.MM.DD.HH.MM.SS.uuuuuu"): Das Roh-Zeitperiod des Clocks
+    // (z.B. 100 ns auf Windows/MSVC) liefert eine variable Ziffernzahl,
+    // wodurch die Groessenpruefung in creationTs() plattformabhaengig und
+    // flaky einen "Timestamp format error" werfen wuerde (10 % pro Sekunde
+    // auf MSVC). Durch die Konvertierung auf Mikrosekunden ist das Format
+    // deterministisch 26 Zeichen lang auf allen Plattformen.
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(time.subseconds());
     std::stringstream ss;
     ss << std::setfill('0')
         << std::setw(4) << int(ymd.year()) << '.'
@@ -705,7 +712,7 @@ static std::string getFormattedTimestamp() {
         << std::setw(2) << time.hours().count() << '.'
         << std::setw(2) << time.minutes().count() << '.'
         << std::setw(2) << time.seconds().count() << '.'
-        << std::setw(4) << time.subseconds().count();
+        << std::setw(6) << us.count();
     return ss.str();
 }
 
