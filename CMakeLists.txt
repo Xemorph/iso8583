@@ -18,11 +18,12 @@ project(libiso8583
 # Standard-Optionen
 # -----------------------------------------------------------------------------
 option(ISO8583_BUILD_SHARED   "Shared Library (.dll/.so) bauen"          ON)
-option(ISO8583_ENABLE_ICONV   "libiconv für EBCDIC-Konvertierung nutzen" ON)
+option(ISO8583_ENABLE_ICONV   "[DEPRECATED seit 0.3.0, removal 0.4] libiconv-Fallback für EBCDIC halten (Codec ist voll tabellenbasiert)" ON)
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
 option(ISO8583_BUILD_EXAMPLES "Beispielprojekte bauen (tcp_gateway)"      OFF)
 option(ISO8583_BUILD_FUZZERS  "libFuzzer-Ziele bauen (nur clang, s. tests/fuzz)" OFF)
+option(ISO8583_BUILD_CODEC_TOOLS "EBCDIC-Orakel-Tool bauen (tools/generate_ebcdic_tables; ICU 78.3, nie an Runtime gelinkt)" OFF)
 option(ISO8583_BERTLV         "DE-Schlüsseltyp auf int32_t erweitern (für volle \
 BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie 9F26, die als Big-Endian-Wert \
 > 32767 nicht in int16_t passen)" OFF)
@@ -398,4 +399,14 @@ endif()
 # -----------------------------------------------------------------------------
 if(ISO8583_BUILD_EXAMPLES)
     add_subdirectory(examples/tcp_gateway)
+endif()
+
+# -----------------------------------------------------------------------------
+# Codec-Orakel-Tools (optional): ICU-78.3-Generator/-Verifizierer fuer die
+# EBCDIC-Tabellen. Reines Build-/CI-Tool — ICU wird ausschliesslich an das
+# Tool-Executable gelinkt, nie an Runtime-Targets. Fehlt ICU in der Umgebung,
+# wird das Sub-Project uebersprungen (s. tools/generate_ebcdic_tables).
+# -----------------------------------------------------------------------------
+if(ISO8583_BUILD_CODEC_TOOLS)
+    add_subdirectory(tools/generate_ebcdic_tables)
 endif()

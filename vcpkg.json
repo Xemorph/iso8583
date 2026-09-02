@@ -18,6 +18,10 @@
     {
       "name": "libiconv",
       "platform": "!linux"
+    },
+    {
+      "name": "icu",
+      "version>=": "78.3"
     }
   ]
 }

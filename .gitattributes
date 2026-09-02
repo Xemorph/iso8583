@@ -1,0 +1,4 @@
+# Byte-stabile Orakel-Verdicts: LF erzwingen, damit verify-ebcdic-tables
+# auch auf Checkouts mit core.autocrlf=true byte-identisch bleibt
+# (s. tools/generate_ebcdic_tables/README.md).
+tools/generate_ebcdic_tables/pinned/*.json text eol=lf

@@ -23,6 +23,7 @@ add_executable(libiso8583_tests
     test_utils_protect.cc
     test_incompatible_input.cc
     test_strict_mode.cc
+    test_encoding_determinism.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über
