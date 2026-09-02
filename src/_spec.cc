@@ -237,12 +237,37 @@ namespace TNG_NAMESPACE::spec {
         if (!hasKey(root, "fields"))
             throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");  // keine Position verfügbar
 
+        // [ISO8583] E3 (Sicherheits-Audit): Leeres 'fields' verwerfen -
+        // sonst baut buildParser() aus einem leeren Feld-Map einen Parser
+        // (rbegin() auf leerem std::map ist UB), und die Preprocessor-Warnung
+        // "Feld '000' fehlt" würde das Problem verschleiern. Beide Sonderformen
+        // (fehlender Abschnitt + leere Map) enden hier mit einer präzisen,
+        // lokalisierten Fehlermeldung.
+        // (leere Map = kein einziger Key im ryml-Tree)
+        // [ISO8583] E3 (Sicherheits-Audit): 'fields' muss eine nicht-leere
+        // Map sein, sonst baut buildParser() einen kaputten Parser (rbegin()
+        // auf leerem std::map ist UB) oder es entkommen rohe Standard-
+        // Exceptions (z.B. std::invalid_argument aus std::stoi("") bei
+        // sequenz- oder skalaren Werten). Beide Sonderformen enden hier mit
+        // einer präzisen, lokalisierten Fehlermeldung.
+        if (!root["fields"].is_map() || !root["fields"].has_children())
+            throw SpecValidationError(
+                "Abschnitt 'fields' muss eine nicht-leere Map sein "
+                "(DE-Nummer → Felddefinition, mind. '000' und '001')",
+                root["fields"].id(), smap);
+
         for (ryml::ConstNodeRef entry : root["fields"].children()) {
             const auto key = toStdString(entry.key());
 
-            if (!std::all_of(key.begin(), key.end(), ::isdigit))
+            if (key.empty() || !std::all_of(key.begin(), key.end(), ::isdigit))
                 throw SpecValidationError(
                     "Feldschlüssel '" + key + "' ist nicht numerisch", entry.id(), smap);
+
+            // [ISO8583] E3: Ziffern-Overflow von std::stoi() verhindern -
+            // sonst entkommt hier eine rohe std::out_of_range.
+            if (key.size() > 9)
+                throw SpecValidationError(
+                    "DE-Nummer zu groß: '" + key + "'", entry.id(), smap);
 
             ryml::ConstNodeRef field = entry;
             if (!field.is_map()) continue;
@@ -725,11 +750,12 @@ namespace TNG_NAMESPACE::spec {
         std::map<int, SpecField> fields;
     };
 
-    static LoadedSpec loadAndParse(const std::string& path, bool trackSourceMap) {
+    static LoadedSpec loadAndParse(const std::string& path, const SpecLoadOptions& opts) {
         // Preprocessor läuft und baut gleichzeitig die SourceMap auf (sofern
         // trackSourceMap - siehe Kommentar bei preprocessWithSourceMap()).
-        // Die Sidecar (.smap) wird automatisch geschrieben/validiert.
-        auto [tree, smap] = SpecPreProcessor::preprocessWithSourceMap(path, trackSourceMap);
+        // Die Sidecar (.smap) wird automatisch geschrieben/validiert (seit
+        // 0.3.0 zusätzlich durch Sandbox-Wurzeln + allowSmapWrite begrenzt).
+        auto [tree, smap] = SpecPreProcessor::preprocessWithSourceMap(path, opts);
         ryml::ConstNodeRef yaml = tree.crootref();
         validateSpecYaml(yaml, &smap);
 
@@ -841,8 +867,15 @@ namespace TNG_NAMESPACE::spec {
     ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
         SpecDecoder::loadFromYaml(const std::string& path, bool trackSourceMap)
     {
+        SpecLoadOptions opts; opts.trackSourceMap = trackSourceMap;
+        return loadFromYaml(path, opts);
+    }
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFromYaml(const std::string& path, const SpecLoadOptions& opts)
+    {
         try {
-            const auto loaded = loadAndParse(path, trackSourceMap);
+            const auto loaded = loadAndParse(path, opts);
             auto parser = buildParser(loaded);
             TNG_LOG_INFO("[SpecDecoder] loadFromYaml '{}' – {} Felder, header={}B",
                 loaded.desc, loaded.fields.size(), loaded.hdr_sz);
@@ -857,6 +890,14 @@ namespace TNG_NAMESPACE::spec {
     ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
         SpecDecoder::loadFromYamlCached(const std::string& path, bool trackSourceMap,
             CacheValidation validation)
+    {
+        SpecLoadOptions opts; opts.trackSourceMap = trackSourceMap;
+        return loadFromYamlCached(path, opts, validation);
+    }
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFromYamlCached(const std::string& path,
+            const SpecLoadOptions& opts, CacheValidation validation)
     {
         const auto absPath = std::filesystem::absolute(path).string();
 
@@ -882,7 +923,7 @@ namespace TNG_NAMESPACE::spec {
             }
         }
 
-        auto parser = loadFromYaml(path, trackSourceMap);
+        auto parser = loadFromYaml(path, opts);
         const auto mtime = tryGetMTime(absPath);
 
         std::unique_lock lock(parserCacheMutex());
@@ -895,8 +936,17 @@ namespace TNG_NAMESPACE::spec {
         ISOSpec::SmartPtr>
         SpecDecoder::loadBothFromYaml(const std::string& path, bool trackSourceMap)
     {
+        SpecLoadOptions opts; opts.trackSourceMap = trackSourceMap;
+        return loadBothFromYaml(path, opts);
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadBothFromYaml(const std::string& path, const SpecLoadOptions& opts)
+    {
         try {
-            const auto loaded = loadAndParse(path, trackSourceMap);
+            const auto loaded = loadAndParse(path, opts);
             auto parser = buildParser(loaded);
 
             std::vector<SpecFieldInfo> infos;
@@ -923,6 +973,16 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadBothFromYamlCached(const std::string& path, bool trackSourceMap,
             CacheValidation validation)
     {
+        SpecLoadOptions opts; opts.trackSourceMap = trackSourceMap;
+        return loadBothFromYamlCached(path, opts, validation);
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadBothFromYamlCached(const std::string& path,
+            const SpecLoadOptions& opts, CacheValidation validation)
+    {
         const auto absPath = std::filesystem::absolute(path).string();
 
         if (validation == CacheValidation::TrustUntilInvalidated) {
@@ -943,7 +1003,7 @@ namespace TNG_NAMESPACE::spec {
             }
         }
 
-        auto [parser, spec] = loadBothFromYaml(path, trackSourceMap);
+        auto [parser, spec] = loadBothFromYaml(path, opts);
         const auto mtime = tryGetMTime(absPath);
 
         std::unique_lock lock(bothCacheMutex());

@@ -7,6 +7,7 @@
 #include <ryml/ryml_std.hpp>
 // [tng]
 #include <iso8583/config.h>
+#include <iso8583/ISOSpec.hh>
 // [tng/internal]
 #include "_sourcemap.hh"
 
@@ -35,17 +36,18 @@ namespace TNG_NAMESPACE::spec {
     class TNG_EXPORT SpecPreProcessor {
     public:
         /// Verarbeitet eine YAML-Spec-Datei und baut gleichzeitig eine SourceMap auf.
-        /// Die SourceMap wird automatisch als Sidecar (path + ".smap") gespeichert
-        /// wenn sie noch nicht existiert oder veraltet ist.
         ///
-        /// @param trackSourceMap  Bei `false` wird KEINE Positionsverfolgung pro
-        ///        YAML-Knoten durchgeführt. Fehlermeldungen fallen dann auf eine
-        ///        generische, weniger präzise Angabe zurück - für eine Spec
-        ///        ohne !use/!template/!merge/!include_files (der Normalfall)
-        ///        bleibt die Präzision unverändert hoch. Existiert bereits eine
-        ///        gültige `.smap`-Sidecar-Datei, wird die trotzdem genutzt.
+        /// Seit 0.3.0 steuert `opts` (SpecLoadOptions) zusätzlich:
+        ///   - Include-Sandbox: `!include_files`-Pfade, die außerhalb der
+        ///     erlaubten Wurzeln (Default: Verzeichnis der Top-Level-Spec) auflösen,
+        ///     werfen (fail-closed) - schützt vor `../`-Traversals, absoluten
+        ///     Pfaden und Symlink-Escapes (s. SpecLoadOptions::sandbox).
+        ///   - Ressourcenlimits: maxSpecBytes (je Datei, wird beim Einlesen
+        ///     erzwungen), maxIncludeFiles (Gesamtzahl), maxSmapBytes (Sidecar-Lesen).
+        ///   - Sidecar-Schreiben: nur wenn `allowSmapWrite` UND innerhalb der
+        ///     Sandbox-Wurzeln - der Load selbst ist davon unberührt.
         static PreprocessResult preprocessWithSourceMap(
-            const std::string& path, bool trackSourceMap = true);
+            const std::string& path, const SpecLoadOptions& opts);
     };
 
 }

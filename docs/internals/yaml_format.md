@@ -50,6 +50,34 @@ fields:
   "002": !use pan_field   # in base.yml definiert
 ```
 
+### Sandbox und Ressourcenlimits beim Laden (seit 0.3.0)
+
+`SpecDecoder::load*FromYaml(..., const SpecLoadOptions&)` steuert das
+Vertrauensmodell beim Laden. Alle bisherigen Überladungen (ohne Options-
+Struktur) liefern ein `SpecLoadOptions` mit **Default-Werten**:
+
+| Option | Default | Wirkung |
+|---|---|---|
+| `sandbox` | `true` | `!include_files`-Pfade werden **fail-closed** geprüft: Einträge, die außerhalb der erlaubten Wurzeln auflösen (`../`-Traversals, absolute Pfade, UNC-Pfade, per Symlink nach außen), werden mit `[ISO8583] Sandbox: …` abgelehnt. |
+| `roots` | leer → Verzeichnis der Top-Level-Spec | Erlaubte Wurzeln (werden kanonisiert). Die Top-Level-Datei selbst ist Wahl der Anwendung und wird NICHT gegen die Wurzeln geprüft; explizite `roots` **ersetzen** den Default. |
+| `allowSmapWrite` | `true` | `.smap`-Sidecar wird nur geschrieben, wenn `true` **und** der Sidecar-Pfad innerhalb der Sandbox-Wurzeln liegt. Der Load selbst ist davon unberührt. |
+| `maxSpecBytes` | 32 MiB | Größengrenze **pro Quelldatei** (Top-Level + jede Include); wird beim Einlesen (streamend) erzwungen. |
+| `maxIncludeFiles` | 1024 | Max. Anzahl **distinkter** Dateien pro Load (Top-Level mitgezählt) – schützt vor verschachtelten Include-Graphen. |
+| `maxSmapBytes` | 16 MiB | Sidecar-Dateien darüber hinaus werden beim Laden verworfen und neu erzeugt. |
+
+Beispiel (Read-only-Deployment mit expliziter Wurzel):
+
+```cpp
+iso8583::spec::SpecLoadOptions opts;
+opts.roots = { "/etc/iso8583/specs" };
+opts.allowSmapWrite = false;   // Read-only-Verzeichnis: keine Sidecar-Erzeugung
+auto parser = iso8583::spec::SpecDecoder::loadFromYaml("/etc/iso8583/specs/gmc.yml", opts);
+```
+
+Hinweis: `fields:` muss eine **nicht-leere Map** sein (leere Maps, Sequenzen
+und Ziffern-Overflows wie `"99999999999"` erzeugen präzise, lokalisierte
+Fehler statt roher Standard-Exceptions).
+
 ## Direktiven
 
 | Direktive | Wirkung |

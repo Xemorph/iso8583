@@ -184,10 +184,23 @@ namespace TNG_NAMESPACE::spec {
     }
 
     std::optional<SourceMap> SourceMap::load(const std::string& smap_path,
-        const std::string& current_hash)
+        const std::string& current_hash, std::size_t max_bytes)
     {
-        std::ifstream in(smap_path);
+        std::ifstream in(smap_path, std::ios::binary);
         if (!in) return std::nullopt;  // Datei existiert nicht
+
+        // [ISO8583] F4 (Sicherheits-Audit): Sidecars sind Bibliotheks-cache,
+        // können aber in freiem Verzeichnis von außen stammen - eine
+        // überdimensionierte Datei wird NIE eingelesen (Ressourcen-Schutz),
+        // sondern verworfen und später neu erzeugt.
+        in.seekg(0, std::ios::end);
+        const std::streamoff sz = in.tellg();
+        in.seekg(0, std::ios::beg);
+        if (sz < 0 || static_cast<std::size_t>(sz) > max_bytes) {
+            TNG_LOG_WARN("[SourceMap] Sidecar '{}' zu groß ({} Bytes, Limit {}) - wird verworfen",
+                smap_path, sz < 0 ? -1 : sz, max_bytes);
+            return std::nullopt;
+        }
 
         try {
             nlohmann::json j;

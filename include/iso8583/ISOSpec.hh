@@ -209,12 +209,27 @@ namespace TNG_NAMESPACE {
         /// `loadBothFromYamlCached`) bei einem Cache-Treffer die Aktualität
         /// der Datei prüfen.
         enum class CacheValidation {
-            /// @brief Default. Vergleicht bei JEDEM Aufruf `last_write_time()`
-            /// der Datei mit dem beim Cachen gespeicherten Stand - erkennt
-            /// Änderungen automatisch, kostet aber einen `stat()`-artigen
-            /// Systemaufruf pro Aufruf (gemessen: ~0.9 us von insgesamt ~1.2 us
-            /// für einen Cache-Treffer - der eigentliche Map-Lookup kostet nur
-            /// ~25 ns).
+            /// @brief Default. Vergleicht bei JEDEM Aufruf zunächst
+            /// `last_write_time()` der Top-Level-Datei mit dem beim Cachen
+            /// gespeicherten Stand (ein `stat()`-artiger Systemaufruf, gemessen
+            /// ~0.9 us von insgesamt ~1.2 us für einen Cache-Treffer - der
+            /// eigentliche Map-Lookup kostet nur ~25 ns). Hat sich die
+            /// Zeitstempel geändert, werden zusätzlich die Inhalte aller
+            /// Quelldateien (Top-Level-Spec + alle `!include_files`-Dateien
+            /// der gecachten Version) per SHA-256 neu gehasht, um "Touch ohne
+            /// Inhaltsänderung" von echten Änderungen zu unterscheiden.
+            ///
+            /// **Sicherheitshinweis (seit 0.3.0):** Selbst der Hash-Vergleich
+            /// ist nur *beratend* - eine zwischen Prüfung und Nutzung der
+            /// zurückgegebenen Parser veränderte Datei lässt sich im Allgemeinen
+            /// nicht erkennen (TOCTOU). Der Loader verwendet daher ein
+            /// Publish-then-Verify-Protokoll: eine neu geladene Parser-Version
+            /// wird nur unter dem Hashexakten Dateisnapshot, aus dem sie gebaut
+            /// wurde, veröffentlicht und unmittelbar danach erneut gehasht;
+            /// haben sich Dateien während des Loads geändert, wird der frische
+            /// Eintrag wieder verworfen (der aufrufenden Seite wird der
+            /// konsistente Snapshot zurückgegeben). Der Cache ist pro absolutem
+            /// Pfad auf 64 Einträge begrenzt (LRU).
             CheckEveryCall,
             /// @brief Kein Dateisystem-Zugriff bei einem Cache-Treffer (nur
             /// noch Map-Lookup + shared_ptr-Kopie, ~25 ns statt ~1.2 us) -
@@ -225,7 +240,72 @@ namespace TNG_NAMESPACE {
             /// selbst aufruft. Für Specs, die zur Laufzeit ohnehin nie
             /// verändert werden (der Normalfall in Produktion), gibt es
             /// keinen Nachteil gegenüber `CheckEveryCall`.
+            /// **Nur für vollständig kontrollierte Spec-Dateien verwenden**
+            /// (Ort, Schreibrechte, Lebensdauer) - bei nutzerbestimmten Pfaden
+            /// kann ein fremder Schreiber die Datei austauschen, ohne dass die
+            /// Bibliothek es merkt.
             TrustUntilInvalidated
+        };
+
+        /// @brief Ladeoptionen für die `SpecDecoder::load*`-Funktionen (seit 0.3.0).
+        ///
+        /// Die bestehenden Overloads mit `bool trackSourceMap` bleiben
+        /// kompatibel; sie setzen `trackSourceMap` und übernehmen ansonsten
+        /// alle Defaultwerte - **einschließlich des aktivierten Sandboxes**.
+        ///
+        /// @par Sandbox
+        /// Bei `sandbox == true` (Default) wird jeder Eintrag in einer
+        /// `!include_files`-Direktive relativ zur referenzierenden Datei
+        /// aufgelöst und **abgelehnt (der Load schlägt fehl)**, wenn er
+        /// außerhalb der erlaubten Wurzeln liegt - inklusive `../`-Traversals,
+        /// absoluter Pfade, UNC-Pfade und Pfade, die über einen symbolischen
+        /// Link aus der Wurzel hinausführen. Ist `roots` leer (Default), ist
+        /// die einzige erlaubte Wurzel das Verzeichnis der Top-Level-Spec;
+        /// über `roots` lassen sich zusätzliche Verzeichnisse erlauben (z.B. ein
+        /// gemeinsames Definitions-Verzeichnis).
+        ///
+        /// @par Ressourcenlimits
+        /// `maxSpecBytes` begrenzt die Größe **jeder** während des Loads
+        /// gelesenen Spec-Datei (Top-Level und alle Includes); `maxIncludeFiles`
+        /// die Gesamtzahl der geladenen, distinkten Dateien; `maxSmapBytes` die
+        /// Größe eines für die Wiederverwendung akzeptierten `.smap`-Sidecars
+        /// (größerer Sidecars werden verworfen und neu erzeugt).
+        ///
+        /// @par Sidecar-Schreiben
+        /// Die SourceMap-Seitenkarte (`<spec>.smap`) wird nur geschrieben,
+        /// wenn `allowSmapWrite` `true` ist **und** der Sidecar-Pfad innerhalb
+        /// der Sandbox-Wurzeln liegt. Damit sind Lese-Only-Deployments und
+        /// sandboxisierte Loads frei von dateisystemseitigen Nebenwirkungen;
+        /// der Load selbst ist davon unberührt (Fehlerpositionen fallen auf
+        /// den in-memory-SourceMap zurück).
+        struct SpecLoadOptions {
+            ///< Quelltextpositionen der YAML-Knoten erfassen (Default `true`;
+            ///< `false` spart sich die dominante Kostenstelle des Loads -
+            ///< s. @ref SpecDecoder::loadFromYaml).
+            bool trackSourceMap = true;
+
+            ///< Include-Sandbox aktivieren (Default `true`).
+            bool sandbox = true;
+
+            ///< Erlaubte Wurzeln für `!include_files`-Auflösung. Leer (Default) =
+            ///< Verzeichnis der Top-Level-Spec. Pfade werden kanonisiert;
+            ///< eine Wurzel, die nicht existiert, ist ein Load-Fehler.
+            std::vector<std::string> roots;
+
+            ///< Schreiben des `.smap`-Sidecars erlauben (Default `true`;
+            ///< zusätzlich durch die Sandbox-Wurzeln begrenzt).
+            bool allowSmapWrite = true;
+
+            ///< Maximale Größe (Bytes) einer einzelnen Spec-Datei (Default 32 MiB).
+            std::size_t maxSpecBytes = 32u * 1024u * 1024u;
+
+            ///< Maximale Anzahl distinkter Spec-Datei pro Load (Top-Level +
+            ///< alle `!include_files`-Ziele; Default 1024).
+            std::size_t maxIncludeFiles = 1024u;
+
+            ///< Maximale Größe (Bytes) eines für die Wiederverwendung
+            ///< akzeptierten `.smap`-Sidecars (Default 16 MiB).
+            std::size_t maxSmapBytes = 16u * 1024u * 1024u;
         };
 
         class TNG_EXPORT SpecDecoder {
@@ -257,6 +337,13 @@ namespace TNG_NAMESPACE {
             static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
                 loadFromYaml(const std::string& path, bool trackSourceMap = true);
 
+            /// @brief Like @ref loadFromYaml, but with explicit load options
+            /// (sandbox roots, resource caps, sidecar gating – see
+            /// @ref SpecLoadOptions). Since 0.3.0 the include sandbox is **on
+            /// by default** for all overloads.
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFromYaml(const std::string& path, const SpecLoadOptions& opts);
+
             /// @brief Like @ref loadFromYaml, but caches the resulting parser
             /// in-process, keyed by absolute path.
             ///
@@ -281,6 +368,16 @@ namespace TNG_NAMESPACE {
                 loadFromYamlCached(const std::string& path, bool trackSourceMap = true,
                     CacheValidation validation = CacheValidation::CheckEveryCall);
 
+            /// @brief Like @ref loadFromYamlCached, but with explicit load
+            /// options (see @ref SpecLoadOptions). The cache is keyed by
+            /// absolute path only – when different option sets are used for
+            /// the same path, the entry filled by the first load is shared
+            /// until it is invalidated (documented trade-off, see
+            /// @ref CacheValidation).
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFromYamlCached(const std::string& path, const SpecLoadOptions& opts,
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
+
             /// @brief Loads both a parser and an introspectable spec object.
             ///
             /// Reads and preprocesses the YAML file **once** and builds both
@@ -303,6 +400,13 @@ namespace TNG_NAMESPACE {
                 ISOSpec::SmartPtr>
                 loadBothFromYaml(const std::string& path, bool trackSourceMap = true);
 
+            /// @brief Like @ref loadBothFromYaml, but with explicit load
+            /// options (see @ref SpecLoadOptions).
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadBothFromYaml(const std::string& path, const SpecLoadOptions& opts);
+
             /// @brief Like @ref loadBothFromYaml, but caches the result
             /// in-process - see @ref loadFromYamlCached for the caching/
             /// validation contract (kept in a separate cache from
@@ -312,6 +416,15 @@ namespace TNG_NAMESPACE {
                 ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
                 ISOSpec::SmartPtr>
                 loadBothFromYamlCached(const std::string& path, bool trackSourceMap = true,
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
+
+            /// @brief Like @ref loadBothFromYamlCached, but with explicit load
+            /// options (see @ref SpecLoadOptions and the notes on
+            /// @ref loadFromYamlCached).
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadBothFromYamlCached(const std::string& path, const SpecLoadOptions& opts,
                     CacheValidation validation = CacheValidation::CheckEveryCall);
 
             /// @brief Removes `path` from both in-process caches (@ref

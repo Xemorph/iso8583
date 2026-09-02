@@ -1,5 +1,8 @@
 #include "_preprocessor.hh"
 // [stdc++]
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -84,6 +87,46 @@ namespace TNG_NAMESPACE::spec {
                 "YAML-Struktur zu tief verschachtelt (> " + std::to_string(MAX_RECURSION_DEPTH) +
                 " Ebenen) - möglicherweise eine zirkuläre !use-Referenz oder eine "
                 "fehlerhafte/böswillige Spec-Datei.");
+    }
+
+    // =============================================================================
+    // [ISO8583] 3.1 (Sicherheits-Audit): Include-Sandbox
+    // =============================================================================
+    // Prüft, ob der Pfad `p` mit `root` identisch ist oder innerhalb (der
+    // kanonisierten) Wurzel `root` liegt. Auf Windows ist der Vergleich
+    // case-insensitiv: das Dateisystem ist es auch, und fs::canonical() kann
+    // eine andere Groß-/Kleinschreibung liefern als fs::absolute() - ein
+    // case-sensitiver Vergleich würde dann gültige Includes verwerfen.
+    static bool isWithinRoot(const std::filesystem::path& p, const std::filesystem::path& root) {
+        auto cmp = [](const std::filesystem::path& a, const std::filesystem::path& b) {
+#if defined(_WIN32)
+            auto la = a.string();
+            auto lb = b.string();
+            std::transform(la.begin(), la.end(), la.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            std::transform(lb.begin(), lb.end(), lb.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return la == lb;
+#else
+            return a == b;
+#endif
+        };
+        auto itP = p.begin();
+        for (auto itR = root.begin(); itR != root.end(); ++itR) {
+            if (itP == p.end() || !cmp(*itP, *itR))
+                return false;
+            ++itP;
+        }
+        return true; // alle Root-Komponenten abgedeckt, `p` darf tiefer liegen
+    }
+
+    static std::string rootsToString(const std::vector<std::filesystem::path>& roots) {
+        std::string s;
+        for (const auto& r : roots) {
+            if (!s.empty()) s += ", ";
+            s += r.string();
+        }
+        return s;
     }
 
     struct ProcessContext {
@@ -435,15 +478,46 @@ namespace TNG_NAMESPACE::spec {
 
 TNG_NAMESPACE::spec::PreprocessResult
 TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
-    const std::string& path, bool trackSourceMap)
+    const std::string& path, const SpecLoadOptions& opts)
 {
     namespace fs = std::filesystem;
     using namespace TNG_NAMESPACE::spec;
+
+    const bool trackSourceMap = opts.trackSourceMap;
 
     ensureRymlThrowsExceptions();
 
     const fs::path    absPath = fs::absolute(path);
     const std::string smapPath = absPath.string() + ".smap";
+
+    // [ISO8583] 3.1 (Sicherheits-Audit): Sandbox-Wurzeln vorbereiten.
+    // Default (leeres `opts.roots`): das Verzeichnis der Top-Level-Spec.
+    // Wurzel-Pfade werden kanonisiert (Symlinks aufgelöst, echte Groß/
+    // Kleinschreibung) - existiert eine Wurzel nicht, ist das ein Load-Fehler
+    // (fail-closed, statt still zu degradieren).
+    // Die Top-Level-Datei selbst ist Wahl der Anwendung (kein Include) und
+    // wird NICHT gegen die Wurzeln geprüft; ihr Vorhandensein wird bei
+    // aktivierter Sandbox vorab geprüft, damit die (sonst) präzisere
+    // "Datei nicht lesbar"-Meldung vor eventuellen Wurzel-Fehlern kommt.
+    std::vector<fs::path> sandboxRoots;
+    if (opts.sandbox) {
+        std::error_code ec;
+        if (!fs::exists(absPath, ec))
+            throw std::runtime_error("Datei nicht lesbar: " + absPath.string());
+
+        const std::vector<std::string> rootList = opts.roots.empty()
+            ? std::vector<std::string>{ absPath.parent_path().string() }
+            : opts.roots;
+        sandboxRoots.reserve(rootList.size());
+        for (const auto& r : rootList) {
+            const auto canon = fs::canonical(fs::path(r), ec);
+            if (ec || canon.empty())
+                throw std::runtime_error(
+                    "[ISO8583] Sandbox: Wurzel ungültig (existiert nicht oder ist nicht "
+                    "auflösbar): '" + r + "'");
+            sandboxRoots.push_back(std::move(canon));
+        }
+    }
 
     std::unordered_set<std::string> visitedFiles;
     std::vector<std::string>        allFiles;
@@ -498,9 +572,38 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
             std::ifstream f(absStr, std::ios::binary);
             if (!f)
                 throw std::runtime_error("Datei nicht lesbar: " + absStr);
-            std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            if (content.empty())
-                throw std::runtime_error("Leere YAML-Datei: " + absStr);
+
+            // [ISO8583] 3.1 (Sicherheits-Audit): per-Datei-Größenlimit wird
+            // SCHON WÄHREND des Einlesens erzwungen (streaming, 64 KiB-Blöcke) -
+            // eine überdimensionierte Spec-Datei wird dadurch nie vollständig
+            // in den Speicher geladen, sondern der Load bricht ab, sobald das
+            // Limit überschritten wird (DoS-Schutz bei untrusted Specs).
+            std::string content;
+            {
+                std::array<char, 65536> buf{};
+                bool any = false;
+                for (;;) {
+                    f.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+                    const std::streamsize got = f.gcount();
+                    if (got > 0) {
+                        any = true;
+                        content.append(buf.data(), static_cast<std::size_t>(got));
+                        if (content.size() > opts.maxSpecBytes)
+                            throw std::runtime_error(
+                                "[ISO8583] Ressourcenlimit: Spec-Datei zu groß: " + absStr +
+                                " (" + std::to_string(content.size()) + " Bytes, Limit " +
+                                std::to_string(opts.maxSpecBytes) + " Bytes)");
+                        if (f.bad())
+                            throw std::runtime_error("Datei nicht lesbar: " + absStr);
+                        continue;
+                    }
+                    if (f.bad())
+                        throw std::runtime_error("Datei nicht lesbar: " + absStr);
+                    break; // EOF
+                }
+                if (!any)
+                    throw std::runtime_error("Leere YAML-Datei: " + absStr);
+            }
 
             // WICHTIG (per AddressSanitizer gefunden): ryml ruft intern
             // strlen() auf dem Dateinamen auf, behandelt ihn also wie einen
@@ -576,8 +679,60 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                     TNG_LOG_DEBUG("[Preprocessor] !include_files in '{}'", absStr);
 
                     for (ryml::ConstNodeRef entry : doc.children()) {
-                        const fs::path fullPath = fs::absolute(
-                            abs.parent_path() / toStdString(entry.val()));
+                        // [ISO8583] 3.1: Einträge müssen Pfad-Strings sein -
+                        // Maps/Sequences/leere Einträge sind ein Spec-Fehler.
+                        if (entry.is_map() || entry.is_seq() || !entry.has_val())
+                            throw std::runtime_error(
+                                "!include_files: Eintrag muss ein Pfad-String sein"
+                                "\n  Referenziert von: " + absStr);
+
+                        const std::string refStr = toStdString(entry.val());
+                        if (refStr.empty())
+                            throw std::runtime_error(
+                                "!include_files: Eintrag muss ein Pfad-String sein"
+                                "\n  Referenziert von: " + absStr);
+                        fs::path fullPath = fs::absolute(abs.parent_path() / refStr);
+
+                        // [ISO8583] 3.1 (Sicherheits-Audit): Include-Sandbox -
+                        // jeder Referenzpfad wird aufgelöst und ABGELEHNT, wenn
+                        // er außerhalb der erlaubten Wurzeln liegt (fail-closed):
+                        //   1) lexikalische Prüfung gegen die kanonisierten
+                        //      Wurzeln - fängt ../-Traversals, absolute Pfade
+                        //      und UNC-Pfade; und
+                        //   2) existiert die Datei, zusätzlich auf dem
+                        //      vollständig kanonisierten (symlink-auflösenden)
+                        //      Pfad - ein Symlink innerhalb der Wurzel kann
+                        //      sonst nach außen zeigen.
+                        if (opts.sandbox) {
+                            bool inside = false;
+                            for (const auto& root : sandboxRoots)
+                                if (isWithinRoot(fullPath, root)) { inside = true; break; }
+                            if (!inside)
+                                throw std::runtime_error(
+                                    "[ISO8583] Sandbox: !include_files-Eintrag '" + refStr +
+                                    "' löst außerhalb der erlaubten Wurzel"
+                                    + (sandboxRoots.size() == 1 ? "" : "n") +
+                                    " (" + rootsToString(sandboxRoots) + ") auf"
+                                    "\n  Referenziert von: " + absStr);
+
+                            std::error_code ec;
+                            if (fs::exists(fullPath, ec)) {
+                                const auto canon = fs::canonical(fullPath, ec);
+                                if (!ec) {
+                                    bool ok = false;
+                                    for (const auto& root : sandboxRoots)
+                                        if (isWithinRoot(canon, root)) { ok = true; break; }
+                                    if (!ok)
+                                        throw std::runtime_error(
+                                            "[ISO8583] Sandbox: !include_files-Eintrag '" + refStr +
+                                            "' führt (via symbolischem Link) außerhalb der "
+                                            "erlaubten Wurzel"
+                                            + (sandboxRoots.size() == 1 ? "" : "n") +
+                                            " (" + rootsToString(sandboxRoots) + ")"
+                                            "\n  Referenziert von: " + absStr);
+                                }
+                            }
+                        }
 
                         if (!fs::exists(fullPath))
                             throw std::runtime_error(
@@ -589,6 +744,19 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                             TNG_LOG_DEBUG("[Preprocessor] Duplikat übersprungen: {}", fullStr);
                             continue;
                         }
+
+                        // [ISO8583] 3.1 (Sicherheits-Audit): globales Limit für
+                        // die Gesamtzahl geladener, distinkter Dateien
+                        // (Top-Level-Datei + alle Includes) - verhindert
+                        // exponentielle Explosion durch verschachtelte Include-
+                        // Graphen. `visitedFiles` enthält zu diesem Punkt die
+                        // Top-Level-Datei und alle bereits geladenen Includes.
+                        if (visitedFiles.size() >= opts.maxIncludeFiles)
+                            throw std::runtime_error(
+                                "[ISO8583] Ressourcenlimit: maxIncludeFiles=" +
+                                std::to_string(opts.maxIncludeFiles) +
+                                " erreicht, nicht ladbar: " + fullStr);
+
                         loadAndProcess(fullStr);
                     }
                     continue; // nichts weiter zu tun für dieses Dokument
@@ -699,13 +867,33 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
 
     // ── Sidecar prüfen / schreiben ────────────────────────────────────────────
     const std::string currentHash = smap.hash();
-    if (auto loaded = SourceMap::load(smapPath, currentHash)) {
+    // [ISO8583] 3.1 (Sicherheits-Audit): Sidecar-Schreiben wird zusätzlich
+    // durch allowSmapWrite + Sandbox-Wurzeln begrenzt (keine Datei-
+    // Erzeugungs-Nebenwirkungen bei sandboxisierten Loads aus
+    // nutzerbestimmten Verzeichnissen); der Lesezugriff ist durch
+    // maxSmapBytes begrenzt (überdimensionierte Sidecars werden verworfen
+    // und neu erzeugt). Der Load selbst ist von alledem unberührt.
+    if (auto loaded = SourceMap::load(smapPath, currentHash, opts.maxSmapBytes)) {
         result.source_map = std::move(*loaded);
         TNG_LOG_DEBUG("[Preprocessor] SourceMap aus Sidecar geladen: {}", smapPath);
     }
     else if (trackSourceMap) {
-        smap.save(smapPath);
-        TNG_LOG_DEBUG("[Preprocessor] SourceMap neu geschrieben: {}", smapPath);
+        bool withinRoots = true;
+        if (opts.sandbox) {
+            withinRoots = false;
+            const fs::path smapFile = fs::path(smapPath);
+            for (const auto& root : sandboxRoots)
+                if (isWithinRoot(smapFile, root)) { withinRoots = true; break; }
+        }
+        if (opts.allowSmapWrite && withinRoots) {
+            smap.save(smapPath);
+            TNG_LOG_DEBUG("[Preprocessor] SourceMap neu geschrieben: {}", smapPath);
+        }
+        else {
+            TNG_LOG_DEBUG("[Preprocessor] SourceMap-Sidecar nicht geschrieben "
+                "(allowSmapWrite={}, innerhalb Sandbox-Wurzeln={})",
+                opts.allowSmapWrite, withinRoots);
+        }
     }
 
     return result;

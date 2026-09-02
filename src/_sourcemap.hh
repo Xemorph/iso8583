@@ -93,10 +93,14 @@ namespace TNG_NAMESPACE::spec {
         /// Lädt eine SourceMap aus einer Sidecar-Datei.
         /// Gibt nullopt zurück wenn:
         ///   - Datei nicht vorhanden
+        ///   - Datei größer als `max_bytes` (seit 0.3.0: Ressourcenschutz -
+        ///     überdimensionierte Sidecars können von außen stammen und werden
+        ///     verworfen, die SourceMap wird dann neu erzeugt)
         ///   - Hash stimmt nicht überein (Dateien geändert)
         ///   - JSON korrupt
         static std::optional<SourceMap> load(const std::string& smap_path,
-                                             const std::string& current_hash);
+                                             const std::string& current_hash,
+                                             std::size_t max_bytes = 16u * 1024u * 1024u);
 
         bool empty() const noexcept { return entries_.empty(); }
 
