@@ -865,6 +865,10 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
 
     smap.finalise(allFiles);
 
+    // [ISO8583] 3.2: Dateimenge des Loads fuer den Cache-Content-Snapshot
+    // (Hash + TOCTOU-Verifikation) weiterreichen.
+    result.sourceFiles = std::move(allFiles);
+
     // ── Sidecar prüfen / schreiben ────────────────────────────────────────────
     const std::string currentHash = smap.hash();
     // [ISO8583] 3.1 (Sicherheits-Audit): Sidecar-Schreiben wird zusätzlich

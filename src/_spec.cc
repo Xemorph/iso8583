@@ -2,8 +2,10 @@
 
 // [stdc++]
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -748,6 +750,12 @@ namespace TNG_NAMESPACE::spec {
         // [ISO8583] strikte Dekodierung (YAML-Root-Key `strict:`, Default: true)
         bool                     strict = true;
         std::map<int, SpecField> fields;
+        // [ISO8583] 3.2 (Sicherheits-Audit): Content-Snapshot des Loads -
+        // alle gelesenen Quelldateien + aggregierter SHA-256-Hash ueber
+        // sie (von SourceMap::finalise() berechnet). Grundlage fuer das
+        // Publish-then-Verify-Protokoll des Spec-Caches (E2).
+        std::vector<std::string> sourceFiles;
+        std::string              contentHash; // "sha256:<hex>"
     };
 
     static LoadedSpec loadAndParse(const std::string& path, const SpecLoadOptions& opts) {
@@ -755,9 +763,9 @@ namespace TNG_NAMESPACE::spec {
         // trackSourceMap - siehe Kommentar bei preprocessWithSourceMap()).
         // Die Sidecar (.smap) wird automatisch geschrieben/validiert (seit
         // 0.3.0 zusätzlich durch Sandbox-Wurzeln + allowSmapWrite begrenzt).
-        auto [tree, smap] = SpecPreProcessor::preprocessWithSourceMap(path, opts);
-        ryml::ConstNodeRef yaml = tree.crootref();
-        validateSpecYaml(yaml, &smap);
+        const auto pr = SpecPreProcessor::preprocessWithSourceMap(path, opts);
+        const ryml::ConstNodeRef yaml = pr.tree.crootref();
+        validateSpecYaml(yaml, &pr.source_map);
 
         LoadedSpec result;
         result.desc = getStr(yaml, "spec", "<unnamed>");
@@ -769,8 +777,12 @@ namespace TNG_NAMESPACE::spec {
             const auto de = toStdString(entry.key());
             const int  deNum = std::stoi(de);
             result.fields[deNum] = parseSpecField(
-                entry, result.defaultEncoding, de, &smap);
+                entry, result.defaultEncoding, de, &pr.source_map);
         }
+        // Content-Snapshot (Dateimenge + Hash): SourceMap::finalise() lief
+        // unbedingt (unabhaengig von trackSourceMap) im Preprocessor.
+        result.sourceFiles = std::move(pr.sourceFiles);
+        result.contentHash = pr.source_map.hash();
         return result;
     }
 
@@ -795,43 +807,93 @@ namespace TNG_NAMESPACE::spec {
     // =============================================================================
     // In-Prozess-Cache für loadFromYamlCached()/loadBothFromYamlCached()
     // =============================================================================
-    // Gecached wird das FERTIGE Ergebnis (Parser bzw. Parser+ISOSpec), nicht nur
-    // die YAML-Zwischenrepräsentation - ein Cache-Treffer kostet dadurch nur
-    // noch einen mutex-geschützten Map-Lookup + einen last_write_time()-Aufruf,
-    // statt jedes Mal neu zu parsen/prozessieren/aufzubauen. Invalidierung über
-    // die Datei-Modifikationszeit (kein Datei-Inhalts-Hash - last_write_time()
-    // ist praktisch kostenlos, ein Hash würde die Datei erneut lesen).
+    // Gecached wird das FERTIGE Ergebnis (Parser bzw. Parser+ISOSpec), nicht
+    // nur die YAML-Zwischenrepräsentation - ein Cache-Treffer kostet dadurch
+    // nur noch einen mutex-geschützten Map-Lookup (plus last_write_time() bei
+    // CheckEveryCall), statt jedes Mal neu zu parsen/prozessieren/aufzubauen.
     //
-    // Zwei getrennte Caches (statt einem gemeinsamen): vermeidet den Sonderfall
-    // "für denselben Pfad wurde vorher nur der Parser gecacht, jetzt wird aber
-    // auch das ISOSpec gebraucht" - beide Cache-Varianten sind unabhängig
-    // voneinander bef üllt, auf Kosten von im Edge-Case doppelt gecachten Daten
-    // für Pfade, die über BEIDE Funktionen geladen werden.
-    struct ParserCacheEntry {
-        std::filesystem::file_time_type mtime;
+    // [ISO8583] 3.2 (Sicherheits-Audit, E2): TOCTOU-Härtung des Caches:
+    //   - Jeder Eintrag speichert den CONTENT-SNAPSHOT der Version: mtime der
+    //     Top-Datei + aggregierter SHA-256-Hash über ALLE Quelldateien der
+    //     Version (Top-Level + alle Includes) + die Dateimenge selbst.
+    //   - Publish-then-Verify: Ein neu geladener Parser wird NUR unter
+    //     exakt jenem, gehashten Dateisnapshot veröffentlicht, aus dem er
+    //     gebaut wurde (unmittelbar nach dem Load wird die Dateimenge
+    //     erneut gehasht). Haben sich Dateien während des Loads geändert,
+    //     wird der frische Eintrag NICHT gepublished (der nächste Caller
+    //     lädt die neue Version) - der aufrufenden Seite wird aber der
+    //     konsistente Snapshot zurückgegeben. Ein veröffentlichter Parser
+    //     entspricht damit IMMER exakt einer kompletten Inhaltversion; eine
+    //     zur Laufzeit ausgetauschte Spec-Datei kann keinen "gemischten"
+    //     Parser mehr liefern.
+    //   - CheckEveryCall: mtime-Pre-Filter (ein stat()-Systemaufruf, ~0.9 us)
+    //     fängt die meisten Änderungen. Weicht die mtime, wird der
+    //     Aggregat-Hash über die gecachte Dateimenge neu berechnet, um
+    //     "Touch ohne Inhaltsänderung" (mtime neu, Hash identisch -> Eintrag
+    //     bleibt gültig) von echten Änderungen (-> komplettes Reload) zu
+    //     unterscheiden.
+    //   - LRU-Cap: Der GESAMTE Cache hält maximal 64 Einträge (der am
+    //     längsten nicht genutzte wird verworfen) - schützt vor unbeschränktem
+    //     Wachstum bei vielen verschiedenen Spec-Pfaden.
+    //
+    // Ein EINZIGER zusammengeführter Cache (Parser UND ISOSpec in einem
+    // Eintrag): Die Parser-Variante füllt `spec` mit null; trifft
+    // loadBothFromYamlCached auf einen nur-parser-Eintrag, lädt sie neu und
+    // UPGRADET den Eintrag (gleicher Content-Snapshot, gleiche Hash-Identität).
+    struct SpecCacheEntry {
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser;
-    };
-    struct BothCacheEntry {
-        std::filesystem::file_time_type mtime;
-        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser;
-        ISOSpec::SmartPtr spec;
+        ISOSpec::SmartPtr        spec;    // null, wenn nur der Parser geladen
+        std::filesystem::file_time_type mtime;   // Top-Datei bei Publication
+        std::vector<std::string>  files;   // Snapshot-Dateimenge (absolut)
+        std::string               contentHash; // "sha256:<hex>" (aggregiert)
+        std::atomic<uint64_t>     lastUse{0};  // LRU-Rang (lock-freies Touch)
     };
 
-    static std::shared_mutex& parserCacheMutex() {
+    static constexpr std::size_t kSpecCacheMaxEntries = 64;
+
+    static std::shared_mutex& specCacheMutex() {
         static std::shared_mutex m;
         return m;
     }
-    static std::unordered_map<std::string, ParserCacheEntry>& parserCache() {
-        static std::unordered_map<std::string, ParserCacheEntry> cache;
+    static std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>>& specCache() {
+        static std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>> cache;
         return cache;
     }
-    static std::shared_mutex& bothCacheMutex() {
-        static std::shared_mutex m;
-        return m;
+
+    // Monotoner Zähler für die LRU-Reihung - ein relaxed atomic store unter
+    // der shared lock ist race-frei (und erlaubt Hits ohne Exklusivlock);
+    // für die Eviktionsentscheidung genügt die grobe Nutzungsreihenfolge.
+    static std::atomic<uint64_t>& lruCounter() {
+        static std::atomic<uint64_t> c{0};
+        return c;
     }
-    static std::unordered_map<std::string, BothCacheEntry>& bothCache() {
-        static std::unordered_map<std::string, BothCacheEntry> cache;
-        return cache;
+
+    static void touchLru(SpecCacheEntry& e) {
+        e.lastUse.store(lruCounter().fetch_add(1, std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+    }
+
+    /// Verwirft den am längsten nicht genutzten Eintrag, wenn der Cache voll
+    /// ist (AUSSCHLIESSLICH unter exklusive Sperre aufrufen).
+    static void evictIfFull(
+        std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>>& cache)
+    {
+        if (cache.size() < kSpecCacheMaxEntries)
+            return;
+        std::string oldestKey;
+        uint64_t    oldestUse = std::numeric_limits<uint64_t>::max();
+        bool        found = false;
+        for (const auto& [k, e] : cache)
+            if (e->lastUse.load(std::memory_order_relaxed) < oldestUse) {
+                oldestUse = e->lastUse.load(std::memory_order_relaxed);
+                oldestKey = k;
+                found = true;
+            }
+        if (found) {
+            cache.erase(oldestKey);
+            TNG_LOG_DEBUG("[SpecCache] LRU-Eviction: '{}' ({} Einträge übrig)",
+                oldestKey, cache.size());
+        }
     }
 
     /// Anführungspfad->last_write_time(); wirft NICHT bei fehlender Datei -
@@ -842,6 +904,220 @@ namespace TNG_NAMESPACE::spec {
         std::error_code ec;
         auto t = std::filesystem::last_write_time(absPath, ec);
         return ec ? std::filesystem::file_time_type::min() : t;
+    }
+
+    // =============================================================================
+    // Cache-Logik: Hit-Lookup, Bundle-Load, Publish-then-Verify
+    // =============================================================================
+
+    /// Cache-Lookup gemäß Validierungspolicy. Liefert den Treffer-Eintrag
+    /// (oder null). `needSpec`: für loadBothFromYamlCached zählt ein
+    /// nur-parser-Eintrag als Verfehlung.
+    static std::shared_ptr<SpecCacheEntry> lookupCacheHit(
+        const std::string& absPath, CacheValidation validation, bool needSpec)
+    {
+        if (validation == CacheValidation::TrustUntilInvalidated) {
+            // Kein last_write_time()-Aufruf (Systemaufruf, ~0.9 us gemessen) -
+            // ein Cache-Treffer ist hier nur noch Map-Lookup + shared_ptr-Kopie
+            // (~25 ns). Erkennt Dateiänderungen NICHT automatisch - siehe
+            // Doku bei CacheValidation/invalidateCache().
+            std::shared_lock lock(specCacheMutex());
+            auto it = specCache().find(absPath);
+            if (it != specCache().end() && (!needSpec || it->second->spec)) {
+                touchLru(*it->second);
+                TNG_LOG_DEBUG("[SpecDecoder] loadCached '{}' – Cache-Treffer (ungeprüft)", absPath);
+                return it->second;
+            }
+            return nullptr;
+        }
+
+        // CheckEveryCall: mtime-Pre-Filter (ein stat()-Systemaufruf).
+        const auto mtime = tryGetMTime(absPath);
+
+        // Snapshot-Daten des gecachten Eintrags (für den Fall, dass die mtime
+        // abweicht und neu verifiziert werden muss) - Füllung unter shared
+        // lock, die teure Hash-Nachverifikation selbst AUSSERHALB des Locks.
+        std::vector<std::string>        verifyFiles;
+        std::string                     verifyHash;
+        std::filesystem::file_time_type verifyMtime{};
+        std::shared_ptr<SpecCacheEntry> hit;
+        bool                            reverify = false;
+
+        {
+            std::shared_lock lock(specCacheMutex());
+            auto it = specCache().find(absPath);
+            if (it == specCache().end())
+                return nullptr;
+            auto& entry = *it->second;
+            if (entry.mtime == mtime) {
+                touchLru(entry);
+                TNG_LOG_DEBUG("[SpecDecoder] loadCached '{}' – Cache-Treffer", absPath);
+                if (!needSpec || entry.spec)
+                    return it->second;
+                // nur-parser-Eintrag, aber ISOSpec gewünscht: Reload, der den
+                // Eintrag upgradet (gleicher Snapshot - s. publishCacheEntry).
+                return nullptr;
+            }
+
+            // [E2] mtime hat sich geändert (oder die Datei fehlt):
+            verifyFiles = entry.files;
+            verifyHash  = entry.contentHash;
+            verifyMtime = mtime;
+            hit         = it->second;
+            reverify    = true;
+        }
+
+        if (!reverify)
+            return nullptr;
+
+        // Distinguierung "Touch ohne Inhaltsänderung" vs. echte Änderung:
+        // Aggregat-Hash über die Dateimenge des gecachten Snapshots neu
+        // berechnen (liest die Quelldateien erneut - alle sind durch
+        // maxSpecBytes begrenzt).
+        const std::string rehash = hash_files(verifyFiles);
+        if (rehash != verifyHash)
+            return nullptr;  // echte Änderung -> Reload
+
+        // Nur ein "Touch": Die EINTRAG-mtime aktualisieren - aber nur, falls
+        // der Eintrag nicht zwischenzeitlich durch ein paralleles Load
+        // ERSETZT wurde (in dem Fall ist der NEUE Eintrag aktuell).
+        std::shared_ptr<SpecCacheEntry> out;
+        {
+            std::unique_lock ulock(specCacheMutex());
+            auto cur = specCache().find(absPath);
+            if (cur == specCache().end())
+                return nullptr;   // zwischenzeitlich eviziert -> Reload
+            if (cur->second == hit) {
+                cur->second->mtime = verifyMtime;
+                touchLru(*cur->second);
+                out = cur->second;
+            }
+            else if (!needSpec || cur->second->spec) {
+                touchLru(*cur->second);
+                out = cur->second;
+            }
+        }
+        if (out && (!needSpec || out->spec))
+            return out;
+        return nullptr;
+    }
+
+    // Komplettes Load + Build (ohne Caching) - geteilt von den uncached
+    // load*-Funktionen und dem Cache-Verfehlungs-Pfad.
+    struct LoadedBundle {
+        LoadedSpec loaded;   // inkl. sourceFiles + contentHash
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr parser;
+        ISOSpec::SmartPtr spec;   // null, wenn !wantSpec
+        std::filesystem::file_time_type mtime;  // Top-Datei, NACH dem Load
+    };
+
+    static LoadedBundle loadBundle(const std::string& path,
+        const SpecLoadOptions& opts, bool wantSpec)
+    {
+        LoadedBundle b;
+        b.loaded = loadAndParse(path, opts);
+        b.parser = buildParser(b.loaded);
+        b.mtime  = tryGetMTime(std::filesystem::absolute(path).string());
+        if (wantSpec) {
+            std::vector<SpecFieldInfo> infos;
+            infos.reserve(b.loaded.fields.size());
+            for (const auto& [key, f] : b.loaded.fields)
+                infos.push_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(key), f));
+            b.spec = std::make_shared<ISOSpec>(
+                b.loaded.desc, b.loaded.defaultEncoding, std::move(infos));
+        }
+        return b;
+    }
+
+    /// [E2] Publish-then-Verify: Den neuen Eintrag NUR unter exakt jenem
+    /// gehashten Snapshot veröffentlichen, aus dem der Parser gebaut wurde.
+    /// `consistent` = Ergebnis der Nach-Hashung (die Dateimenge ist zum
+    /// Zeitpunkt der Veröffentlichung unverändert geblieben). Bei
+    /// Inconsistenz wird NICHT gepublished - der nächste Aufruf lädt die neue
+    /// Version; der aktuelle Caller erhält den (konsistenten) Snapshot, den
+    /// er geladen hat.
+    static void publishCacheEntry(const std::string& absPath,
+        const LoadedBundle& b, bool consistent)
+    {
+        std::unique_lock lock(specCacheMutex());
+        auto& cache = specCache();
+        auto it = cache.find(absPath);
+        if (it != cache.end() && it->second->contentHash == b.loaded.contentHash) {
+            // Paralleles Load derselben Inhaltsversion: bereits publizierten
+            // Eintrag WIEDERVERWENDEN (De-Duplizierung - stabiles shared_ptr
+            // über parallele Loads). Ein nur-parser-Eintrag wird dabei
+            // upgraded, falls dieses Load auch das ISOSpec mitbringt.
+            if (b.spec && !it->second->spec)
+                it->second->spec = b.spec;
+            touchLru(*it->second);
+            TNG_LOG_DEBUG("[SpecDecoder] loadCached '{}' – paralleles Load mit identischem Snapshot, Eintrag wiederverwendet", absPath);
+            return;
+        }
+        if (!consistent) {
+            TNG_LOG_DEBUG("[SpecCache] '{}' geändert während des Loads – frischer Eintrag NICHT gepublished",
+                absPath);
+            return;
+        }
+        evictIfFull(cache);
+        auto e = std::make_shared<SpecCacheEntry>();
+        e->parser      = b.parser;
+        e->spec        = b.spec;
+        e->mtime       = b.mtime;
+        e->files       = b.loaded.sourceFiles;
+        e->contentHash = b.loaded.contentHash;
+        touchLru(*e);
+        cache[absPath] = e;
+        TNG_LOG_DEBUG("[SpecCache] '{}' gepublished ({} Felder, {} Dateien)",
+            absPath, b.loaded.fields.size(), e->files.size());
+    }
+
+    /// Kern der Cached-Varianten: Hit-Lookup (policy-abhängig), sonst
+    /// komplettes Load + Build, danach publish-then-verify (bzw.
+    /// De-Duplizierung eines identischen Snapshots).
+    static std::pair<::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                     ISOSpec::SmartPtr>
+        loadCachedBundle(const std::string& path, const SpecLoadOptions& opts,
+                         CacheValidation validation, bool wantSpec)
+    {
+        const auto absPath = std::filesystem::absolute(path).string();
+
+        // 1) Cache-Lookup gemäß Policy (ggf. inkl. Hash-Re-Verifikation bei
+        //    CheckEveryCall).
+        if (auto hit = lookupCacheHit(absPath, validation, wantSpec))
+            return { hit->parser, hit->spec };
+
+        // 2) Verfehlung: komplettes Load + Build (der Read selbst ist die
+        //    "Verify"-Phase - ein Parser ist nur aus einem vollständigen
+        //    Read buildbar).
+        LoadedBundle b;
+        try {
+            b = loadBundle(path, opts, wantSpec);
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadCached('{}') fehlgeschlagen: {}", path, e.what());
+            throw;
+        }
+
+        // 3) [E2] Nach-Hashung: Ist der Disk-Zustand noch identisch mit dem
+        //    Snapshot, aus dem der Parser gebaut wurde?
+        const bool consistent =
+            (hash_files(b.loaded.sourceFiles) == b.loaded.contentHash);
+
+        // 4) Veröffentlichen (ggf. De-Duplizierung) - oder verwerfen bei
+        //    Inconsistenz.
+        publishCacheEntry(absPath, b, consistent);
+
+        // 5) Hat ein paralleler Caller die selbe Version bereits publiziert,
+        //    dessen Eintrag wiederverwenden (stabiles shared_ptr).
+        {
+            std::shared_lock lock(specCacheMutex());
+            auto it = specCache().find(absPath);
+            if (it != specCache().end()
+                && it->second->contentHash == b.loaded.contentHash
+                && (!wantSpec || it->second->spec))
+                return { it->second->parser, it->second->spec };
+        }
+        return { b.parser, b.spec };
     }
 
     // =============================================================================
@@ -875,11 +1151,10 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadFromYaml(const std::string& path, const SpecLoadOptions& opts)
     {
         try {
-            const auto loaded = loadAndParse(path, opts);
-            auto parser = buildParser(loaded);
+            const auto b = loadBundle(path, opts, false);
             TNG_LOG_INFO("[SpecDecoder] loadFromYaml '{}' – {} Felder, header={}B",
-                loaded.desc, loaded.fields.size(), loaded.hdr_sz);
-            return parser;
+                b.loaded.desc, b.loaded.fields.size(), b.loaded.hdr_sz);
+            return b.parser;
         }
         catch (const std::exception& e) {
             TNG_LOG_ERROR("[SpecDecoder] loadFromYaml '{}' fehlgeschlagen: {}", path, e.what());
@@ -899,36 +1174,7 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadFromYamlCached(const std::string& path,
             const SpecLoadOptions& opts, CacheValidation validation)
     {
-        const auto absPath = std::filesystem::absolute(path).string();
-
-        if (validation == CacheValidation::TrustUntilInvalidated) {
-            // Kein last_write_time()-Aufruf (Systemaufruf, ~0.9 us gemessen) -
-            // ein Cache-Treffer ist hier nur noch Map-Lookup + shared_ptr-Kopie
-            // (~25 ns). Erkennt Dateiänderungen NICHT automatisch - siehe
-            // Doku bei CacheValidation/invalidateCache().
-            std::shared_lock lock(parserCacheMutex());
-            auto it = parserCache().find(absPath);
-            if (it != parserCache().end()) {
-                TNG_LOG_DEBUG("[SpecDecoder] loadFromYamlCached '{}' – Cache-Treffer (ungeprüft)", absPath);
-                return it->second.parser;
-            }
-        }
-        else {
-            const auto mtime = tryGetMTime(absPath);
-            std::shared_lock lock(parserCacheMutex());
-            auto it = parserCache().find(absPath);
-            if (it != parserCache().end() && it->second.mtime == mtime) {
-                TNG_LOG_DEBUG("[SpecDecoder] loadFromYamlCached '{}' – Cache-Treffer", absPath);
-                return it->second.parser;
-            }
-        }
-
-        auto parser = loadFromYaml(path, opts);
-        const auto mtime = tryGetMTime(absPath);
-
-        std::unique_lock lock(parserCacheMutex());
-        parserCache()[absPath] = ParserCacheEntry{ mtime, parser };
-        return parser;
+        return loadCachedBundle(path, opts, validation, /*wantSpec=*/false).first;
     }
 
     std::pair<
@@ -946,20 +1192,10 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadBothFromYaml(const std::string& path, const SpecLoadOptions& opts)
     {
         try {
-            const auto loaded = loadAndParse(path, opts);
-            auto parser = buildParser(loaded);
-
-            std::vector<SpecFieldInfo> infos;
-            infos.reserve(loaded.fields.size());
-            for (const auto& [key, f] : loaded.fields)
-                infos.push_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(key), f));
-
-            auto spec = std::make_shared<ISOSpec>(
-                loaded.desc, loaded.defaultEncoding, std::move(infos));
-
+            const auto b = loadBundle(path, opts, true);
             TNG_LOG_INFO("[SpecDecoder] loadBothFromYaml '{}' – {} Felder",
-                loaded.desc, loaded.fields.size());
-            return { parser, spec };
+                b.loaded.desc, b.loaded.fields.size());
+            return { b.parser, b.spec };
         }
         catch (const std::exception& e) {
             TNG_LOG_ERROR("[SpecDecoder] loadBothFromYaml '{}' fehlgeschlagen: {}", path, e.what());
@@ -983,55 +1219,18 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadBothFromYamlCached(const std::string& path,
             const SpecLoadOptions& opts, CacheValidation validation)
     {
-        const auto absPath = std::filesystem::absolute(path).string();
-
-        if (validation == CacheValidation::TrustUntilInvalidated) {
-            std::shared_lock lock(bothCacheMutex());
-            auto it = bothCache().find(absPath);
-            if (it != bothCache().end()) {
-                TNG_LOG_DEBUG("[SpecDecoder] loadBothFromYamlCached '{}' – Cache-Treffer (ungeprüft)", absPath);
-                return { it->second.parser, it->second.spec };
-            }
-        }
-        else {
-            const auto mtime = tryGetMTime(absPath);
-            std::shared_lock lock(bothCacheMutex());
-            auto it = bothCache().find(absPath);
-            if (it != bothCache().end() && it->second.mtime == mtime) {
-                TNG_LOG_DEBUG("[SpecDecoder] loadBothFromYamlCached '{}' – Cache-Treffer", absPath);
-                return { it->second.parser, it->second.spec };
-            }
-        }
-
-        auto [parser, spec] = loadBothFromYaml(path, opts);
-        const auto mtime = tryGetMTime(absPath);
-
-        std::unique_lock lock(bothCacheMutex());
-        bothCache()[absPath] = BothCacheEntry{ mtime, parser, spec };
-        return { parser, spec };
+        return loadCachedBundle(path, opts, validation, /*wantSpec=*/true);
     }
 
     void SpecDecoder::invalidateCache(const std::string& path) {
         const auto absPath = std::filesystem::absolute(path).string();
-        {
-            std::unique_lock lock(parserCacheMutex());
-            parserCache().erase(absPath);
-        }
-        {
-            std::unique_lock lock(bothCacheMutex());
-            bothCache().erase(absPath);
-        }
+        std::unique_lock lock(specCacheMutex());
+        specCache().erase(absPath);
     }
 
     void SpecDecoder::clearCache() {
-        {
-            std::unique_lock lock(parserCacheMutex());
-            parserCache().clear();
-        }
-        {
-            std::unique_lock lock(bothCacheMutex());
-            bothCache().clear();
-        }
+        std::unique_lock lock(specCacheMutex());
+        specCache().clear();
     }
 
 } // namespace TNG_NAMESPACE::spec

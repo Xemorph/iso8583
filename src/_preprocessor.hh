@@ -2,6 +2,7 @@
 
 // [stdc++]
 #include <string>
+#include <vector>
 // [ryml]
 #include <ryml/ryml.hpp>
 #include <ryml/ryml_std.hpp>
@@ -31,6 +32,10 @@ namespace TNG_NAMESPACE::spec {
     struct PreprocessResult {
         ryml::Tree tree;
         SourceMap  source_map;
+        // [ISO8583] 3.2 (Sicherheits-Audit): alle beim Load gelesenen
+        // Quelldateien (Top-Level zuerst, absolut, Dedupliziert) - Grundlage
+        // fuer den Content-Snapshot-Hash des Spec-Caches (publish-then-verify).
+        std::vector<std::string> sourceFiles;
     };
 
     class TNG_EXPORT SpecPreProcessor {

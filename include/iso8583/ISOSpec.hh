@@ -228,8 +228,9 @@ namespace TNG_NAMESPACE {
             /// wurde, veröffentlicht und unmittelbar danach erneut gehasht;
             /// haben sich Dateien während des Loads geändert, wird der frische
             /// Eintrag wieder verworfen (der aufrufenden Seite wird der
-            /// konsistente Snapshot zurückgegeben). Der Cache ist pro absolutem
-            /// Pfad auf 64 Einträge begrenzt (LRU).
+            /// konsistente Snapshot zurückgegeben). Der gesamte Cache hält
+            /// maximal 64 Einträge (je einer pro absolutem Pfad; LRU-Eviction
+            /// des am längsten nicht genutzten Eintrags).
             CheckEveryCall,
             /// @brief Kein Dateisystem-Zugriff bei einem Cache-Treffer (nur
             /// noch Map-Lookup + shared_ptr-Kopie, ~25 ns statt ~1.2 us) -
