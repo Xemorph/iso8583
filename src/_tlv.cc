@@ -79,7 +79,8 @@ namespace TNG_NAMESPACE::tlv_detail {
         std::size_t se_num, const std::vector<uint8_t>& buf,
         std::size_t data_offset, std::size_t data_len,
         std::size_t wire_offset, std::size_t wire_len,
-        const nonstd::string_view& description)
+        const nonstd::string_view& description,
+        bool sensitive)
     {
         auto se = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
             static_cast<TNG_KEY_TYPE>(se_num));
@@ -91,6 +92,9 @@ namespace TNG_NAMESPACE::tlv_detail {
         // keine Kopie/Temporäre hier, sonst dangelnde Sicht (siehe dortiger
         // Kommentar).
         se->description(description);
+        // [ISO8583] 3.4 (PCI): Sensitivität aus der Spec (pro-Tag oder
+        // Container-Ebene) → dump() maskiert den SE-Wert mit "***".
+        se->set_sensitive(sensitive);
         se->wire_offset(wire_offset);
         se->wire_length(wire_len);
         msg->set(se);

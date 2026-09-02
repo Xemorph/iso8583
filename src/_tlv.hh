@@ -63,7 +63,8 @@ namespace TNG_NAMESPACE {
             std::size_t  data_len,
             std::size_t  wire_offset,
             std::size_t  wire_len,
-            const nonstd::string_view& description);
+            const nonstd::string_view& description,
+            bool         sensitive);
 
     } // namespace tlv_detail
 
@@ -83,11 +84,17 @@ namespace TNG_NAMESPACE {
         static constexpr TNG_KEY_TYPE TCC_KEY = -2;
         using DataEncodingMap = std::unordered_map<std::size_t, codec::Encoder>;
         using DescriptionMap  = std::unordered_map<std::size_t, std::string>;
+        // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität aus der Spec
+        // ('children: <tag>: {sensitive: true}').
+        using SensitiveMap    = std::unordered_map<std::size_t, bool>;
 
-        explicit ISOTLVParser(DataEncodingMap data_enc_map = {}, DescriptionMap description_map = {})
+        explicit ISOTLVParser(DataEncodingMap data_enc_map = {}, DescriptionMap description_map = {},
+            SensitiveMap sensitive_map = {}, bool sensitive_all = false)
             : ISOBaseParser("<tlv>", 0)
             , data_enc_map_(std::move(data_enc_map))
             , description_map_(std::move(description_map))
+            , sensitive_map_(std::move(sensitive_map))
+            , sensitive_all_(sensitive_all)
         {
         }
 
@@ -155,7 +162,8 @@ namespace TNG_NAMESPACE {
                 tlv_detail::store_se(msg, se_num, b, pos, se_len,
                     base_offset + tag_start,
                     (pos - tag_start) + se_len,
-                    description_for_wire(se_num));
+                    description_for_wire(se_num),
+                    sensitive_for_wire(se_num));
                 tlv_detail::log_debug_se_read(se_num, se_len);
                 pos += se_len;
             }
@@ -253,9 +261,24 @@ namespace TNG_NAMESPACE {
             return nonstd::string_view(cacheIt->second);
         }
 
+        // [ISO8583] 3.4 (PCI): Sensitivität eines SE-Tags — entweder global
+        // (sensitive_all_, z. B. BERTLV-Container mit 'sensitive: true') oder
+        // pro Tag aus sensitive_map_ (YAML-Kind-Deklaration). Lock-frei:
+        // beide Maps sind read-only nach dem Konstruktor.
+        bool sensitive_for_wire(std::size_t se_num) const {
+            if (sensitive_all_)
+                return true;
+            auto it = sensitive_map_.find(se_num);
+            return it != sensitive_map_.end() && it->second;
+        }
+
     private:
         DataEncodingMap data_enc_map_;
         DescriptionMap  description_map_;
+        // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (read-only nach dem
+        // Konstruktor, s. SensitiveMap) + Flag für Container-Ebene (BERTLV).
+        SensitiveMap    sensitive_map_;
+        bool            sensitive_all_ = false;
         // mutable: unparse() ist zwar selbst nicht const, description_for_wire()
         // wird aber bewusst als const-Methode angeboten (liest nur, "erzeugt"
         // höchstens einen Cache-Eintrag - kein Teil des eigentlichen

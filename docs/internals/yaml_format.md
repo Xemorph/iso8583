@@ -184,3 +184,40 @@ msg->set("61.1", "0");   // Unterfeld 1 von DE61
   - !template LLL(BINARY, 255)
   - description: "ICC / EMV Data"
 ```
+
+## Sensible Felder (PCI-Logging-Hygiene, seit 0.3.0)
+
+`sensitive: true` markiert ein Feld (oder einzelne TLV-Tags), dessen Wert in
+`dump()` (und damit in `operator<<` bzw. jedem Log-Sink, der den Dump
+protokolliert) als `***` maskiert wird:
+
+```yaml
+fields:
+  "002":
+    type: scalar
+    format: llchar
+    length: 19
+    description: "Primäre Kontonummer"
+    sensitive: true            # Wert im dump()/Log → "***"
+
+  "048":
+    type: nested
+    format: lllbinary
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "72": { format: binary, length: 8, sensitive: true }   # nur SE72 maskiert
+```
+
+Regeln:
+- Das Attribut ist bei jeder Feldart gültig (scalar, nested, TLV, BERTLV)
+  und auch in `definitions:` (wirkt über `!use` durch).
+- Auf einem Container (nested/TLV/BERTLV) vererbt es sich auf **alle**
+  Kinder/Tags; pro Tag kann es in `children` einzeln gesetzt werden.
+- `dump()` maskiert **nur den Wert** (`***`); die `description` bleibt
+  sichtbar. Strukturdaten (Bitmaps, MTI) sind davon nicht betroffen.
+- `value()`, `tryGetValue<T>()` und `to_json()` liefern **bewusst weiterhin
+  Klartext** — das ist die programmatische Daten-API, kein Logging-Pfad.
+- In PCI-Umgebungen das Log-Level bei **WARN oder niedriger** halten:
+  `INFO`/`DEBUG` protokollieren pro Feld Encoding-/Decoding-Details
+  (Größen, Offsets, Beschreibungen — aber nie Rohwerte sensitive Felder).

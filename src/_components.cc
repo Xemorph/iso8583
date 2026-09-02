@@ -10,6 +10,12 @@
 // [tng/date]
 #include "_date.hh"
 
+namespace {
+// [ISO8583] 3.4 (PCI-Logging-Hygiene): Maskier-Wert fuer sensitive Felder
+// in dump()/Log-Ausgaben (value()/to_json() liefern weiterhin Klartext).
+constexpr const char* kMaskedValue = "***";
+} // namespace
+
 template < typename IntegerType, typename T >
 TNG_NAMESPACE::ISOComponent<IntegerType, T>::ISOComponent(const IntegerType& key)
     : k_(key)
@@ -127,20 +133,25 @@ void TNG_NAMESPACE::ISOComponent<IntegerType, T>::dump(std::ostream& os, bool ne
         hex.reserve(d_.size() * 2);
         for (const auto b : d_)
             appendHexByte(hex, b);
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): sensitive Felder werden als
+        // "***" maskiert ausgegeben — die Beschreibung bleibt sichtbar.
+        const std::string& shown = sensitive_ ? kMaskedValue : hex;
 
         os << connector << "DE" << std::setfill('0') << std::setw(3) << k_ << " "
             << std::left << std::setfill('.') << std::setw(48) << desc_
             << std::right << std::setfill(' ')
-            << " [0x" << hex << "]\n";
+            << " [0x" << shown << "]\n";
     }
     else if constexpr (std::is_same_v< T, ISO_MAP >) {
         os << connector << "DE" << std::setfill('0') << std::setw(3) << k_
             << ": \"Currently unsupported\"\n";
     }
     else if constexpr (std::is_same_v< T, std::string >) {
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): sensitive Felder → "***".
+        const std::string& shown = sensitive_ ? kMaskedValue : d_;
         os << connector << "DE" << std::setfill('0') << std::setw(3) << k_ << " "
             << std::left << std::setfill('.') << std::setw(48) << desc_
-            << std::right << std::setfill(' ') << " [" << d_ << "]";
+            << std::right << std::setfill(' ') << " [" << shown << "]";
         if (!expl_.empty())
             os << " =" << expl_;
         os << "\n";
@@ -376,6 +387,10 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
             auto f = std::make_shared<::TNG_NAMESPACE::OpaqueField>(key);
             f->value(std::move(data));
             f->description(fieldParser->description());
+            // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser uebernehmen
+            // (Spec: 'sensitive: true') → dump() maskiert den Wert.
+            if (fieldParser->sensitive())
+                f->set_sensitive(true);
             return f;
         }
         case ISOFieldParserType::BINARY: {
@@ -395,6 +410,9 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
             }
             f->value(std::move(bytes));
             f->description(fieldParser->description());
+            // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser uebernehmen.
+            if (fieldParser->sensitive())
+                f->set_sensitive(true);
             return f;
         }
         case ISOFieldParserType::BITMAP:

@@ -247,6 +247,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
 
         auto mti = p->create_component(::TNG_NAMESPACE::Message::MTI_KEY);
         mti->description(p->description());
+        // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser auf das Component
+        // uebertragen (Spec: 'sensitive: true').
+        mti->set_sensitive(p->sensitive());
         mti->wire_offset(base_offset + consumed);
         std::size_t mti_bytes;
         try {
@@ -276,6 +279,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
 
         auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
         bitmap->description(l_.at(1)->description());
+        // [ISO8583] 3.4: Bitmap ist strukturell (Setzliste von DE-Nummern) -
+        // der Marker wird uebernommen, wirkt sich aber auf dump() nicht aus.
+        bitmap->set_sensitive(l_.at(1)->sensitive());
         bitmap->wire_offset(base_offset + consumed);
         std::size_t bmp_bytes;
         try {
@@ -328,6 +334,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
 
                 auto de = ptr->create_component(i);
                 de->description(ptr->description());
+                // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser auf das
+                // Component uebertragen (Spec: 'sensitive: true').
+                de->set_sensitive(ptr->sensitive());
                 de->wire_offset(base_offset + consumed);
                 std::size_t de_bytes;
                 try {

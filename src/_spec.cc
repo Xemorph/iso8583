@@ -129,6 +129,10 @@ namespace TNG_NAMESPACE::spec {
         std::size_t              length = 0;
         std::string              description = "<dummy>";
         bool                     has_explicit_description = false; // s. parseSpecField
+        // [ISO8583] 3.4 (PCI): 'sensitive: true' — dump()/Logs maskieren den
+        // Wert mit "***". Bei NESTED-Containern vererbt sich der Satz auf
+        // alle Kinder (s. buildFieldParser).
+        bool                     sensitive = false;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -221,7 +225,8 @@ namespace TNG_NAMESPACE::spec {
     static void validateFieldKeys(ryml::ConstNodeRef node, const std::string& de,
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
-            "type", "format", "encoding", "length", "description", "children", "tlv"
+            "type", "format", "encoding", "length", "description", "children",
+            "tlv", "sensitive"
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -437,6 +442,10 @@ namespace TNG_NAMESPACE::spec {
             ? getStr(node, "description")
             : (f.length == 0 ? "<dummy>" : "?");
 
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): 'sensitive: true' → der
+        // Feld-Wert wird in dump()/Log-Ausgaben als "***" maskiert.
+        f.sensitive = getBool(node, "sensitive", false);
+
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet
         const bool expectsData = (f.format != "NOP" && f.format != "UNUSED" &&
             f.format != "BITMAP" && f.format != "REMAINING" &&
@@ -596,13 +605,16 @@ namespace TNG_NAMESPACE::spec {
 
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
         makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber,
-            const std::unordered_map<std::size_t, std::string>& descriptionMap)
+            const std::unordered_map<std::size_t, std::string>& descriptionMap,
+            const std::unordered_map<std::size_t, bool>& sensitiveMap = {},
+            bool sensitiveAll = false)
     {
         using namespace ::TNG_NAMESPACE;
 
         // ── BER-TLV: variable Tag-/Length-Länge, kein TCC ─────────────────────
         if (ber)
-            return std::make_shared<BERTLVParser>(BERTLVParser::DataEncodingMap{}, descriptionMap);
+            return std::make_shared<BERTLVParser>(BERTLVParser::DataEncodingMap{}, descriptionMap,
+                sensitiveMap, sensitiveAll);
 
         // ── Feste Byte-Anzahl (bisheriges Verhalten, jetzt über
         //    FixedNumericTag/FixedNumericLength statt der ursprünglichen
@@ -616,7 +628,9 @@ namespace TNG_NAMESPACE::spec {
                     FixedNumericTag<TB, codec::Encoder::ENC>, \
                     FixedNumericLength<LB, codec::Encoder::ENC>, \
                     HAS_TCC, codec::Encoder::ENC>::DataEncodingMap{}, \
-                descriptionMap)
+                descriptionMap, \
+                sensitiveMap, \
+                sensitiveAll)
 
         // tag_bytes == 2, len_bytes == 2
         if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, true, EBCDIC);
@@ -649,18 +663,32 @@ namespace TNG_NAMESPACE::spec {
                     FixedNumericTag<2, codec::Encoder::EBCDIC>,
                     FixedNumericLength<2, codec::Encoder::EBCDIC>,
                     false, codec::Encoder::EBCDIC>::DataEncodingMap{},
-                descriptionMap);
+                descriptionMap,
+                sensitiveMap,
+                sensitiveAll);
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
         buildFieldParser(const SpecField& f)
     {
         switch (f.type) {
-        case SpecFieldType::SCALAR:
-            return createScalarParser(f);
+        case SpecFieldType::SCALAR: {
+            auto p = createScalarParser(f);
+            // [ISO8583] 3.4 (PCI): 'sensitive: true' aus der Spec auf den
+            // Laufzeit-Parser übertragen (dump()/Logs maskieren dann den Wert).
+            if (f.sensitive)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
+                    fp->sensitive(true);
+            return p;
+        }
 
         case SpecFieldType::NESTED: {
             auto base = createScalarParser(f);
+            // Container selbst: sensitive Container markieren das komplette
+            // Subfeld-Baum (alle Kinder werden entsprechend gesetzt, s. u.).
+            if (f.sensitive)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(base))
+                    fp->sensitive(true);
             auto nested = std::make_shared<
                 ::TNG_NAMESPACE::ISONestedFieldParser<::TNG_NAMESPACE::ISOBaseParser>>(
                     base, f.description);
@@ -682,16 +710,30 @@ namespace TNG_NAMESPACE::spec {
                 // weiterhin als BinaryField dekodiert, nur die Beschreibung
                 // wird aus der Spec übernommen.
                 std::unordered_map<std::size_t, std::string> descriptionMap;
-                for (const auto& [tag, child] : f.tlv_children)
+                // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
+                // 'sensitive: true' oder Erbgang von einem sensitive Container).
+                std::unordered_map<std::size_t, bool> sensitiveMap;
+                for (const auto& [tag, child] : f.tlv_children) {
                     if (child.has_explicit_description)
                         descriptionMap[static_cast<std::size_t>(tag)] = child.description;
+                    if (child.sensitive || f.sensitive)
+                        sensitiveMap[static_cast<std::size_t>(tag)] = true;
+                }
 
-                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber, descriptionMap));
+                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber,
+                    descriptionMap, sensitiveMap, f.sensitive));
             }
             else {
                 auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
-                for (const auto& child : f.children)
-                    sub->add(createScalarParser(child));
+                for (const auto& child : f.children) {
+                    auto childP = createScalarParser(child);
+                    // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang
+                    // von einem sensitive Container.
+                    if (child.sensitive || f.sensitive)
+                        if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
+                            fp->sensitive(true);
+                    sub->add(childP);
+                }
                 nested->subParser(sub);
             }
             return nested;

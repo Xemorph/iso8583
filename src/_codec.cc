@@ -68,6 +68,26 @@ namespace TNG_NAMESPACE::codec {
             return out;
         }
 
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): statt des kompletten Feld-Werts
+        // (bis 64 Bytes — bei EBCDIC-PAN-Feldern ein Klartext-PAN-Echo) nur
+        // ein 12-Byte-Fenster um die fehlerhafte Position — identische
+        // Informationsmenge wie der Default-Pfad (Tabellen-Codec).
+        static std::string hexdump_window(const std::string& s, std::size_t pos) {
+            if (s.empty()) return "<leer>";
+            const std::size_t begin = (pos > 4) ? (pos - 4) : 0;
+            const std::size_t end = std::min(s.size(), begin + 12);
+            std::string out;
+            for (std::size_t i = begin; i < end; ++i) {
+                if (!out.empty()) out.push_back(' ');
+                const unsigned char c = static_cast<unsigned char>(s[i]);
+                static const char* digits = "0123456789abcdef";
+                out.push_back(digits[c >> 4]);
+                out.push_back(digits[c & 0xF]);
+            }
+            if (end < s.size()) out += " ...";
+            return out;
+        }
+
         // Wandelt einen Fehler der System-iconv in die Exceptions-Konvention der
         // Bibliothek um: sauberes, kontextreiches std::runtime_error statt eines
         // nackten std::system_error (dessen what() unter MSVC bei POSIX-Werten
@@ -77,9 +97,9 @@ namespace TNG_NAMESPACE::codec {
             std::string::size_type pos, const std::exception& e) {
             const auto* se = dynamic_cast<const std::system_error*>(&e);
             const int err = se ? static_cast<int>(se->code().value()) : -1;
-            TNG_LOG_ERROR("[codec] {}-Konvertierung fehlgeschlagen (errno={}, EILSEQ={}): Eingabe ({} B): {}",
+            TNG_LOG_ERROR("[codec] {}-Konvertierung fehlgeschlagen (errno={}, EILSEQ={}): Eingabe ({} B), Fenster um Position {}: {}",
                 direction, err, (err == 42 || err == 133) ? 1 : 0,
-                input.size(), hexdump(input));
+                input.size(), pos, hexdump_window(input, pos));
             std::string what = std::string(direction) + "-Konvertierung fehlgeschlagen: ";
             if (pos < input.size())
                 what += "Byte 0x" + hexdump(std::string(1, input[pos])) +
@@ -91,7 +111,7 @@ namespace TNG_NAMESPACE::codec {
             what += (std::string(direction) == "EBCDIC->ASCII")
                     ? "Das Feld enthaelt vermutlich binäre Daten statt gueltiger EBCDIC-Zeichen. "
                     : "Der Wert enthaelt vermutlich Zeichen, die in IBM-1047 nicht darstellbar sind. ";
-            what += "Eingabe (" + std::to_string(input.size()) + " B): " + hexdump(input);
+            what += "Eingabe (" + std::to_string(input.size()) + " B), Fenster um die fehlerhafte Position: " + hexdump_window(input, pos);
             throw std::runtime_error(std::move(what));
         }
 

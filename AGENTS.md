@@ -232,6 +232,7 @@ Headers (network framing attached to a message): `BaseHeader`,
 - `log::setLogger(&myLogger)` with a class deriving `log::ISOLogger` (pure virtual `log(Level, file, line, message)`).
 - **Quill integration with a DLL build: use `log::QuillBridge` (include `<quill/LogMacros.h>` BEFORE `<iso8583/ISOLog.hh>`), never `setQuillLogger()`** — Quill's process-singleton is broken across the DLL boundary.
 - `fmt` is a PRIVATE dependency: the library does not leak fmt into public headers.
+- **PCI/production: keep the level at WARN or lower.** `INFO`/`DEBUG` add per-field encode/decode detail (sizes, offsets, descriptions — never raw values of `sensitive` fields). The only surface where raw field values reach log output is `dump()` (e.g. when the application logs a dump) — mark card data with `sensitive: true` (§5) so dumps show `***`.
 
 ### Thread safety
 - **One `ISOMessage` from N threads: supported** (model since 0.3.0): every public entry point (`set`/`unset`/`has`/`get`/`tryGet`/`tryGetValue`/`tryGetValueRef`/`reset`/`keys`/`size`/`to_json`/`dump`/`parser`/`parse`/`unparse`/`header`/`direction`/`hasMTI`/`mti`/`isRequest`/… ) acquires the same **recursive message lock** exactly once; internal call chains (e.g. `parse → recalcBitmap → set`, parser callbacks into `set()`) run under the already-held lock. Writers and readers are mutually exclusive (single lock, no parallel-reader mode). `to_json`/`dump` snapshot the field set under the lock and format outside it.
@@ -278,6 +279,7 @@ fields:
   "001": { type: scalar, format: bitmap,  length: 8 }   # Bitmap — always slot 001
   "002": !use pan_field
   "003": { type: scalar, format: numeric, length: 6, encoding: bcd }  # per-field override
+  "052": { type: scalar, format: binary, length: 8, sensitive: true }  # PCI: value → "***" in dumps/logs
   "055": { !merge [ !template LLL(BINARY, 255), description: "ICC Data" ] }
   "056": { format: lllbertlv, length: 999 }             # BER-TLV container, scalar only (ISO/IEC 8825-1, EMV Book 3 Annex B)
   "057":                                                  # TLV with declared tags
@@ -315,6 +317,7 @@ TLV `children` key notation:
 - Currently **only `description` is propagated** to decoded fields; every SE/tag is still decoded as a raw `BinaryField` (`format`/`length` in children are documentation only). Undeclared tags fall back to a generic `"SE<n>"` description.
 
 Loader behaviors worth knowing:
+- **PCI masking (0.3.0):** `sensitive: true` on a field (or on a TLV `children` entry; also valid in `definitions:`) marks the field sensitive — its value is rendered as `***` in `dump()`/`operator<<` (description stays visible). On nested/TLV/BERTLV containers it propagates to all children/tags. `value()`/`to_json()` are deliberately **unmasked** (programmatic data API). Full reference: `docs/internals/yaml_format.md`.
 - **Include sandbox (0.3.0):** with the default `SpecLoadOptions`, every `!include_files` entry is resolved and **rejected** (`[ISO8583] Sandbox: …`) if it lands outside `roots` (empty = parent dir of the top-level spec) — lexically (`../`, absolute, UNC) and, when the file exists, on its fully canonicalized (symlink-resolving) path. Source files are streamed with a per-file size cap (`maxSpecBytes`), the total number of distinct files is capped (`maxIncludeFiles`), and `fields:` must be a **non-empty map** — empty maps, sequences, and digit-overflow DE keys produce positioned `SpecValidationError`s, never raw `std::stoi` exceptions. Sidecar **writes** are gated on `allowSmapWrite` + sandbox roots; sidecar **reads** are size-capped (`maxSmapBytes`).
 - Errors from rapidyaml are converted to catchable, **positioned** `std::runtime_error` via **process-wide, once-installed** `ryml::set_callbacks` (ryml's default is `std::abort()`). This overrides any host app's own ryml callbacks on first load. Full taxonomy + rules for new code: §13.
 - Recursion-depth protection + circular `!use` detection → clean `std::runtime_error` instead of stack overflow.
@@ -556,3 +559,4 @@ Maintenance rules: **never strip the embedded copyright/license headers**; a pro
 36. **Concurrency model (0.3.0)**: `ISOMessage` entry points each take the one recursive message lock exactly once (internal `*_locked` chains assume it); parsers are immutable after load → shareable; logger globals are atomic. One message from N threads is supported — do not reintroduce lock-free fast paths or per-call locking in internal chains (§4).
 37. **Test helper structs (`TempDir`/`TempYaml`) live in per-file anonymous namespaces** — a global-scope definition is an ODR violation across test TUs: in-class (inline) members COMDAT-fold, so all TUs silently share one constructor body (observed: one test file's directory prefix leaking into another's tests) (§12.9 context).
 38. **Windows rename-based hot-swapping is non-atomic** (delete+move, AV-filter windows) — the TOCTOU test tolerates those OS-level races via a file-existence discriminator; successful loads must still be version-consistent (§12.9).
+39. **PCI masking is dump/log-surface only (0.3.0):** `sensitive: true` (spec key) masks the value as `***` in `dump()`/`operator<<` (description stays visible); `value()`/`to_json()` are deliberately unmasked — never feed `to_json()` into a log sink for sensitive data, and keep the log level ≤ WARN in PCI environments (§4, §5).

@@ -112,7 +112,29 @@ namespace TNG_NAMESPACE {
         /// The returned JSON always contains `"key"` and `"value"`.
         /// When wire position tracking is active it also contains
         /// `"wire_offset"` and `"wire_length"`.
+        ///
+        /// @note PCI (0.3.0, 3.4): `to_json()` is a programmatic data API —
+        ///       sensitive values are NOT masked here (like `readable_value()`).
+        ///       Only `dump()` and the library's log output mask them.
         virtual json to_json() const = 0;
+
+    protected:
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): `true` wenn die Spec das Feld
+        // als 'sensitive' deklariert hat (YAML: `sensitive: true`). Wird beim
+        // Dekodieren vom Feld-Parser gesetzt bzw. bei set(key, value) aus dem
+        // zugehörigen Parser übernommen. dump() gibt für sensitive Felder den
+        // Wert als "***" aus (Beschreibung bleibt sichtbar); value()/to_json()
+        // liefern weiterhin den Klartext (bewusste API-Entscheidung).
+        // Nicht-virtuell: kein Vtable-Wechsel, nur ein Basis-Klassenglied
+        // (0.3.0-Layout-Änderung, zu d_lock_ analog).
+        bool sensitive_ = false;
+
+    public:
+        /// @brief Setzt den Sensitive-Marker (PCI-Logging-Hygiene, 3.4).
+        void set_sensitive(bool v) noexcept { sensitive_ = v; }
+
+        /// @brief Liefert `true`, wenn der Feld-Wert in dump()/Logs maskiert wird.
+        [[nodiscard]] bool is_sensitive() const noexcept { return sensitive_; }
     };
 
     /// @brief Writes `c`'s debug representation into `os` (see @ref
@@ -241,6 +263,11 @@ namespace TNG_NAMESPACE {
         // [ISO8583] strikte Dekodierung (Default: true).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable bool strict_ = true;
+        // [ISO8583] 3.4 (PCI-Logging-Hygiene): sensitive Felder (YAML
+        // 'sensitive: true') — dump()/Log-Ausgaben drucken den Wert als
+        // "***" statt des Klartexts (Beschreibung bleibt sichtbar).
+        // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
+        mutable bool sensitive_ = false;
     public:
         /// @brief Shared-pointer alias.
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
@@ -250,6 +277,13 @@ namespace TNG_NAMESPACE {
 
         /// @brief Liefert den aktuellen strikten-Modus-Status.
         [[nodiscard]] bool strict() const noexcept { return strict_; }
+
+        /// @brief Markiert das Feld als sensitive (PCI-Logging-Hygiene, 3.4).
+        /// @param v `true` wenn der Feld-Wert in dump()/Logs als "***" maskiert wird.
+        void sensitive(bool v) const noexcept { sensitive_ = v; }
+
+        /// @brief Liefert `true`, wenn das Feld sensitive ist.
+        [[nodiscard]] bool sensitive() const noexcept { return sensitive_; }
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;
