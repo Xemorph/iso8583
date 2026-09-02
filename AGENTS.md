@@ -56,6 +56,8 @@ vendored inside the tree — see §14.3; their license headers are kept.)
 | `cmake/iso8583Config.cmake.in` | CMake package config template for `find_package(iso8583 CONFIG)`. |
 | `vcpkg-port/` | vcpkg port for downstream consumption (`portfile.cmake`, `vcpkg.json`, `usage`). Portfile fetches tag `v${VERSION}`; its SHA512 is a placeholder `0` until filled after the first release tag is pushed (release step — see §14.2). Repo URL: `Xemorph/iso8583`. |
 | `vcpkg/` | **Local, untracked** vcpkg checkout (`.gitignore`) — NOT part of the repository. `vcpkg-configuration.json` (tracked) is `{}` — no custom registries/overrides. Fresh clone: point `VCPKG_ROOT` at any vcpkg checkout; manifest mode resolves `vcpkg.json` automatically. |
+| `tools/generate_ebcdic_tables/` | **Build/CI-only** EBCDIC oracle tool (ICU 78.3): regenerates/verifies the pinned IBM-1047 verdict JSONs that prove the checked-in codec tables (`include/iso8583/_codec.hh`) are deterministic. Built only with `ISO8583_BUILD_CODEC_TOOLS=ON`; ICU is linked to the tool executable, never into the library. See §4 (Determinism & oracle pin). |
+| `.gitattributes` | Forces LF on `tools/generate_ebcdic_tables/pinned/*.json` so the byte-stable oracle pin survives checkouts with `core.autocrlf=true`. |
 | `CMakeLists.txt`, `CMakePresets.json` | Build definition (see §3). |
 | `.clangd` | clangd/IDE config (see §9). |
 | `.github/workflows/ci.yml`, `docs.yml` | CI (Linux GCC-13 **and** Windows MSVC, both Ninja — see §9) and GitHub-Pages docs publishing. |
@@ -97,21 +99,28 @@ wrong value.
 | `tsl-robin-map` | **PUBLIC** | `tsl::robin_map`/`ISO_MAP` is exposed in the `ISOMessage` API (`value()`/`keys()`). |
 | `fmt` | **PRIVATE** | Implementation detail (logger only); consumers must not `find_package(fmt)`. |
 | `ryml` (rapidyaml ≥ 0.15.2) | **PRIVATE** | YAML spec loading only (`_spec.cc`, `_preprocessor.cc`). |
-| `libiconv` | optional (`ISO8583_ENABLE_ICONV`, default ON; not needed on Linux/glibc) | EBCDIC conversion on non-Linux. |
+| `libiconv` | optional (`ISO8583_ENABLE_ICONV`, default ON; not needed on Linux/glibc) | **[DEPRECATED since 0.3.0, removal 0.4]** transitional EBCDIC fallback only — the codec is fully table-driven (ICU-78.3-oracle-verified tables, §4) and does not use libiconv at runtime. |
+| `icu` (**78.3**) | build/CI only — **never linked into runtime targets** | Oracle for `tools/generate_ebcdic_tables` (regenerates/verifies the pinned EBCDIC verdict JSONs; §4, §12). |
 | `catch2` | tests only | Unit tests. |
 
 Keep this PUBLIC/PRIVATE split — it is intentional and documented in
 `CMakeLists.txt`. (yaml-cpp was removed in 0.2.0 during the rapidyaml
-migration — it is no longer used anywhere.)
+migration — it is no longer used anywhere.) Note on the `icu` pin: the
+pinned vcpkg baseline (1f5e034) predates manifest support for an exact
+`"version"` field, so `vcpkg.json` uses `"version>=": "78.3"` **plus the
+identical `builtin-baseline` on all machines/CI** — together they resolve to
+exactly 78.3. The generator's hard ICU-major-78 assertion (exit 2) is the
+drift watchdog for future baseline bumps.
 
 ### CMake options
 | Option | Default | Meaning |
 |---|---|---|
 | `ISO8583_BUILD_SHARED` | `ON` | Build shared library (`.dll`/`.so`) instead of static. |
-| `ISO8583_ENABLE_ICONV` | `ON` | Use `libiconv` for EBCDIC conversion. **Only when ON is `src/_iconv_wrapper.cc` compiled** (it unconditionally uses `<iconv.h>`). |
+| `ISO8583_ENABLE_ICONV` | `ON` | **[DEPRECATED since 0.3.0, removal 0.4]** transitional libiconv fallback for EBCDIC — the codec is fully table-driven and does not call libiconv at runtime anymore; configure emits a WARNING when ON. Set OFF to drop the libiconv dependency. Only when ON is `src/_iconv_wrapper.cc` compiled (it unconditionally uses `<iconv.h>`). |
 | `ISO8583_INSTALL` | `ON` | Generate install targets / CMake package. |
 | `ISO8583_BUILD_TESTS` | `OFF` | Build Catch2 tests. |
 | `ISO8583_BUILD_EXAMPLES` | `OFF` | Build `examples/tcp_gateway`. |
+| `ISO8583_BUILD_CODEC_TOOLS` | `OFF` | Build the EBCDIC oracle tool (`tools/generate_ebcdic_tables`; needs ICU 78.3 — if absent the sub-project is skipped with a status message). Targets `update-ebcdic-tables` / `verify-ebcdic-tables` regenerate/verify the pinned oracle verdicts; ICU is linked to the tool executable only, never into the library. |
 | `ISO8583_BERTLV` | `OFF` | Widen DE key type to `int32_t` (full BER-TLV/EMV tag support, e.g. 2-byte tags like `9F26`). **ABI-relevant, set as `PUBLIC` compile definition on the target** so it propagates to all consumers via `iso8583::iso8583`. |
 
 ### Presets (`CMakePresets.json`, all need `VCPKG_ROOT` set)
@@ -240,6 +249,14 @@ Encoding-neutral (raw bytes, ignore all encoding settings): `BINARY` (fixed), `B
 
 Child inheritance: encoding-neutral fields pass the **global** encoding to children; encoding-aware fields pass their own resolved encoding — keeps mixed specs (e.g. EBCDIC container with a `binary` DE inside) consistent.
 
+**Determinism & oracle pin (since 0.3.0).** EBCDIC conversion is **fully table-driven**: `kEbcdicToAscii` / `kAsciiToEbcdic` / `kEbcdicValid` in `include/iso8583/_codec.hh` — no runtime converter (no libiconv, no ICU) in the default build. The tables are proven against a pinned **ICU 78.3** oracle: `tools/generate_ebcdic_tables/` regenerates/verifies the checked-in verdict JSONs (`pinned/icu_verdicts_{e2a,a2e}.json`, all 256 bytes per direction via `ucnv_convertEx`), and `tests/test_encoding_determinism.cc` sweeps all 256 bytes of both codecs against those verdicts plus the strict-mode throw rules. Consequences worth knowing:
+
+- The library's EBCDIC **whitelist is intentionally stricter than ICU**: ICU 78.3 converts all 256 EBCDIC bytes (C1 controls, binary bytes included), while strict mode accepts only the 85-byte IBM-1047 printable/digit whitelist (E2A) and — for A2E — the 84 mappable ASCII characters. `tests/` pins both counts; a table change that moves them fails determinism tests.
+- Non-strict (legacy) behavior is unchanged: unmappable E2A bytes map to the `.` sentinel (`0x2E`), unmappable A2E characters to `0x6F` (`?`). Documented A2E exception: `'?'` (`0x3F`) has no table mapping (falls back to `0x6F`) yet is **never rejected**, even in strict mode (`c != '?'` clause in `to<>`) — it always serializes as `0x6F`.
+- The parser's `strict()` flag is propagated to **all four** codec conversion call sites in `src/_parser.hh` (encode/decode × string/binary) — a new codec call site that forgets `strict_` silently downgrades strict specs to legacy behavior.
+- Residual limitation: EBCDIC **length prefixes** are decoded as raw low nibbles (`b[i] & 0x0F`, `decode_length`) without whitelist validation — `constexpr` cannot throw; a corrupted prefix is caught fail-closed by the downstream strict data-byte guard (and by the B1 length checks).
+- Header unpacking (`WLP_FOHeader`/`BASE1Header`) stays **non-strict** by design: header classes carry no strict state and keep the legacy `rejectInvalid=false` conversion.
+
 ---
 
 ## 5. YAML spec format (summary — full reference: `docs/internals/yaml_format.md` and `include/iso8583/AGENTS.md`)
@@ -312,9 +329,9 @@ Loader behaviors worth knowing:
 | `_sourcemap.cc/.hh` | Node-identity-based error positions, `.smap` sidecar cache (format documented in the header). |
 | `_parser.cc/.hh` (private) | `ISOBaseParser`, `ISOFieldParser<>` — the concrete parser machinery; deliberately **not** part of the public API (only the abstract `ISOParserPtrBase`/`ISOFieldParserPtrBase`/`ISOFieldParserType`/`ISOHeader` are, via `ISOParser.hh`). |
 | `_tlv.cc/.hh`, `_tlv_policy.hh` | TLV parsers: fixed-format TLV, `BERTLVParser` (ISO/IEC 8825-1, `BerTag`), tag/length policies. |
-| `_codec.cc` + `include/.../_codec.hh` + `detail/_codec_impl.hh` | Prefixer/encoder tables (`PrefixEncoder`, `Length`, `Encoder` enums; EBCDIC digit tables, ASCII↔EBCDIC conversion table `kAsciiToEbcdic` = IBM-1047) and the constexpr codecs. **This is the reason C++20 is mandatory.** |
+| `_codec.cc` + `include/.../_codec.hh` + `detail/_codec_impl.hh` | Prefixer/encoder tables (`PrefixEncoder`, `Length`, `Encoder` enums; EBCDIC digit tables, ASCII↔EBCDIC conversion tables `kEbcdicToAscii`/`kAsciiToEbcdic`/`kEbcdicValid` = IBM-1047, **ICU-78.3-oracle-pinned**, §4) and the constexpr codecs. **This is the reason C++20 is mandatory.** |
 | `_padder.cc`, `_date.hh`, `_utils.cc`, `_logger.cc/.hh`, `config.cc` | Padding, date helpers (vendored Hinnant `date.h`), misc utils, default logger backend, config plumbing. |
-| `_iconv_wrapper.cc/.hh` | iconv wrapper; **compiled only when `ISO8583_ENABLE_ICONV=ON`** (unconditionally includes `<iconv.h>`). |
+| `_iconv_wrapper.cc/.hh` | **[DEPRECATED since 0.3.0, removal 0.4]** iconv wrapper for EBCDIC — kept only as a transitional fallback behind `ISO8583_ENABLE_ICONV` (configure WARNING when ON); the runtime codec path no longer calls it. Compiled only when the option is ON (unconditionally includes `<iconv.h>`). |
 | `fmt_types.hh` | Private `IFE_*`/`IFA_*` field-type aliases used by `SpecDecoder`. |
 
 `include/iso8583/detail/extern/` bundles `dynamic_bitset.hpp` (+ `libpopcnt.hpp`) and `nonstd::string_view` — no external fetch needed; `config.h` includes the bitset with `DYNAMIC_BITSET_*` guards. Vendored third-party files and their licenses: §14.3.
@@ -437,8 +454,10 @@ Register the new `test_*.cc` in `tests/CMakeLists.txt` (keep `test_e2e_full_mess
 6. **Memory-safety rules (A4, security plan `docs/plans/security-implementation-plan.md`):**
    - The bundled `dynamic_bitset::operator[]` bounds-checks via `assert()` only — **disabled in Release builds**, so any index beyond the constructed size is undefined behavior (historical source of OOB crashes in bitmap handling). **Never** index `bmp[n]` without first guarding `bmp.size() > n`. The bitmap decode path in `src/_parser.hh` validates buffer offsets before reading every byte — keep it that way.
    - Header byte images (`BaseHeader::header` is a **protected** member; `BASE1Header`/`WLP_FOHeader` are `final` and their from-bytes constructors/`unpack()` enforce the full size) — the getter/setter guards are defense-in-depth and **fail closed** (throw a positioned `[ISO8583] … Fail-closed` `std::runtime_error`) instead of reading out of bounds, should the buffer ever be exposed or shrunk by a future API change.
-   - The iconv E2BIG retry loop in `src/_iconv_wrapper.cc` is bounded: no-progress detection (two consecutive E2BIG without input/output advancement → throw) plus a hard output cap (2× input + reserve; EBCDIC↔ASCII is 1:1).
+   - The iconv E2BIG retry loop in `src/_iconv_wrapper.cc` is bounded: no-progress detection (two consecutive E2BIG without input/output advancement → throw) plus a hard output cap (2× input + reserve; EBCDIC↔ASCII is 1:1). The wrapper is **deprecated since 0.3.0** (removal 0.4) and not on the runtime codec path anymore — the bullets above remain true only while `ISO8583_ENABLE_ICONV=ON`.
    - Loader recursion (`processNode`/`propagateOrigins`/`finalize` in `src/_preprocessor.cc`) is depth-capped (`MAX_RECURSION_DEPTH = 200`) — malicious or corrupt specs produce a positioned `std::runtime_error`, never a stack overflow.
+7. **EBCDIC oracle pinning (0.3.0)**: the checked-in tables in `include/iso8583/_codec.hh` are pinned against the ICU-78.3 verdicts in `tools/generate_ebcdic_tables/pinned/` (LF-enforced via `.gitattributes`). To re-verify after a table change: `cmake --preset <p> -DISO8583_BUILD_CODEC_TOOLS=ON` + `cmake --build <p> --target verify-ebcdic-tables` (requires ICU 78.3 via vcpkg; the tool exits 2 if the ICU major differs from 78). To regenerate: `update-ebcdic-tables` and commit the new `pinned/*.json` **plus** any resulting count changes in `tests/test_encoding_determinism.cc`.
+8. **ctest reports early-returned (skipped) tests as Passed** — fixture-guarded tests (e.g. `issues/a` presence checks) return before any assertion; always scan the ctest output for skip warnings before trusting a green run.
 
 ---
 
@@ -501,9 +520,9 @@ Maintenance rules: **never strip the embedded copyright/license headers**; a pro
 7. **`mti()` throws** without an MTI — guard with `hasMTI()`.
 8. **Quill + DLL → `QuillBridge`**, never `setQuillLogger()`.
 9. **fmt/ryml stay PRIVATE**, nlohmann-json/robin-map stay PUBLIC — see §3.
-10. **`_iconv_wrapper.cc` is conditional** on `ISO8583_ENABLE_ICONV` — keep it that way.
+10. **`_iconv_wrapper.cc` is conditional** on `ISO8583_ENABLE_ICONV` — keep it that way; the option is **deprecated since 0.3.0** (removal 0.4, configure WARNING) and the runtime codec path is table-only (§4).
 11. **Don't reorder `tests/CMakeLists.txt`** (e2e last); register new test files there (§7).
-12. **Docs are written in German** (repo convention); keep new prose in the same language/style. Comments mix German and English — match the surrounding file.
+12. **Docs are written in German** (repo convention: `docs/`, comments); the root `AGENTS.md` is English — keep new prose in the same language/style as the surrounding file.
 13. **Generated file**: `include/iso8583/detail/_currency_table.hh` comes from `scripts/generate_currency_table.py` (data: `data/iso4217/codes-all.csv`) via `cmake --build <builddir> --target update-currency-table` (EXCLUDE_FROM_ALL, manual); commit the result like any other change.
 14. **Version strings** live in 4 places (see §2) — bump all on release (§14.2).
 15. **Licensing is proprietary** — no OSS attribution/publication assumptions; the vcpkg port's `license: null` is intentional; vendored permissive files keep their headers (§14.3).
@@ -518,3 +537,11 @@ Maintenance rules: **never strip the embedded copyright/license headers**; a pro
 24. **ASCII↔EBCDIC table invariant** between `_codec.hh` and `send_test.py` (§12.5).
 25. **Follow the commit convention** (§14.1); releases go through §14.2.
 26. **Memory-safety rules (A4)**: `dynamic_bitset` indexing is unchecked in Release — guard every `bmp[n]` with `bmp.size() > n`; header byte offsets and iconv/retry loops are fail-closed/bounded (§12.6).
+27. **EBCDIC codec changes must stay oracle-pinned**: after touching `kEbcdicToAscii`/`kAsciiToEbcdic`/`kEbcdicValid`, run `verify-ebcdic-tables` (or regenerate + update the count constants in `tests/test_encoding_determinism.cc`) — the tables are ICU-78.3-pinned, and the whitelist is deliberately stricter than ICU (§4, §12.7).
+28. **Strict mode propagates through every codec call site** — parser encode/decode of string/binary fields passes `strict_` to `codec::to<>`/`as<>` in `src/_parser.hh`; a new call site that forgets it silently downgrades strict specs to legacy conversion.
+29. **EBCDIC length prefixes are raw low nibbles** (`decode_length`) — constexpr can't throw, so misreads are caught fail-closed by the downstream strict data-byte guard, not at the prefix (§4).
+30. **Header unpack is non-strict by design** (`WLP_FOHeader`/`BASE1Header` have no strict state) — do not "fix" it into strictness without an API decision.
+31. **A2E `'?'` is a strict-mode exception**: no table mapping (`0x6F` fallback) yet never rejected — keep the `c != '?'` clause and the pinned counts (85/84/171) in `test_encoding_determinism.cc` in sync with any table change.
+32. **WLP-FO timestamp width is platform-sensitive**: `getFormattedTimestamp()` must emit a fixed 26-char timestamp (subseconds via `std::chrono::duration_cast<microseconds>` + `std::setw(6)`); raw 100-ns-clock ticks + `setw(4)` produced 24–29 chars on Windows and a ~10 % `Timestamp format error` flake (fixed in 0.3.0, `src/_components.cc`).
+33. **ctest skip == Passed**: early-returned fixture tests count as green — inspect the output for skip warnings before trusting a full-suite green (§12.8).
+34. **vcpkg ICU pin is `version>=` + baseline**, not an exact manifest field (baseline predates exact-version support) — the `builtin-baseline` and the tool's ICU-major-78 assertion together enforce 78.3 (§3).
