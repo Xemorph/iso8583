@@ -8,10 +8,12 @@
 // [tng]
 #include <iso8583/ISOSpec.hh>
 // [stdc++]
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,6 +26,8 @@ namespace fs = std::filesystem;
 // RAII-Helfer fuer temporaere Dateien (gleiches Muster wie in
 // test_spec_sandbox.cc / test_preprocessor.cc)
 // =============================================================================
+
+namespace {
 
 struct TempDir {
     fs::path path;
@@ -41,14 +45,75 @@ struct TempDir {
     }
 
     // Schreibt (oder ueberschreibt) eine Datei. Gibt den absoluten Pfad zurueck.
+    // [ISO8583] 3.3: ATOMARER Swap (schreiben nach <name>.tmp + rename) -
+    // Ein parallel ladender Reader sieht damit NIE eine teilgeschriebene
+    // oder leere Datei. Vor 3.3 wurde in-place getrunctet; das liess im
+    // TOCTOU-Test seltene Load-Fehler waehrend des Swaps (laufender
+    // Reader sah eine transient leere Datei -> "Leere YAML-Datei").
+    // Fehlschlaegt der rename (Reader haelt die Datei noch oeffnet),
+    // wird ohne Atomaritaet zurueckgefallen - genuegend fuer ONE-SHOT
+    // Writes ohne parallele Reader (Fixtures, LRU-Dateien).
     std::string write(const std::string& name, const std::string& content) {
         auto p = path / name;
         fs::create_directories(p.parent_path());
-        std::ofstream f(p);
-        f << content;
+        auto tmp = p;
+        tmp += ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            f << content;
+        }
+        std::error_code ec;
+        fs::rename(tmp, p, ec);
+        if (ec) {
+            std::ofstream f2(p, std::ios::binary | std::ios::trunc);
+            f2 << content;
+            std::error_code ec2;
+            fs::remove(tmp, ec2);
+        }
         return p.string();
     }
+
+    // [ISO8583] 3.3: ATOMARER Swap mit Retry - fuer den TOCTOU-Writer,
+    // der die Spec unter einem aktiv ladenden Reader tauscht. Wie write()
+    // (tmp + rename), ABER ohne in-place-Fallback: solange der Reader die
+    // Zielfeile noch oeffnet haelt (Windows-Handles ohne FILE_SHARE_DELETE),
+    // schlaegt fs::rename (MoveFileEx REPLACE_EXISTING) fehl - dann wird
+    // kurz gewartet und der Swap WIEDERHOLT. Ein in-place-Fallback wuerde
+    // die Zielfeile transient leeren -> "Leere YAML-Datei" in laufenden
+    // Reads.
+    // BEKANNTES WINDOWS-FENSTER: rename(MoveFileEx REPLACE_EXISTING) bei
+    // vorhandener Zielfeile ist dort NICHT atomar (Delete + Move als zwei
+    // Kernel-Operationen); laeuft der AV-Filter auf der Source-Datei, kann
+    // die Zielfeile zwischen beiden Schritten transient fehlen. Der
+    // TOCTOU-Reader toleriert diese OS-Level-Races (Diskriminator:
+    // Datei-Existenz im Fehlermoment) - sie sind kein Cache-Defekt. Der
+    // naechste Swap (bzw. der finale Retry-Swirl) stellt die Zielfeile
+    // wieder her (rename bei fehlender Zielfeile = reines Create).
+    // Liefert false, wenn nach 100 Versuchen (~0.2 s) kein Swap klappte.
+    bool swap(const std::string& name, const std::string& content) {
+        auto p = path / name;
+        fs::create_directories(p.parent_path());
+        auto tmp = p;
+        tmp += ".tmp";
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            {
+                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+                if (!f)
+                    return false;
+                f << content;
+            }
+            std::error_code ec;
+            fs::rename(tmp, p, ec);
+            if (!ec)
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+        return false;
+    }
 };
+} // namespace
 
 // =============================================================================
 // Spec-Varianten fuer den Hot-Swap-Test: V1 und V2 unterscheiden sich sowohl
@@ -117,30 +182,91 @@ TEST_CASE("Cache TOCTOU - hot-swapped spec yields only consistent versions",
             using namespace std::chrono_literals;
             const auto deadline = std::chrono::steady_clock::now() + 1000ms;
             while (!stopWriter.load() && std::chrono::steady_clock::now() < deadline) {
-                dir.write("hot.yml", v1 ? kSpecV1 : kSpecV2);
+                // [ISO8583] 3.3: atomarer Swap (tmp+rename mit Retry) -
+                // ein Reader sieht waehrend des Swaps nie eine leere oder
+                // teilgeschriebene Datei (siehe TempDir::swap).
+                dir.swap("hot.yml", v1 ? kSpecV1 : kSpecV2);
                 v1 = !v1;
                 std::this_thread::sleep_for(5ms);
             }
-            dir.write("hot.yml", kSpecV2);  // Endzustand
+            // Endzustand: der finale Swap MUSS ankommen (der Reader hat zu
+            // diesem Zeitpunkt seine Schleife beendet bzw. wird sie beenden;
+            // Retry bis die Datei wirklich V2 ist).
+            int finalTries = 0;
+            while (!dir.swap("hot.yml", kSpecV2) && ++finalTries < 5000)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
         catch (...) { /* I/O-Fehler: writerDone wird trotzdem gesetzt */ }
         writerDone.store(true);
     });
 
+    // [ISO8583] 3.3: RAII-Guard - der Writer-Thread darf beim Verlassen
+    // des Test-Scope NIEMALS joinable sein: zerstoert man ein joinables
+    // std::thread, ruft das std::terminate() auf (Prozess-Abschluss ohne
+    // sauberes Test-Fehlerbild). Ein REQUIRE-Failure/Exception in der
+    // Reader-Schleife WAEHREND des Writer-Laufs wuerde den Scope andernfalls
+    // entwinden, waehrend der Writer noch laeuft. Normalpfad: der explizite
+    // join/detach unten macht den Thread nicht-joinable, der Guard wird
+    // zur No-Op. Ausnahmepfad: der Guard wartet kurz und detacht.
+    struct WriterGuard {
+        std::thread&       th;
+        std::atomic<bool>& done;
+        WriterGuard(std::thread& t, std::atomic<bool>& d) : th(t), done(d) {}
+        ~WriterGuard() {
+            if (!th.joinable())
+                return;
+            for (int i = 0; i < 200 && !done.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            th.detach();
+        }
+    } writerGuard(writer, writerDone);
+
     // Reader: laedt im Schleife mit CheckEveryCall und prueft bei JEDEM
-    // Ergebnis die Konsistenzinvariante (exakt eine komplette Version).
+    // ERFOLGREICHEN Ergebnis die Konsistenzinvariante (exakt eine komplette
+    // Version).
+    //
+    // [ISO8583] 3.3: Transiente OS-Level-Dateiswap-Races werden TOLERIERT:
+    // Unter Windows ist fs::rename (MoveFileEx + REPLACE_EXISTING) bei
+    // vorhandener Zielfeile NICHT atomar (Ziel-Delete und Source-Move sind
+    // zwei getrennte Kernel-Operationen). Laeuft gerade der AV-Filter auf
+    // der Source-Temp-Datei, kann die Zielfeile zwischen beiden Schritten
+    // transient FEHLEN (Writer-Swap). Ein Load, das exakt in dieses Fenster
+    // laeuft, wirft ("Datei nicht lesbar") - ein Artefakt des Test-Setups
+    // unter Windows, KEIN Cache-Inkonsistenz-Fall: jedes Load, das ein
+    // Ergebnis liefert, MUSS versionskonsistent sein (unterhalb gecheckt).
+    // Diskriminator: existiert die Datei im Fehlermoment, handelt es sich
+    // um einen echten Load-/Cache-Fehler -> Re-Throw. Unter Linux (rename
+    // = atomar) tritt dieser Fall nie auf.
+    int transientFileRaces = 0;
     bool sawV1 = false, sawV2 = false;
     const auto t0 = std::chrono::steady_clock::now();
     while (!writerDone.load()
         && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(4))
     {
-        auto [parser, spec] = SpecDecoder::loadBothFromYamlCached(
-            file, SpecLoadOptions{}, /*validation=*/CacheValidation::CheckEveryCall);
-        (void)parser;
+        ISOSpec::SmartPtr spec;
+        try
+        {
+            const auto [parser, sp] = SpecDecoder::loadBothFromYamlCached(
+                file, SpecLoadOptions{}, /*validation=*/CacheValidation::CheckEveryCall);
+            (void)parser;
+            spec = sp;
+        }
+        catch (const std::exception&)
+        {
+            std::error_code ec;
+            if (fs::exists(file, ec) && !ec)
+                throw; // Datei vorhanden -> kein Swap-Race, echtes Fehler
+            ++transientFileRaces;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
         REQUIRE(isConsistentPair(spec));
         if (spec->name() == "V1") sawV1 = true;
         if (spec->name() == "V2") sawV2 = true;
     }
+    // Der Race-Zaehler ist ein Umgebungs-Signal (AV-Filter-Aktivitaet), kein
+    // Testkriterium - nur als Plausibilitaetsgrenze gegen degenerierte Laeufe.
+    CHECK(transientFileRaces < 1000);
 
     // Beschaenktes Writer-Warten: Bei einem seltenen OS-Level-I/O-Stall
     // (z.B. AV-Scan auf frisch angelegten Temp-Dateien) darf das join
@@ -170,10 +296,27 @@ TEST_CASE("Cache TOCTOU - hot-swapped spec yields only consistent versions",
 
     // Konvergenz: Der Cache muss gegen die Endversion (V2) laufen -
     // naechste N Aufrufe liefern durchweg V2 (kein veralteter Eintrag).
+    // Transiente Swap-Races werden wie in der Reader-Schleife toleriert
+    // (relevant, falls der Writer am Join-Deadline-Sprung noch laeuft und
+    // die Datei weiter tauscht); die Versions-Assertion entfaellt dann
+    // sowieso (writerOk == false).
     for (int i = 0; i < 20; ++i) {
-        auto [parser, spec] = SpecDecoder::loadBothFromYamlCached(
-            file, SpecLoadOptions{}, /*validation=*/CacheValidation::CheckEveryCall);
-        (void)parser;
+        ISOSpec::SmartPtr spec;
+        try
+        {
+            const auto [parser, sp] = SpecDecoder::loadBothFromYamlCached(
+                file, SpecLoadOptions{}, /*validation=*/CacheValidation::CheckEveryCall);
+            (void)parser;
+            spec = sp;
+        }
+        catch (const std::exception&)
+        {
+            std::error_code ec;
+            if (fs::exists(file, ec) && !ec)
+                throw;
+            ++transientFileRaces;
+            continue;
+        }
         REQUIRE(isConsistentPair(spec));
         if (writerOk && i >= 5)
             REQUIRE(spec->name() == "V2");
@@ -259,12 +402,40 @@ TEST_CASE("Cache concurrency - parallel loads dedup to one stable parser",
     constexpr int kIters = 50;
     std::vector<ISOParserPtrBase::ISOParserPtrBaseSmartPtr> lastPtr(2);
     std::vector<std::shared_ptr<std::atomic<bool>>> stable(2);
+    // [ISO8583] 3.3: Exceptions in den Worker-Threads muessen abgefangen
+    // werden - eine uncaught Exception in einem std::thread endet in
+    // std::terminate (Prozess-Abschuss, kein sauberes Test-Fehlerbild).
+    // Stattdessen wird der Fehler hier gesammelt und nach dem Join als
+    // normales Test-FAIL gewertet.
+    std::array<std::string, 2> workerError;
+    std::mutex errMutex;
 
     auto worker = [&](int tid) {
         stable[tid] = std::make_shared<std::atomic<bool>>(true);
         for (int i = 0; i < kIters; ++i) {
-            auto p = SpecDecoder::loadFromYamlCached(
-                file, SpecLoadOptions{}, CacheValidation::TrustUntilInvalidated);
+            auto loadOnce = [&]() -> ISOParserPtrBase::ISOParserPtrBaseSmartPtr {
+                try {
+                    return SpecDecoder::loadFromYamlCached(
+                        file, SpecLoadOptions{}, CacheValidation::TrustUntilInvalidated);
+                }
+                catch (const std::exception& e) {
+                    std::lock_guard lock(errMutex);
+                    workerError[tid] = std::string("iteration ") + std::to_string(i) + ": " + e.what();
+                    throw;
+                }
+            };
+            bool threw = false;
+            ISOParserPtrBase::ISOParserPtrBaseSmartPtr p;
+            try {
+                p = loadOnce();
+            }
+            catch (...) {
+                threw = true;
+            }
+            if (threw) {
+                stable[tid]->store(false);
+                break;  // weitere Iterationen wuerden identisch scheitern
+            }
             if (i > 0 && lastPtr[tid])
                 stable[tid]->store(p.get() == lastPtr[tid].get());
             lastPtr[tid] = p;
@@ -276,6 +447,14 @@ TEST_CASE("Cache concurrency - parallel loads dedup to one stable parser",
     std::thread t1(worker, 1);
     t0.join();
     t1.join();
+
+    // Worker-Fehler als sauberes Test-FAIL (statt std::terminate):
+    std::string err;
+    { std::lock_guard lock(errMutex);
+      err = workerError[0].empty() ? workerError[1] : workerError[0]; }
+    REQUIRE(err.empty());
+    if (!err.empty())
+        FAIL("Worker-Load fehlgeschlagen: " + err);
 
     // Ab dem 2. Aufruf ist der Cache gesetzt: jeder Thread sah durchweg
     // denselben Parser-Pointer.

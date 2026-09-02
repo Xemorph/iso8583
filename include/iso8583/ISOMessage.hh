@@ -37,6 +37,25 @@
  *   // Nachricht als JSON ausgeben
  *   std::cout << msg->to_json().dump(2) << "\n";
  * @endcode
+ *
+ * @par Thread-Sicherheit (ab 0.3.0)
+ * Eine @ref iso8583::Message kann aus **N Threads gleichzeitig** genutzt
+ * werden: Alle öffentlichen Einstiegspunkte (set/unset/has/get/tryGet* /
+ * reset/keys/size/to_json/dump/parser/parse/unparse/header/direction/
+ * hasMTI/mti/isRequest …) nehmen denselben (rekursiven) Message-Lock genau
+ * EINMAL; interne Aufrufketten (z. B. parse → recalcBitmap → set) laufen
+ * unter dem gehaltenen Lock. Writer und Reader sind sich gegenseitig
+ * exklusiv (ein Lock, kein paralleler Read-Modus).
+ *
+ * Parser sind nach dem Laden **unveränderlich** und dürfen deshalb
+ * thread-übergreifend und über mehrere Nachrichten hinweg geteilt werden
+ * (parallele parse()/unparse()-Aufrufe auf *verschiedenen* Nachrichten mit
+ * demselben Parser sind sicher).
+ *
+ * **Restrisiko (dokumentiert):** `mti()` liefert ein `string_view` **in
+ * den mutierbaren Feld-Speicher** der Nachricht – vor thread-übergreifender
+ * Nutzung kopieren: `std::string m = msg->mti();`. Gleiches gilt für
+ * `tryGetValueRef` (Zero-Copy-Referenz).
  */
 
 #include "detail/_components.hh"

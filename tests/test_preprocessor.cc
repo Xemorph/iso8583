@@ -15,6 +15,8 @@ using namespace TNG_NAMESPACE;
 // RAII-Helfer fuer temporaere Dateien und Verzeichnisse
 // =============================================================================
 
+namespace {
+
 struct TempDir {
     std::filesystem::path path;
 
@@ -43,6 +45,7 @@ struct TempDir {
         return (path / name).string();
     }
 };
+} // namespace
 
 // =============================================================================
 // !template Direktive

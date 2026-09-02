@@ -8,7 +8,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -203,9 +202,27 @@ namespace TNG_NAMESPACE {
     ///
     /// @par Thread safety
     ///
-    /// All `set`, `unset`, `reset` operations acquire an exclusive write lock.
-    /// All `get`, `tryGet`, `has`, `size` operations acquire a shared read lock.
-    /// Concurrent reads from multiple threads are safe.
+    /// All public entry points (`set`, `unset`, `has`, `get`, `tryGet`,
+    /// `tryGetValue`, `tryGetValueRef`, `reset`, `keys`, `size`, `to_json`,
+    /// `dump`, `parser`, `parse`, `unparse`, `header`, `direction`,
+    /// `hasMTI`, `mti`, `isRequest`/`isResponse`/… and friends) acquire the
+    /// same (recursive) message lock **exactly once**; internal call chains
+    /// (e.g. `parse → recalcBitmap → set`) run under the already-held lock.
+    ///
+    /// - One `ISOMessage` shared from **N threads is supported**: all state
+    ///   (field map, parser, header, direction, bitmap-recalculation flag)
+    ///   is only touched under that lock.  Writers and readers are mutually
+    ///   exclusive (single lock, no parallel-reader mode).
+    /// - `to_json`/`dump` snapshot the field set under the lock and format
+    ///   outside of it (bounds lock-hold time).
+    /// - **Parsers are immutable after load** → a parser returned by
+    ///   `SpecDecoder::loadFromYaml` is safe to share across threads and
+    ///   across messages (concurrent `parse`/`unparse` calls on *different*
+    ///   messages using the same parser are safe).
+    /// - Residual hazard: `mti()` returns a `string_view` **into the
+    ///   mutable field storage** of the message – copy it before
+    ///   cross-thread use (`std::string m = msg->mti();`).  The same holds
+    ///   for `tryGetValueRef` (zero-copy reference).
     class TNG_EXPORT ISOMessage final
         : public ISOComponent<TNG_KEY_TYPE, ISO_MAP>
     {
@@ -241,7 +258,14 @@ namespace TNG_NAMESPACE {
     private:
         ISO_MAP::key_type   hf_;        ///< Highest DE number currently set.
         bool                recalc_;    ///< Bitmap recalculation required flag.
-        std::shared_mutex   d_lock_;    ///< Guards d_ (the field map).
+        /// @brief Guard for the WHOLE message state (d_, p_, hdr_, dir_,
+        ///        hf_, recalc_).  Recursive, because public entry points may
+        ///        call each other / the parser (which calls back into
+        ///        set()); every public entry point locks it exactly once and
+        ///        the internal `*_locked()` helpers assume the lock is held.
+        ///        `mutable` so `const` entry points (size, to_json, dump,
+        ///        parser(), header() const) can take it too.
+        mutable std::recursive_mutex d_lock_;
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr p_ = nullptr;
         Direction           dir_ = Direction::UNKNOWN;
         ISOHeader::ISOHeaderSmartPtr hdr_;
@@ -272,23 +296,39 @@ namespace TNG_NAMESPACE {
         bool is_composite() const override;
         virtual void dump(std::ostream& os, bool nested = false) const override;
         virtual json to_json() const override {
+            // 3.3: Snapshot der Felder UNTER dem Lock, Formatierung DAVOR
+            // (begrenzt die Lock-Besetzungszeit; Kinder haben eigene Locks).
+            TNG_KEY_TYPE snap_key = k_;   // k_ ist stabil (nur bei Konstruktion)
+            Direction    snap_dir;
+            std::size_t  snap_wo = 0;
+            std::size_t  snap_wl = 0;
+            std::vector<ISO_MAP::mapped_type> snap_children;
+            {
+                std::lock_guard<std::recursive_mutex> lock(d_lock_);
+                snap_dir  = dir_;
+                snap_wo   = wire_offset_;
+                snap_wl   = wire_length_;
+                snap_children.reserve(d_.size());
+                for (const auto& pair : d_)
+                    snap_children.push_back(pair.second);
+            }
+
             json j;
-            if (k_ == -1)
-                j["direction"] = (dir_ == Direction::INCOMING) ? "INCOMING" : "OUTGOING";
+            if (snap_key == -1)
+                j["direction"] = (snap_dir == Direction::INCOMING) ? "INCOMING" : "OUTGOING";
             else
-                j["key"] = k_;
+                j["key"] = snap_key;
 
             // Wire-Position mitausgeben (hilfreich für Debugging und Protokoll-Analyse)
-            if (wire_length_ > 0) {
-                j["wire_offset"] = wire_offset_;
-                j["wire_length"] = wire_length_;
+            if (snap_wl > 0) {
+                j["wire_offset"] = snap_wo;
+                j["wire_length"] = snap_wl;
             }
 
-            // Konvertiere das ISO_MAP (Datenfelder) in JSON
+            // Konvertiere den gesicherten Feld-Snapshot in JSON
             json fields_json = json::array();
-            for (const auto& pair : d_) {
-                fields_json.push_back(pair.second->to_json());
-            }
+            for (const auto& child : snap_children)
+                fields_json.push_back(child->to_json());
 
             j["fields"] = fields_json;
             return j;
@@ -311,10 +351,6 @@ namespace TNG_NAMESPACE {
         /// `<iso8583/ISOUtils.hh>`).
         ///
         /// @return Ascending vector of DE/SE numbers with `key >= 0`.
-        ///
-        /// Not `const` for the same reason as @ref get / @ref tryGet: taking
-        /// the internal read-lock (`d_lock_`) requires a non-const `this`
-        /// since `d_lock_` isn't declared `mutable`.
         std::vector<TNG_KEY_TYPE> keys();
 
         /// @brief Inserts or replaces a field component.
@@ -395,8 +431,9 @@ namespace TNG_NAMESPACE {
         /// @return Typed `shared_ptr`, or `nullptr` if not found or wrong type.
         template< typename T = ::TNG_NAMESPACE::ISOComponentPtrBase >
         std::shared_ptr< T > get(const ISO_MAP::key_type& key) {
-            // Guarded by std::mutex -> shared read
-            std::shared_lock<std::shared_mutex> w_lock(d_lock_);
+            // 3.3: einheitlicher rekursiver Message-Lock (read- und
+            // write-Seite sind sich gegenseitig exklusiv)
+            std::lock_guard<std::recursive_mutex> lock(d_lock_);
             // Try to find element
             ISO_MAP_ITERATOR itr = d_.find(key);
             if (itr == d_.end())
@@ -420,7 +457,7 @@ namespace TNG_NAMESPACE {
         /// @return `std::optional<shared_ptr<T>>`.
         template< typename T = ::TNG_NAMESPACE::ISOComponentPtrBase >
         std::optional< std::shared_ptr< T > > tryGet(const ISO_MAP::key_type& key) {
-            std::shared_lock<std::shared_mutex> lock(d_lock_);
+            std::lock_guard<std::recursive_mutex> lock(d_lock_);
             auto itr = d_.find(key);
             if (itr == d_.end())
                 return std::nullopt;
@@ -449,7 +486,7 @@ namespace TNG_NAMESPACE {
         auto tryGetValue(const ISO_MAP::key_type& key)
             -> std::optional< std::decay_t< decltype(std::declval< T >().value()) > >
         {
-            std::shared_lock<std::shared_mutex> lock(d_lock_);
+            std::lock_guard<std::recursive_mutex> lock(d_lock_);
             auto itr = d_.find(key);
             if (itr == d_.end())
                 return std::nullopt;
@@ -477,7 +514,7 @@ namespace TNG_NAMESPACE {
         auto tryGetValueRef(const ISO_MAP::key_type& key)
             -> std::optional< std::reference_wrapper< const std::decay_t< decltype(std::declval<T>().value()) > > >
         {
-            std::shared_lock<std::shared_mutex> lock(d_lock_);
+            std::lock_guard<std::recursive_mutex> lock(d_lock_);
             auto itr = d_.find(key);
             if (itr == d_.end())
                 return std::nullopt;
@@ -591,8 +628,19 @@ namespace TNG_NAMESPACE {
         bool isRetransmission();
 
     private:
-        bool set_recursive(const TNG_KEY_TYPE* keys, std::size_t depth, std::string data);
-        void recalcBitmap();
+        // 3.3 (Threading-Modell): Interne Varianten, die VORAUSSETZEN, dass
+        // d_lock_ VON DEM AUfruFER gehalten wird. Die öffentlichen Einstiegspunkte
+        // locken genau EINMAL; die interne Aufrufkette (set → set_recursive →
+        // set, parse → recalcBitmap → set) läuft unter dem gehaltenen Lock
+        // (recursive_mutex), statt mehrfach zu locken.
+        bool set_locked(const ISO_MAP::mapped_type& component);
+        bool set_keydata_locked(const ISO_MAP::key_type& key, std::string data);
+        bool set_recursive_locked(const TNG_KEY_TYPE* keys, std::size_t depth, std::string data);
+        void recalcBitmap_locked();
+        bool has_locked(const ISO_MAP::key_type& key) const;
+        /// @brief MTI-Wert (als `std::string`-Speicher-View), falls ein MTI als
+        ///        `OpaqueField` vorhanden ist; sonst nullptr. Lock muss gehalten sein.
+        const std::string* mti_value_locked() const;
     };
 
     // ── Header implementations ──────────────────────────────────────────────

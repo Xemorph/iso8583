@@ -153,6 +153,14 @@ namespace TNG_NAMESPACE {
     /// A parser knows the full layout of a message type (MTI, bitmap, all DEs).
     /// Obtain a concrete instance via @ref iso8583::spec::SpecDecoder::loadFromYaml.
     ///
+    /// @note Thread safety: parser objects are **immutable after
+    ///       construction** (the layout is fixed at load time) and may
+    ///       therefore be shared across threads **and** across messages:
+    ///       concurrent `parse`/`unparse` calls on *different* messages
+    ///       using the same parser are safe.  (One `ISOMessage` shared from
+    ///       several threads is likewise supported – see `ISOMessage`'s
+    ///       Thread safety documentation.)
+    ///
     /// @see iso8583::Message::parser(ISOParserPtrBaseSmartPtr)
     /// @see iso8583::Message::unparse
     class TNG_EXPORT ISOParserPtrBase

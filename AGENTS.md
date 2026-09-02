@@ -234,7 +234,10 @@ Headers (network framing attached to a message): `BaseHeader`,
 - `fmt` is a PRIVATE dependency: the library does not leak fmt into public headers.
 
 ### Thread safety
-`set`/`unset`/`reset`/`unparse` take an exclusive lock; `get`/`tryGet`/`has`/`size` a shared lock. Concurrent reads are safe; do not mutate while another thread reads without external sync.
+- **One `ISOMessage` from N threads: supported** (model since 0.3.0): every public entry point (`set`/`unset`/`has`/`get`/`tryGet`/`tryGetValue`/`tryGetValueRef`/`reset`/`keys`/`size`/`to_json`/`dump`/`parser`/`parse`/`unparse`/`header`/`direction`/`hasMTI`/`mti`/`isRequest`/… ) acquires the same **recursive message lock** exactly once; internal call chains (e.g. `parse → recalcBitmap → set`, parser callbacks into `set()`) run under the already-held lock. Writers and readers are mutually exclusive (single lock, no parallel-reader mode). `to_json`/`dump` snapshot the field set under the lock and format outside it.
+- **Parsers are immutable after load** → shareable across threads and across messages (concurrent `parse`/`unparse` on *different* messages using the same parser is safe).
+- Logger globals (`setLevel`/`setLogger`/`currentLogger`/`getLevel`) are atomic (F3).
+- Residual hazards (documented in `ISOMessage.hh`): `mti()` returns a `string_view` **into the mutable field storage** — copy it before cross-thread use (`std::string m = msg->mti();`); `tryGetValueRef` is a zero-copy reference with the same caveat.
 
 ### Encoding system (see `docs/internals/encoding.md`)
 Resolution order per field: **field-level `encoding` > global spec `encoding` > `""`** (only allowed for encoding-neutral formats).
@@ -461,6 +464,7 @@ Register the new `test_*.cc` in `tests/CMakeLists.txt` (keep `test_e2e_full_mess
    - Loader recursion (`processNode`/`propagateOrigins`/`finalize` in `src/_preprocessor.cc`) is depth-capped (`MAX_RECURSION_DEPTH = 200`) — malicious or corrupt specs produce a positioned `std::runtime_error`, never a stack overflow.
 7. **EBCDIC oracle pinning (0.3.0)**: the checked-in tables in `include/iso8583/_codec.hh` are pinned against the ICU-78.3 verdicts in `tools/generate_ebcdic_tables/pinned/` (LF-enforced via `.gitattributes`). To re-verify after a table change: `cmake --preset <p> -DISO8583_BUILD_CODEC_TOOLS=ON` + `cmake --build <p> --target verify-ebcdic-tables` (requires ICU 78.3 via vcpkg; the tool exits 2 if the ICU major differs from 78). To regenerate: `update-ebcdic-tables` and commit the new `pinned/*.json` **plus** any resulting count changes in `tests/test_encoding_determinism.cc`.
 8. **ctest reports early-returned (skipped) tests as Passed** — fixture-guarded tests (e.g. `issues/a` presence checks) return before any assertion; always scan the ctest output for skip warnings before trusting a green run.
+9. **File hot-swapping is NOT atomic on Windows** (`std::filesystem::rename` = `MoveFileEx` + `REPLACE_EXISTING` with an existing target is delete+move as two kernel operations). While the AV minifilter is scanning the source file, the target can be transiently MISSING between the two steps — a load racing into that window throws `Datei nicht lesbar`. The TOCTOU test (`tests/test_spec_cache.cc`) therefore tolerates such OS-level races (discriminator: file existence at exception time) and requires version-consistency only for *successful* loads; on Linux (atomic `rename`) the strict path holds. Never rely on rename-based hot-swap being atomic in production Windows code — use a new-name + re-point design if consistency is required.
 
 ---
 
@@ -549,3 +553,6 @@ Maintenance rules: **never strip the embedded copyright/license headers**; a pro
 33. **ctest skip == Passed**: early-returned fixture tests count as green — inspect the output for skip warnings before trusting a full-suite green (§12.8).
 34. **vcpkg ICU pin is `version>=` + baseline**, not an exact manifest field (baseline predates exact-version support) — the `builtin-baseline` and the tool's ICU-major-78 assertion together enforce 78.3 (§3).
 35. **Spec loading is sandboxed by default (0.3.0)**: `!include_files` entries resolving outside `SpecLoadOptions::roots` (empty = the spec's own directory) fail closed, file reads are size-capped, and `fields:` must be a non-empty map. If a load of a legitimate out-of-root include fails, raise `roots` (or set `sandbox=false` only for fully trusted spec trees) — do not weaken the loader (§4, §5).
+36. **Concurrency model (0.3.0)**: `ISOMessage` entry points each take the one recursive message lock exactly once (internal `*_locked` chains assume it); parsers are immutable after load → shareable; logger globals are atomic. One message from N threads is supported — do not reintroduce lock-free fast paths or per-call locking in internal chains (§4).
+37. **Test helper structs (`TempDir`/`TempYaml`) live in per-file anonymous namespaces** — a global-scope definition is an ODR violation across test TUs: in-class (inline) members COMDAT-fold, so all TUs silently share one constructor body (observed: one test file's directory prefix leaking into another's tests) (§12.9 context).
+38. **Windows rename-based hot-swapping is non-atomic** (delete+move, AV-filter windows) — the TOCTOU test tolerates those OS-level races via a file-existence discriminator; successful loads must still be version-consistent (§12.9).

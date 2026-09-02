@@ -241,50 +241,54 @@ bool TNG_NAMESPACE::ISOMessage::is_composite() const {
     return true;
 }
 
+// [ISO8583] 3.3 (Threading-Modell): dump() sichert das Feld-Set unter dem
+// Message-Lock und formatiert außerhalb davon (begrenzt die Lock-Besetzungszeit;
+// jedes Kind hat seinen eigenen Lock). Die shared_ptr-Kopien halten die Kinder
+// stabil.
 void TNG_NAMESPACE::ISOMessage::dump(std::ostream& os, bool nested) const {
     if (!is_composite()) return;
 
-    if (key() == ROOT_KEY) {
-        if (!expl_.empty())
-            os << "\u252C\x1b[4m" << expl_ << "\x1b[0m: [ISOMessage]\n";
+    const TNG_KEY_TYPE      snap_key  = k_;
+    const nonstd::string_view snap_desc = desc_;
+    const nonstd::string_view snap_expl = expl_;
+    std::vector<ISO_MAP::mapped_type> snap_children;
+    {
+        std::lock_guard<std::recursive_mutex> lock(d_lock_);
+        snap_children.reserve(d_.size());
+        for (const auto& pair : d_)
+            snap_children.push_back(pair.second);
+    }
+
+    if (snap_key == ROOT_KEY) {
+        if (!snap_expl.empty())
+            os << "\u252C\x1b[4m" << snap_expl << "\x1b[0m: [ISOMessage]\n";
         else
             os << "\u252CISOMessage:\n";
     }
     else {
         const std::ios::fmtflags saved_flags = os.flags();
         const char saved_fill = os.fill();
-        os << "\u253CDE" << std::setfill('0') << std::setw(3) << k_ << " " << desc_ << ":\n";
+        os << "\u253CDE" << std::setfill('0') << std::setw(3) << snap_key << " " << snap_desc << ":\n";
         os.flags(saved_flags);
         os.fill(saved_fill);
     }
 
-    ISO_MAP_CONST_ITERATOR citr = d_.cbegin();
-    while (citr != d_.cend()) {
+    for (std::size_t i = 0; i < snap_children.size(); ++i) {
         // print
-        if (key() > ROOT_KEY) {
-            if (std::distance(citr, d_.cend()) == 1)
+        if (snap_key > ROOT_KEY) {
+            if (i + 1 == snap_children.size())
                 os << "\u2514\u2574";
             else
                 os << "\u251C\u2574";
         }
-        citr->second->dump(os, (key() > ROOT_KEY ? true : false));
-        // increment
-        citr++;
+        snap_children[i]->dump(os, (snap_key > ROOT_KEY ? true : false));
     }
 }
 
-bool TNG_NAMESPACE::ISOMessage::has(const ISO_MAP::key_type& key) {
-    // Guarded by std::mutex -> shared read
-    std::shared_lock<std::shared_mutex> lock(d_lock_);
-    // Try to find element
-    ISO_MAP_ITERATOR itr = d_.find(key);
-    if (itr == d_.end())
-        return false;
-    return true;
-}
-
 std::vector<TNG_KEY_TYPE> TNG_NAMESPACE::ISOMessage::keys() {
-    std::shared_lock<std::shared_mutex> lock(d_lock_);
+    // 3.3: rekursiver Message-Lock (Read- und Write-Seite sind sich
+    // gegenseitig exklusiv; kein paralleler Read-Modus mehr)
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
 
     // std::transform statt manueller for-Schleife für die reine
     // Key-Extraktion (1:1-Abbildung Paar -> .first). Filtern kann
@@ -303,18 +307,39 @@ std::vector<TNG_KEY_TYPE> TNG_NAMESPACE::ISOMessage::keys() {
     return out;
 }
 
+bool TNG_NAMESPACE::ISOMessage::has(const ISO_MAP::key_type& key) {
+    // 3.3: einheitlicher rekursiver Message-Lock
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    return has_locked(key);
+}
+
+bool TNG_NAMESPACE::ISOMessage::has_locked(const ISO_MAP::key_type& key) const {
+    return d_.find(key) != d_.end();
+}
+
+const std::string* TNG_NAMESPACE::ISOMessage::mti_value_locked() const {
+    // Lock muss gehalten sein (s. Klassendoku Thread safety).
+    auto itr = d_.find(MTI_KEY);
+    if (itr == d_.end())
+        return nullptr;
+    auto comp = std::dynamic_pointer_cast<OpaqueField>(itr->second);
+    if (!comp)
+        return nullptr; // MTI existiert, ist aber kein OpaqueField
+    return &comp->value();
+}
+
 bool TNG_NAMESPACE::ISOMessage::set(ISO_MAP::mapped_type component) {
     if (!component) {
         TNG_LOG_ERROR("[ISOMessage::set] Null-Komponente übergeben – wird ignoriert");
         return false;
     }
     const ISO_MAP::key_type key = component->key();
+    // 3.3: der öffentliche Einstiegspunkt lockt genau EINMAL; die interne
+    // Aufrufkette (z.B. set_recursive → set_keydata_locked → set_locked)
+    // läuft unter dem gehaltenen Lock.
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     try {
-        std::unique_lock<std::shared_mutex> w_lock(d_lock_);
-        d_.insert_or_assign(key, std::move(component));
-        if (key > hf_) hf_ = key;
-        recalc_ = true;
-        return true;
+        return set_locked(component);
     }
     catch (const std::bad_alloc& e) {
         TNG_LOG_ERROR("[ISOMessage::set] Speicher konnte nicht alloziert werden (DE{}): {}", key, e.what());
@@ -324,6 +349,15 @@ bool TNG_NAMESPACE::ISOMessage::set(ISO_MAP::mapped_type component) {
         TNG_LOG_ERROR("[ISOMessage::set] Unerwarteter Fehler beim Einfügen von DE{}: {}", key, e.what());
         return false;
     }
+}
+
+// Interne Variante von set(component): VORAUSSETZT, dass d_lock_ gehalten ist.
+bool TNG_NAMESPACE::ISOMessage::set_locked(const ISO_MAP::mapped_type& component) {
+    const ISO_MAP::key_type key = component->key();
+    d_.insert_or_assign(key, component);
+    if (key > hf_) hf_ = key;
+    recalc_ = true;
+    return true;
 }
 
 // ── Interne Hilfsfunktion: Erstellt ein ISOComponent aus String-Wert ──────────
@@ -383,9 +417,20 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
 }
 
 bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string data) {
+    // 3.3: EIN Lock für Parser-Lookup + Komponentenerstellung + Insert
+    // (sonst könnte der Parser zwischen Lookup und Insert getauscht werden).
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    return set_keydata_locked(key, std::move(data));
+}
+
+bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string_view data) {
+    return set(key, std::string(data));
+}
+
+// Interne Variante von set(key, data): VORAUSSETZT, dass d_lock_ gehalten ist.
+bool TNG_NAMESPACE::ISOMessage::set_keydata_locked(const ISO_MAP::key_type& key, std::string data) {
     ISO_MAP::mapped_type component;
     {
-        std::shared_lock<std::shared_mutex> r_lock(d_lock_);
         const ISOFieldParserPtrBase* fieldParser = nullptr;
         std::shared_ptr<const ISOFieldParserPtrBase> fp_holder;
 
@@ -398,46 +443,39 @@ bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string da
         component = make_component_from_string(key, std::move(data), fieldParser);
     }
     if (!component) return false;
-    return set(std::move(component));
+    return set_locked(component);
 }
 
-bool TNG_NAMESPACE::ISOMessage::set(const ISO_MAP::key_type& key, std::string_view data) {
-    return set(key, std::string(data));
-}
-
-bool TNG_NAMESPACE::ISOMessage::set_recursive(
+bool TNG_NAMESPACE::ISOMessage::set_recursive_locked(
     const TNG_KEY_TYPE* keys,
     std::size_t         depth,
     std::string         data)
 {
+    // VORAUSSETZT, dass d_lock_ (dieser Nachricht) gehalten ist.
     // keys[0]       = Key auf dieser Ebene
     // keys[1..n-1]  = verbleibende Segmente
-    // depth == 1    = Blatt – normaler set(key, data)
+    // depth == 1    = Blatt – set_keydata_locked(key, data)
     if (depth == 1)
-        return set(keys[0], std::move(data));
+        return set_keydata_locked(keys[0], std::move(data));
 
     const TNG_KEY_TYPE parentKey = keys[0];
 
-    // Parser-Prüfung für diesen Key
+    // Parser-Prüfung für diesen Key (Lock liegt bereits vor)
     std::shared_ptr<ISOBaseParser>               base;
     std::shared_ptr<const ISOFieldParserPtrBase> parentFP;
     std::shared_ptr<ISOParserPtrBase>            subParserPtr;
 
-    {
-        std::shared_lock<std::shared_mutex> r_lock(d_lock_);
-
-        if (p_) {
-            base = std::dynamic_pointer_cast<ISOBaseParser>(p_);
-            if (base) {
-                parentFP = base->field_parser(parentKey);
-                if (parentFP) {
-                    if (parentFP->type() != ISOFieldParserType::NESTED) {
-                        TNG_LOG_ERROR("[ISOMessage::set] DE{} ist nicht NESTED",
-                            parentKey);
-                        return false;
-                    }
-                    subParserPtr = parentFP->subParser();
+    if (p_) {
+        base = std::dynamic_pointer_cast<ISOBaseParser>(p_);
+        if (base) {
+            parentFP = base->field_parser(parentKey);
+            if (parentFP) {
+                if (parentFP->type() != ISOFieldParserType::NESTED) {
+                    TNG_LOG_ERROR("[ISOMessage::set] DE{} ist nicht NESTED",
+                        parentKey);
+                    return false;
                 }
+                subParserPtr = parentFP->subParser();
             }
         }
     }
@@ -445,8 +483,6 @@ bool TNG_NAMESPACE::ISOMessage::set_recursive(
     // Parent-ISOMessage holen oder neu anlegen
     std::shared_ptr<ISOMessage> parentMsg;
     {
-        std::unique_lock<std::shared_mutex> w_lock(d_lock_);
-
         auto it = d_.find(parentKey);
         if (it != d_.end()) {
             parentMsg = std::dynamic_pointer_cast<ISOMessage>(it->second);
@@ -469,12 +505,15 @@ bool TNG_NAMESPACE::ISOMessage::set_recursive(
         }
     }
 
-    // Nächste Ebene rekursiv im Child-Context auflösen
-    return parentMsg->set_recursive(keys + 1, depth - 1, std::move(data));
+    // Nächste Ebene rekursiv im Child-Context auflösen. Lock-Ordnung: immer
+    // Eltern-Lock vor Kind-Lock (ein Kind ist nie zugleich sein eigener
+    // Elternteil) -> kein Deadlock.
+    return parentMsg->set_recursive_locked(keys + 1, depth - 1, std::move(data));
 }
 
 bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string data) {
-    // Dot-Notation in Segmente aufteilen
+    // Dot-Notation in Segmente aufteilen (reine String-Operation, kein
+    // geteilter Zustand -> darf außerhalb des Locks laufen)
     std::vector<TNG_KEY_TYPE> keys;
     std::istringstream ss(dot_key);
     std::string token;
@@ -494,12 +533,15 @@ bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string data
         return false;
     }
 
+    // 3.3: EIN Lock für den gesamten Dot-Notation-Auflösungsweg
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+
     // Ein Segment = normaler key-basierter Aufruf
     if (keys.size() == 1)
-        return set(keys[0], std::move(data));
+        return set_keydata_locked(keys[0], std::move(data));
 
     // Mehrere Segmente = rekursiv in Subfelder
-    return set_recursive(keys.data(), keys.size(), std::move(data));
+    return set_recursive_locked(keys.data(), keys.size(), std::move(data));
 }
 
 bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string_view data) {
@@ -507,8 +549,8 @@ bool TNG_NAMESPACE::ISOMessage::set(const std::string& dot_key, std::string_view
 }
 
 bool TNG_NAMESPACE::ISOMessage::unset(const ISO_MAP::key_type& key) {
-    // Guarded by std::mutex -> unique
-    std::unique_lock<std::shared_mutex> w_lock(d_lock_);
+    // 3.3: einheitlicher rekursiver Message-Lock
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     // Try to find element
     ISO_MAP_ITERATOR itr = d_.find(key);
     if (itr == d_.end())
@@ -518,29 +560,39 @@ bool TNG_NAMESPACE::ISOMessage::unset(const ISO_MAP::key_type& key) {
 }
 
 void TNG_NAMESPACE::ISOMessage::reset(void) {
-    // Guarded by std::mutex -> unique
-    std::unique_lock<std::shared_mutex> w_lock(d_lock_);
+    // 3.3: einheitlicher rekursiver Message-Lock
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     // Clear whole RB-Tree
     d_.clear();
 }
 
 const std::size_t TNG_NAMESPACE::ISOMessage::size() const noexcept {
+    // 3.3: d_.size() ist geteilter Zustand -> selbst const-Lesezugriffe
+    // müssen den (mutable) Message-Lock nehmen
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return d_.size();
 }
 
 void TNG_NAMESPACE::ISOMessage::parser(const ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr& p) {
+    // 3.3: p_ + description werden nur unter dem Lock gewechselt
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     p_ = p;
-    try {
-        description(dynamic_cast<::TNG_NAMESPACE::ISOBaseParser*>(p_.get())->description());
-    } catch (const std::exception) {
-
-    }
+    // [ISO8583] Null-Guard: p darf nullptr sein (Parser abhängen). Der alte
+    // Code hätte bei nullptr/anderer Parser-Basis eine nullptr-Dereferenz
+    // in ->description() ausgelöst (UB, nicht fangbar).
+    if (auto* base = (p_ ? dynamic_cast<::TNG_NAMESPACE::ISOBaseParser*>(p_.get()) : nullptr))
+        description(base->description());
 }
+
 ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr TNG_NAMESPACE::ISOMessage::parser() const {
+    // 3.3: p_ ist geteilter Zustand -> Lock (mutable d_lock_)
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return (p_ ? p_ : nullptr);
 }
 
-void TNG_NAMESPACE::ISOMessage::recalcBitmap() {
+// VORAUSSETZT, dass d_lock_ gehalten ist (wird von parse() aufgerufen,
+// die das Lock hält; set_locked() lockt nicht erneut).
+void TNG_NAMESPACE::ISOMessage::recalcBitmap_locked() {
     if (!recalc_) return;
 
     const int mf = std::min(static_cast<int>(hf_), 192);
@@ -563,15 +615,20 @@ void TNG_NAMESPACE::ISOMessage::recalcBitmap() {
 
     auto bitmap = std::make_shared<::TNG_NAMESPACE::Bitmap>(ISOMessage::BITMAP_KEY);
     bitmap->value(bmap);
-    set(bitmap);
+    set_locked(bitmap);
 
     recalc_ = false;
 }
 
 std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::parse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c) {
+    // 3.3: EIN Lock für Parser-Zugriff + Bitmap-Rekalkulation + Encoding.
+    // p_->parse() ruft auf dieser Nachricht (rekursiv, recursive_mutex) in
+    // einzelne set()-Pfade zurück - das ist der dokumentierte Fall, für den
+    // der Lock rekursiv ist.
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     if (!p_) return {};
 
-    recalcBitmap();
+    recalcBitmap_locked();
     try {
         return p_->parse(c);
     } catch (const std::exception& e) {
@@ -584,6 +641,9 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::parse(::TNG_NAMESPACE::ISOCompon
 }
 
 std::size_t TNG_NAMESPACE::ISOMessage::unparse(::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c, const std::vector<uint8_t>& b) {
+    // 3.3: EIN Lock für Parser-Zugriff + Decode (p_->unparse() befüllt diese
+    // Nachricht per rekursivem set()).
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     if (!p_) return SIZE_MAX;
     try {
         return p_->unparse(c, b);
@@ -600,93 +660,147 @@ std::size_t TNG_NAMESPACE::ISOMessage::unparse(::TNG_NAMESPACE::ISOComponentPtrB
 }
 
 void TNG_NAMESPACE::ISOMessage::header(const std::vector<uint8_t>& b) {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     hdr_ = std::make_shared<::TNG_NAMESPACE::BaseHeader>(b);
 }
 void TNG_NAMESPACE::ISOMessage::header(::TNG_NAMESPACE::ISOHeader::ISOHeaderSmartPtr& hdr) {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     hdr_ = std::move(hdr);
 }
 
 ::TNG_NAMESPACE::ISOHeader::ISOHeaderSmartPtr TNG_NAMESPACE::ISOMessage::header() {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return hdr_;
 }
 
 std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::header() const {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return (hdr_ ? hdr_->pack() : std::vector<uint8_t>{});
 }
 
 void TNG_NAMESPACE::ISOMessage::direction(Direction dir) {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     dir_ = dir;
 }
 
 TNG_NAMESPACE::ISOMessage::Direction TNG_NAMESPACE::ISOMessage::direction() {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return (dir_);
 }
 
 
 bool TNG_NAMESPACE::ISOMessage::isInner() const {
+    // k_ wird nur bei der Konstruktion gesetzt (unsichtbarer Zustand) ->
+    // kein Lock nötig.
     return (k_ > ROOT_KEY);
 }
 
 bool TNG_NAMESPACE::ISOMessage::hasMTI() {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     if (isInner())
         return false; // No need for exception
-    return (has(MTI_KEY));
+    return (has_locked(MTI_KEY));
 }
 
 nonstd::string_view TNG_NAMESPACE::ISOMessage::mti() {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
     if (isInner())
         throw std::logic_error("MTI cannot be in inner data elements");
-    if (!has(MTI_KEY))
+    const std::string* v = mti_value_locked();
+    if (!v)
         throw std::logic_error("No MTI data element found");
-    return (get<::TNG_NAMESPACE::OpaqueField>(MTI_KEY)->value());
+    // Hinweis (Restrisiko, s. Klassendoku): der zurückgegebene string_view
+    // zeigt in den mutierbaren Feld-Speicher - vor Thread-übergreifender
+    // Nutzung kopieren (std::string m = msg->mti();).
+    return (*v);
 }
 
 bool TNG_NAMESPACE::ISOMessage::isRequest() {
-    return (has(MTI_KEY) && (((int)mti().at(2) - '0') % 2 == 0));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    // [ISO8583] B5: kurze (nicht 4-stellige) MTIs werfen kein
+    // std::out_of_range mehr (alt: mti().at(2) / .at(3) ohne Guard).
+    if (!m || m->size() < 4)
+        return false;
+    return (((int)(*m)[2] - '0') % 2 == 0);
 }
 
 bool TNG_NAMESPACE::ISOMessage::isResponse() {
-    return (has(MTI_KEY) && !isRequest());
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4)
+        return false;
+    return !(((int)(*m)[2] - '0') % 2 == 0);
 }
 
 bool TNG_NAMESPACE::ISOMessage::isAuthorization() {
-    return (has(MTI_KEY) && (mti().at(1) == '1'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '1';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFinancial() {
-    return (has(MTI_KEY) && (mti().at(1) == '2'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '2';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFileAction() {
-    return (has(MTI_KEY) && (mti().at(1) == '3'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '3';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isReversal() {
-    return (has(MTI_KEY) && (mti().at(1) == '4') && ((mti().at(3) == '0') || (mti().at(3) == '1')));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '4' && ((*m)[3] == '0' || (*m)[3] == '1');
 }
 
 bool TNG_NAMESPACE::ISOMessage::isChargeback() {
-    return (has(MTI_KEY) && (mti().at(1) == '4') && ((mti().at(3) == '2') || (mti().at(3) == '3')));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '4' && ((*m)[3] == '2' || (*m)[3] == '3');
 }
 
 bool TNG_NAMESPACE::ISOMessage::isReconciliation() {
-    return (has(MTI_KEY) && (mti().at(1) == '5'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '5';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isAdministrative() {
-    return (has(MTI_KEY) && (mti().at(1) == '6'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '6';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isFeeCollection() {
-    return (has(MTI_KEY) && (mti().at(1) == '7'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '7';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isNetworkManagement() {
-    return (has(MTI_KEY) && (mti().at(1) == '8'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[1] == '8';
 }
 
 bool TNG_NAMESPACE::ISOMessage::isRetransmission() {
-    return (has(MTI_KEY) && (mti().at(3) == '1'));
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    const std::string* m = mti_value_locked();
+    if (!m || m->size() < 4) return false;
+    return (*m)[3] == '1';
 }
 
 // ============================================================================

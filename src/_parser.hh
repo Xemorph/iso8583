@@ -168,7 +168,11 @@ namespace TNG_NAMESPACE {
         ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr n_ = nullptr;
         // Sub Element parser
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr c_ = nullptr;
-        // Data container
+        // Data container (NUR NOCH LEGACY - s. unparse(): Seit 3.3 wird
+        // pro Aufruf ein lokaler Scratch-Buffer verwendet, damit ein über
+        // mehrere Threads geteilter Parser keinen gemeinsamen, mutierten
+        // Vector mehr besitzt (früher: b_ wurde bei JEDEM unparse() neu
+        // befüllt -> Iterator-/Zeiger-Invalidation unter Concurrency).
         std::shared_ptr< ::TNG_NAMESPACE::BinaryField > b_ = nullptr;
         
     public:
@@ -359,31 +363,44 @@ namespace TNG_NAMESPACE {
                 );
             }
             if constexpr (std::is_base_of_v<ISOBaseParser, T>) {
-                // n_ liest den Längen-Prefix und extrahiert die Nutzdaten nach b_->value().
+                // [ISO8583] 3.3 (Thread-Sicherheit): PRO AUFRUF lokaler
+                // Scratch-Buffer statt des Parser-Mitglieds b_. Der Parser
+                // ist nach dem Load unveränderlich und wird über mehrere
+                // Threads/Nachrichten geteilt (Doku ISOMessage.hh/_interfaces.hh)
+                // - b_ würde bei jedem unparse() neu befüllt (Vector-
+                // Reallokation), während ein zweiter Thread noch aus dem
+                // selben Vector decodiert/iteriert -> "vector iterators in
+                // range are from different containers" / "cannot seek
+                // invalidated vector iterator" (MSVC-Debug-Asserts) bzw. AV.
+                // parse() verwendet bereits das gleiche Muster (wrapper).
+                auto scratch = std::make_shared< ::TNG_NAMESPACE::BinaryField >(0);
+                // n_ liest den Längen-Prefix und extrahiert die Nutzdaten
+                // nach scratch (lokal, keine geteilte Zustandsmutation).
                 // consumed_outer = Bytes die n_ im Original-Buffer b verbraucht hat
                 // (Längen-Prefix + Nutzdaten).
-                std::size_t consumed_outer = n_->unparse(b_, b, o);
+                std::size_t consumed_outer = n_->unparse(scratch, b, o);
+                const std::vector<uint8_t>& payload = scratch->value();
 
-                if (c->is_composite() && !b_->value().empty()) {
+                if (c->is_composite() && !payload.empty()) {
                     // BUG-FIX: parsed_length<pe_, l_>() ist für ISONestedFieldParser
                     // immer 0 (pe_=NONE, l_=FIX), weil pe_/l_ die Template-Parameter
                     // des äußeren ISOFieldParser<T,...> sind – nicht die des inneren n_.
                     //
                     // Der tatsächliche Prefix-Offset ergibt sich aus der Differenz:
                     //   consumed_outer = Prefix-Bytes + Nutzdaten-Bytes
-                    //   b_->value().size() = Nutzdaten-Bytes
-                    //   → actual_prefix = consumed_outer - b_->value().size()
+                    //   payload.size() = Nutzdaten-Bytes
+                    //   → actual_prefix = consumed_outer - payload.size()
                     //
                     // Beispiel BMP_003 (format: binary, length: 6, kein Prefix):
-                    //   consumed_outer = 6, b_->value().size() = 6 → prefix = 0 ✓
+                    //   consumed_outer = 6, payload.size() = 6 → prefix = 0 ✓
                     //
                     // Beispiel DE063 (format: LLLBINARY, length: 50, 3 Bytes Prefix):
-                    //   consumed_outer = 53, b_->value().size() = 50 → prefix = 3 ✓
-                    const std::size_t actual_prefix = consumed_outer >= b_->value().size()
-                        ? consumed_outer - b_->value().size()
+                    //   consumed_outer = 53, payload.size() = 50 → prefix = 3 ✓
+                    const std::size_t actual_prefix = consumed_outer >= payload.size()
+                        ? consumed_outer - payload.size()
                         : 0;
                     const std::size_t child_base_offset = o + actual_prefix;
-                    c_->unparse(c, b_->value(), child_base_offset);
+                    c_->unparse(c, payload, child_base_offset);
                 }
                 return consumed_outer;
             }

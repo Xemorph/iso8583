@@ -21,6 +21,8 @@ static std::vector<uint8_t> B(std::initializer_list<uint8_t> il) {
     return std::vector<uint8_t>(il);
 }
 
+namespace {
+
 struct TempDir {
     std::filesystem::path path;
     TempDir() {
@@ -36,6 +38,7 @@ struct TempDir {
         return p.string();
     }
 };
+} // namespace
 
 // =============================================================================
 // ISORemainderFieldParser direkt

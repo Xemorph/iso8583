@@ -50,6 +50,8 @@ static std::vector<uint8_t> base_frame() {
 }
 
 // Temporaere YAML-Datei (RAII), wie in test_spec_loader.cc.
+namespace {
+
 struct TempYaml {
     std::filesystem::path path;
     explicit TempYaml(const std::string& content) {
@@ -64,6 +66,7 @@ struct TempYaml {
     }
     std::string str() const { return path.string(); }
 };
+} // namespace
 
 // =============================================================================
 // Default: strikt

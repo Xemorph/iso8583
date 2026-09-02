@@ -23,6 +23,8 @@ using namespace TNG_NAMESPACE;
 
 // Schreibt eine temporaere YAML-Datei und gibt den Pfad zurueck.
 // Die Datei wird nach dem Test automatisch geloescht (RAII).
+namespace {
+
 struct TempYaml {
     std::filesystem::path path;
 
@@ -66,6 +68,7 @@ struct TempDir {
         return p.string();
     }
 };
+} // namespace
 
 // Minimale YAML-Spec:
 //   MTI (EBCDIC, fix 4)

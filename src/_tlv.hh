@@ -27,6 +27,7 @@
 
 // [stdc++]
 #include <algorithm>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 // [tng]
@@ -231,11 +232,22 @@ namespace TNG_NAMESPACE {
         // bei Konstruktion befüllt, Parser-Lebensdauer), generierte "SE<n>"-
         // Fallbacks werden HIER EINMALIG erzeugt und in einem eigenen,
         // ebenfalls Parser-langlebigen Cache abgelegt.
+        //
+        // [ISO8583] 3.3 (Thread-Sicherheit): Der Fallback-Cache ist MUTABLE
+        // Parser-Zustand und wird bei jedem Decode eines NICHT deklarierten
+        // SE-Tags gefüllt. Da ein Parser nach dem Load über mehrere Threads
+        // geteilt werden kann (Doku: "Parsers are immutable after load"),
+        // wäre ein gleichzeitiges try_emplace auf dem unordered_map ein
+        // Daten-Race mit Heap-Korruption (empirisch aufgedeckt: 4 Threads,
+        // undeclarierter SE72 -> AV). Der Sperrbereich deckt NUR den
+        // Fallback-Pfad; die Hot-Pfad-Suche in description_map_ bleibt
+        // lock-frei (read-only nach dem Konstruktor).
         nonstd::string_view description_for_wire(std::size_t se_num) const {
             auto it = description_map_.find(se_num);
             if (it != description_map_.end())
                 return nonstd::string_view(it->second);
 
+            const std::lock_guard lock(fallback_cache_mutex_);
             auto [cacheIt, inserted] = fallback_description_cache_.try_emplace(
                 se_num, "SE" + std::to_string(se_num));
             return nonstd::string_view(cacheIt->second);
@@ -249,6 +261,9 @@ namespace TNG_NAMESPACE {
         // höchstens einen Cache-Eintrag - kein Teil des eigentlichen
         // Tag/Length/Value-Zustands).
         mutable std::unordered_map<std::size_t, std::string> fallback_description_cache_;
+        // [ISO8583] 3.3: schützt fallback_description_cache_ gegen
+        // gleichzeitiges Füllen aus mehreren Threads (geteilter Parser).
+        mutable std::mutex fallback_cache_mutex_;
     };
 
     // ── Vordefinierte Aliase ─────────────────────────────────────────────────

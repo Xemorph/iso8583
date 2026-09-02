@@ -20,6 +20,8 @@ namespace fs = std::filesystem;
 // in test_preprocessor.cc)
 // =============================================================================
 
+namespace {
+
 struct TempDir {
     fs::path path;
 
@@ -49,6 +51,7 @@ struct TempDir {
         return (path / name).string();
     }
 };
+} // namespace
 
 // Minimale, gueltige ASCII-Spec (MTI + Bitmap + DE2)
 static std::string makeMiniSpec(const std::string& name) {
