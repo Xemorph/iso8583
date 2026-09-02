@@ -256,3 +256,83 @@ TEST_CASE("Incompatible input - buffer shorter than header throws clean error",
     REQUIRE(r.exact_runtime_error);
     CHECK(r.what.find("[ISO8583]") != std::string::npos);
 }
+
+// =============================================================================
+// Test 4 (A3): Header-Guards – zu kurze Byte-Bilder werden fail-closed
+// verworfen, Offset-Zugriffe auf verkleinerte Header werfen sauber.
+// =============================================================================
+// Hermetisch (keine issues/a-Fixture nötig), Matrix WLP-FO + BASE1:
+//   a) unparse() mit Puffer kürzer als Header → sauberer [ISO8583]-Fehler
+//   b) From-Bytes-Konstruktor mit falscher Größe → Fail-fast im Konstruktor
+//   c) Getter/Setter auf verkleinertem Header (öffentliche Member `header`)
+//      → fail-closed-Throw statt out-of-bounds-Zugriff
+TEST_CASE("Incompatible input - header guards (WLP-FO + BASE1) reject truncated byte images",
+    "[incompatible-input][header][wlp_fo][base1]")
+{
+    // ── a) unparse() mit Puffer kürzer als Header (WLP-FO: 93, BASE1: 22) ──
+    {
+        auto parser = std::make_shared<ISOBaseParser>("A3-WlpShort", WLP_FOHeader::LENGTH);
+        parser->add(std::make_shared<IFA_NUMERIC>(4, "MTI"));
+        parser->add(std::make_shared<IFB_BITMAP>(8, "Bitmap"));
+        parser->add(std::make_shared<IFE_CHAR>(10, "DE2"));
+
+        auto msg = std::make_shared<ISOMessage>();
+        msg->parser(parser);
+        std::shared_ptr<ISOHeader> hdr = std::make_shared<WLP_FOHeader>();
+        msg->header(hdr);
+
+        std::vector<uint8_t> tiny(50, 0x40);  // kürzer als 93 Bytes
+        const Escaped r = capture_unparse(msg, tiny);
+        REQUIRE(r.threw);
+        REQUIRE(r.exact_runtime_error);
+        CHECK(r.what.find("[ISO8583]") != std::string::npos);
+        CHECK(r.what.find("zu kurz") != std::string::npos);
+    }
+    {
+        auto parser = std::make_shared<ISOBaseParser>("A3-Base1Short", BASE1Header::LENGTH);
+        parser->add(std::make_shared<IFA_NUMERIC>(4, "MTI"));
+        parser->add(std::make_shared<IFB_BITMAP>(8, "Bitmap"));
+        parser->add(std::make_shared<IFE_CHAR>(10, "DE2"));
+
+        auto msg = std::make_shared<ISOMessage>();
+        msg->parser(parser);
+        std::shared_ptr<ISOHeader> hdr = std::make_shared<BASE1Header>("123456", "654321");
+        msg->header(hdr);
+
+        std::vector<uint8_t> tiny(10, 0x40);  // kürzer als 22 Bytes
+        const Escaped r = capture_unparse(msg, tiny);
+        REQUIRE(r.threw);
+        REQUIRE(r.exact_runtime_error);
+        CHECK(r.what.find("[ISO8583]") != std::string::npos);
+        CHECK(r.what.find("zu kurz") != std::string::npos);
+    }
+
+    // ── b) From-Bytes-Konstruktor mit falscher Größe → Fail-fast ────────────
+    {
+        bool threw_wlp = false;
+        try {
+            std::vector<uint8_t> wrong(WLP_FOHeader::LENGTH, 0x40);  // 93 statt 89
+            WLP_FOHeader h(wrong);
+        } catch (const std::runtime_error& e) {
+            threw_wlp = (std::string(e.what()).find("[ISO8583]") != std::string::npos);
+        }
+        CHECK(threw_wlp);
+
+        bool threw_base1 = false;
+        try {
+            std::vector<uint8_t> wrong(10, 0x40);  // < 22 Bytes
+            BASE1Header h(wrong);
+        } catch (const std::runtime_error& e) {
+            threw_base1 = (std::string(e.what()).find("[ISO8583]") != std::string::npos);
+        }
+        CHECK(threw_base1);
+    }
+
+    // ── c) Verteidigung in der Tiefe (Klasse sind final, Member geschützt) ──
+    // Die Getter-/Setter-Guards (`wlp_fo_ensure`/`base1_ensure`) sind über die
+    // öffentliche API heute nicht direkt anreicherbar: die Klassen sind final
+    // und das Byte-Bild ist protected. Sie schützen gegen künftige API-Änderungen
+    // (z. B. öffentliches Byte-Bild, lockere unpack()) - abgedeckt durch Code-Review
+    // und die A3-Regressionen in test_base1_header.cc/test_wlp_fo_header.cc.
+    // Hier genügen die Wire-Level-Guards (a) und der Fail-Fast-Konstruktor (b).
+}

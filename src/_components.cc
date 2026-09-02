@@ -728,13 +728,13 @@ static void setBcdField(std::vector<uint8_t>& header, std::size_t field_offset,
 }
 
 namespace {
-    // [ISO8583] Phase-1 (Fail-closed, A5): Beide Header-Typen haben ein fixes
+    // [ISO8583] Phase-1 (Fail-closed, A3): Beide Header-Typen haben ein fixes
     // Byte-Layout; Getter/Setter greifen auf feste Offsets in `header` zu.
-    // Zu kurze Byte-Bilder (z. B. nach WLP_FOHeader(vector)/BASE1Header(vector)
-    // mit kurzen Bytes oder manuellem Beschnitt des `header`-Mitglieds)
-    // fuehrten zu Out-of-bounds-Zugriffen (silent UB). Deshalb: Fail-fast beim
-    // Konstruieren und Fail-closed-Guards in jedem Offset-zugreifenden
-    // Getter/Setter.
+    // Zu kurze Byte-Bilder fuehrten zu Out-of-bounds-Zugriffen (silent UB).
+    // Die Klassen sind final und das Byte-Bild ist geschuetzt, daher ist der
+    // beschnittene Zustand ueber die oeffentliche API heute nicht direkt
+    // erreichbar (Ktor/unpack erzwingen die volle Groesse) - die Guards sind
+    // Verteidigung in der Tiefe gegen kuenftige API-Aenderungen.
     void wlp_fo_ensure(const std::vector<uint8_t>& h) {
         if (h.size() < TNG_NAMESPACE::WLP_FOHeader::LENGTH)
             throw std::runtime_error(

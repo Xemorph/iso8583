@@ -434,6 +434,11 @@ Register the new `test_*.cc` in `tests/CMakeLists.txt` (keep `test_e2e_full_mess
 3. **`description()` / `explanation()` are non-owning `nonstd::string_view`s** — the library stores a view, not a copy. Any code that *sets* descriptions (custom parsers, TLV handlers) must guarantee the referenced storage outlives the component. Precedent: 0.2.0 fixed real dangling-view UB in `ISOTLVParser` (ASan-verified) — keep its long-lived-storage pattern (both declared and generated fallback descriptions).
 4. **MSVC + Ninja requires a Developer Command Prompt** (`vcvars64.bat`) — symptom without it: `LNK1104: kernel32.lib`.
 5. **Gateway example E2E invariant**: `send_test.py`'s `ASCII_TO_EBCDIC` table must stay byte-identical to `kAsciiToEbcdic` in `include/iso8583/_codec.hh` (IBM-1047); update both together or the example breaks silently.
+6. **Memory-safety rules (A4, security plan `docs/plans/security-implementation-plan.md`):**
+   - The bundled `dynamic_bitset::operator[]` bounds-checks via `assert()` only — **disabled in Release builds**, so any index beyond the constructed size is undefined behavior (historical source of OOB crashes in bitmap handling). **Never** index `bmp[n]` without first guarding `bmp.size() > n`. The bitmap decode path in `src/_parser.hh` validates buffer offsets before reading every byte — keep it that way.
+   - Header byte images (`BaseHeader::header` is a **protected** member; `BASE1Header`/`WLP_FOHeader` are `final` and their from-bytes constructors/`unpack()` enforce the full size) — the getter/setter guards are defense-in-depth and **fail closed** (throw a positioned `[ISO8583] … Fail-closed` `std::runtime_error`) instead of reading out of bounds, should the buffer ever be exposed or shrunk by a future API change.
+   - The iconv E2BIG retry loop in `src/_iconv_wrapper.cc` is bounded: no-progress detection (two consecutive E2BIG without input/output advancement → throw) plus a hard output cap (2× input + reserve; EBCDIC↔ASCII is 1:1).
+   - Loader recursion (`processNode`/`propagateOrigins`/`finalize` in `src/_preprocessor.cc`) is depth-capped (`MAX_RECURSION_DEPTH = 200`) — malicious or corrupt specs produce a positioned `std::runtime_error`, never a stack overflow.
 
 ---
 
@@ -512,3 +517,4 @@ Maintenance rules: **never strip the embedded copyright/license headers**; a pro
 23. **MSVC + Ninja needs a Developer Command Prompt** (§12.4).
 24. **ASCII↔EBCDIC table invariant** between `_codec.hh` and `send_test.py` (§12.5).
 25. **Follow the commit convention** (§14.1); releases go through §14.2.
+26. **Memory-safety rules (A4)**: `dynamic_bitset` indexing is unchecked in Release — guard every `bmp[n]` with `bmp.size() > n`; header byte offsets and iconv/retry loops are fail-closed/bounded (§12.6).

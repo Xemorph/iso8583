@@ -664,8 +664,12 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                     // Knoten-IDs - HIER, und erst hier, wird die öffentliche
                     // SourceMap (smap) tatsächlich befüllt.
                     {
-                        std::function<void(ryml::ConstNodeRef, ryml::ConstNodeRef)> finalize =
-                            [&](ryml::ConstNodeRef s, ryml::ConstNodeRef d) {
+                        // [ISO8583] C2: finalize() rekursiert über die gesamte
+                        // (ggf. künstlich extrem tiefe) Knotenstruktur - derselbe
+                        // Tiefenlimit-Schutz wie propagateOrigins()/processNode().
+                        std::function<void(ryml::ConstNodeRef, ryml::ConstNodeRef, int)> finalize =
+                            [&](ryml::ConstNodeRef s, ryml::ConstNodeRef d, int depth) {
+                                checkDepth(depth);
                                 auto it = wsOrigins.find(s.id());
                                 if (it != wsOrigins.end())
                                     smap.record(static_cast<int>(d.id()), it->second);
@@ -673,10 +677,10 @@ TNG_NAMESPACE::spec::SpecPreProcessor::preprocessWithSourceMap(
                                     auto sit = s.children().begin();
                                     auto dit = d.children().begin();
                                     for (; sit != s.children().end() && dit != d.children().end(); ++sit, ++dit)
-                                        finalize(*sit, *dit);
+                                        finalize(*sit, *dit, depth + 1);
                                 }
                             };
-                        finalize(scratch, out);
+                        finalize(scratch, out, 0);
                     }
                     out.set_key(field.key());  // ZULETZT (siehe KRITISCHE REGEL)
                 }

@@ -90,6 +90,27 @@ namespace iconv_wrapper
         size_t outleft{ pout->size() };
         size_t s;
 
+        // ── Sicherheitsgrenzen (C1, Security-Plan Phase 1) ──────────────────
+        // Der E2BIG-Zweig vergrößert pout in jedem Loop-Durchlauf um den
+        // Faktor 2. Ohne Wächter könnte ein fehlerhaftes iconv-Ergebnis
+        // (E2BIG ohne jeglichen Fortschritt) eine Endlosschleife mit
+        // exponentiellem Speicherverbrauch auslösen:
+        //  (1) No-Fortschritt: zwei aufeinanderfolgende E2BIG, bei denen
+        //      weder die verbrauchte Eingabe noch die produzierte Ausgabe
+        //      zugelegt haben.
+        //  (2) Hartes Output-Cap: die hier genutzten Konvertierungen
+        //      (EBCDIC<->ASCII, IBM-1047) sind 1:1; mehr als das Doppelte
+        //      der Eingabe + Reserve ist ein Konverter-Fehler, kein
+        //      legitimer Output. (inbuf==nullptr: nur Initialsequenz,
+        //      wird durch die Konstante gedeckt.)
+        const std::string::size_type base = pout->size();
+        const std::string::size_type in_total =
+            (inbuf && pinleft) ? static_cast<std::string::size_type>(*pinleft) : 0;
+        const std::string::size_type max_out = in_total * 2 + 32;
+        bool have_prev = false;
+        std::string::size_type produced_prev = 0;
+        std::string::size_type consumed_prev = 0;
+
         while ((s = ::iconv(convdesc,
             iconv_const_cast(&inbuf_tmp), pinleft,
             &outbuf, &outleft)) == static_cast<size_t>(-1))
@@ -115,7 +136,31 @@ namespace iconv_wrapper
                 throw std::system_error(errno, std::system_category(),
                     "iconv() failed with errno=" + std::to_string(errno) + hint);
             }
-            std::string::size_type pos = (outbuf - &pout->at(0));
+            // Wächter (C1): WERDEN IMMER VOR der Puffervergrößerung
+            // ausgewertet (Zeigerdifferenzen wären nach einem realloc
+            // des std::string ungültig).
+            const std::string::size_type produced =
+                static_cast<std::string::size_type>(outbuf - &pout->at(0)) - base;
+            const std::string::size_type consumed =
+                (inbuf) ? static_cast<std::string::size_type>(inbuf_tmp - inbuf) : 0;
+
+            if (produced > max_out)
+            {
+                throw std::runtime_error(
+                    "iconv(): Ausgabe überschreitet die Sicherheitsgrenze von " +
+                    std::to_string(max_out) + " Bytes - Abbruch");
+            }
+            if (have_prev && produced == produced_prev && consumed == consumed_prev)
+            {
+                throw std::runtime_error(
+                    "iconv(): E2BIG ohne Fortschritt (weder Eingabe verbraucht noch "
+                    "Ausgabe produziert) - Abbruch zur Vermeidung einer Endlosschleife");
+            }
+            produced_prev = produced;
+            consumed_prev = consumed;
+            have_prev = true;
+
+            const std::string::size_type pos = produced + base;
             pout->resize(pout->size() * 2);
             outbuf = &pout->at(pos);
             outleft = pout->size() - pos;
