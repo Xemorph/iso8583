@@ -1,6 +1,6 @@
 {
   "name": "libiso8583",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "ISO 8583 financial transaction message parser and encoder (C++20)",
   "homepage": "https://github.com/Xemorph/iso8583",
   "license": null,
