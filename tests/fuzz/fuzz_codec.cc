@@ -7,6 +7,7 @@
 // Skelett (Phase 0) — Phase 4: strict/permittive Modi, Richtung A2E,
 // groessere Zufalls-Verteilungen und -coveragen-gestuetzte Corpus-Saat.
 
+#include "_fuzz_common.hh"  // Fallback-main + Seeds (außer Clang)
 #include <iso8583/_codec.hh>
 
 #include <cstdint>
@@ -36,3 +37,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 
     return 0;
 }
+
+#if !defined(__clang__) && !defined(__APPLE__)
+// Non-Clang (MSVC/GCC): Mini-Harness gegen feste Seeds + 256-Byte-Sweep.
+int main() {
+    fuzz::run_seeds();
+    return 0;
+}
+#endif

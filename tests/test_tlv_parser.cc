@@ -453,3 +453,74 @@ TEST_CASE("BERTLVParser - real EMV tag 9F26 as message key (ISO8583_BERTLV)", "[
     CHECK(tlv->parse(msg) == payload);
 }
 #endif
+
+// =============================================================================
+// Phase 4 (F5) - TLV-Hardening: OOB-Vorpruefung, BerLength >8, store_se
+// Tag-Fit. Regression-Tests zu den in Phase 4 geschlossenen latenten
+// TLV-Problemstellen (s. Security-Plan F5). Build-unabhaengig geschrieben:
+//   - Default-Build (int16_t-Keys):  EMV-Tags >= 0x8000 werden abgelehnt
+//   - BERTLV-Build (int32_t-Keys):   EMV-Tags >= 0x8000 werden gespeichert
+// =============================================================================
+
+TEST_CASE("F5 - read_num OOB pre-check throws (BCD + non-BCD)", "[tlv][f5][error]") {
+    // Nur 1 Byte vorhanden, aber N=2 noetig -> OOB-Vorpruefung wirft
+    // (vorher: BCD-Zweig liest out-of-bounds = UB). Lambda-Helfer vermeidet
+    // das CHECK_THROWS_AS-Makro + Template-Aufruf mit enum-NTTP (MSVC-Parse).
+    auto throws_re = [&]<typename F>(F f) -> bool {
+        try { f(); } catch (const std::runtime_error&) { return true; }
+        catch (...) { return false; }
+        return false;
+    };
+    std::vector<uint8_t> bcd{ 0x00 };
+    CHECK(throws_re([&]{ (void)tlv_detail::read_num<codec::Encoder::BCD, 2>(bcd, 0); }));
+
+    std::vector<uint8_t> asc{ '0' };
+    CHECK(throws_re([&]{ (void)tlv_detail::read_num<codec::Encoder::ASCII, 2>(asc, 0); }));
+
+    // Voller Puffer (N=2 Bytes) -> kein Throw, Wert wird gelesen.
+    std::vector<uint8_t> ok{ 0x00, 0x21 };
+    CHECK(tlv_detail::read_num<codec::Encoder::BCD, 2>(ok, 0) == 21);
+}
+
+TEST_CASE("F5 - truncated fixed BCD TLV frame throws (fail-closed)", "[tlv][f5][error]") {
+    // ISOTLVParser_VI: BCD-TAG(2) + BCD-LEN(1), kein TCC. 1-Byte-Frame
+    // kuerzer als der 2-Byte-BCD-TAG -> read_num wirft (fail-closed).
+    auto tlv = std::make_shared<ISOTLVParser_VI>();
+    auto msg = std::make_shared<Message>();
+    std::vector<uint8_t> payload{ 0x00 };
+    CHECK_THROWS_AS(tlv->unparse(msg, payload), std::runtime_error);
+}
+
+TEST_CASE("F5 - BerLength rejects num_bytes > 8 (no shift-overflow)", "[tlv][f5][error]") {
+    // 0x89 -> num_bytes = 9 (> 8). Genuegend Folgebytes im Puffer, damit
+    // explizit die >8-Pruefung (nicht die Puffer-Ende-Pruefung) ausloest.
+    // Verworfen als sentinel {0,0} - kein Shift-Ueberlauf mehr moeglich.
+    std::vector<uint8_t> buf(1 + 9 + 4, 0x00);
+    buf[0] = 0x89;
+    auto [len, consumed] = BerLength::read(buf, 0);
+    CHECK(consumed == 0);
+    (void)len;
+}
+
+TEST_CASE("F5 - store_se tag-fit: no silent static_cast truncation", "[tlv][f5]") {
+    // 0x9F26 = 40742 > int16_max. In der Default-Build (int16) wird das SE
+    // NICHT als verfalschter negativer Key gespeichert (kein Fehlrouting);
+    // in der BERTLV-Build (int32) passt es und wird uebernommen.
+    auto tlv = std::make_shared<BERTLVParser>();
+    auto msg = std::make_shared<Message>();
+    std::vector<uint8_t> payload{ 0x9F, 0x26, 0x02, 0xAA, 0xBB };
+    const auto consumed = tlv->unparse(msg, payload);
+    CHECK(consumed == payload.size()); // kein Crash, kein Throw
+
+    if constexpr (sizeof(TNG_KEY_TYPE) < sizeof(std::int32_t)) {
+        // Default-Build (int16): 0x9F26 paßt nicht -> SE nicht gespeichert.
+        CHECK(msg->size() == 0);
+        CHECK(msg->get<BinaryField>(static_cast<TNG_KEY_TYPE>(0x9F26)) == nullptr);
+    }
+    else {
+        // BERTLV-Build (int32): 0x9F26 paßt -> SE korrekt gespeichert.
+        auto se = msg->get<BinaryField>(static_cast<TNG_KEY_TYPE>(0x9F26));
+        REQUIRE(se != nullptr);
+        CHECK(se->value() == std::vector<uint8_t>{ 0xAA, 0xBB });
+    }
+}

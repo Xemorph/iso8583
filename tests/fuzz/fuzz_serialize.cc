@@ -1,15 +1,14 @@
 // =============================================================================
-// Fuzz-Ziel F1: ISOMessage::unparse (Dekodierung) mit zufaelligem Byte-Image
+// Fuzz-Ziel F3: ISOMessage::parse (Serialisierung/Encoding) aus Fuzz-Daten
 // =============================================================================
 //
-// Invariante: beliebige Eingabe-Bytes duerfen NIE crashen (OOB/UB/Stack
-// Overflow/ASan-Fund), sondern im Fehlerfall eine saubere [ISO8583]-
-// std::runtime_error werfen (s. Security-Plan, Phase 4, F1).
+// Invariante: aus Fuzz-Bytes abgeleitete Feldinhalte duerfen beim Enkodieren
+// NIE crashen (OOB/UB/Stack Overflow/ASan-Fund); die Bitmap wird korrekt
+// neu berechnet (s. Security-Plan, Phase 4, F3).
 //
 // Der Parser wird EINMAL pro Prozess aus der eingebetteten ASCII-Referenzspec
-// geladen (_fuzz_common.hh) und die Fuzz-Bytes durch unparse() getrieben.
-// Das uebt: L Praefix-Dekodierung, BCD/EBCDIC/ASCII-Konvertierung, Bitmap-,
-// Nested- und BER-TLV-Pfade (F5), Strict/Sentinel-Verhalten.
+// geladen (_fuzz_common.hh). Aus den Fuzz-Bytes werden MTI + ein paar
+// OPAQUE/numeric-Felder abgeleitet; msg->parse() erzeugt das Byte-Bild.
 
 #include "_fuzz_common.hh"
 
@@ -20,7 +19,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
     if (!data || size > 1'000'000) {
         return 0;
     }
-    fuzz::decode(data, size);
+    fuzz::encode(data, size);
     return 0;
 }
 

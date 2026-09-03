@@ -76,6 +76,19 @@ namespace TNG_NAMESPACE {
             const std::vector<uint8_t>& buf, std::size_t offset)
         {
             static_assert(N >= 1 && N <= 4, "N must be 1..4");
+            // [ISO8583] Phase 4 (F5, P1): explizite OOB-Vorpruefung fuer
+            // beide Zweige. Der BCD-Zweig liest ansonsten `buf[offset + i]`
+            // OHNE Check -> bei einem truncierten festen TLV-Frame ein
+            // Out-of-bounds-Read (UB). Die Vorpruefung macht das Verhalten
+            // fuer beide Encoder einheitlich und positioniert; ein
+            // troncierter Frame ist korrupt -> fail-closed (strict-default).
+            if (offset + N > buf.size()) {
+                throw std::runtime_error(
+                    "[ISO8583] TLV: fixed numeric field at offset "
+                    + std::to_string(offset)
+                    + " needs " + std::to_string(N)
+                    + " bytes but buffer has only " + std::to_string(buf.size()));
+            }
             if constexpr (e_ == codec::Encoder::BCD) {
                 std::size_t val = 0;
                 for (std::size_t i = 0; i < N; ++i) {
@@ -262,7 +275,14 @@ namespace TNG_NAMESPACE {
                 tlv_detail::log_error_ber_length_indefinite();
                 return { 0, 0 };
             }
-            if (num_bytes > sizeof(std::size_t) ||
+            // [ISO8583] Phase 4 (F5, P1): explizite, PLATTFORMUNABHAENGIGE
+            // Obergrenze von 8 Laengenbytes. `sizeof(std::size_t)` wuerde auf
+            // einer (hypothetischen) 16-Byte-Plattform 16 erlauben und die
+            // `len`-Shift-Summe ueberlaufen (UB) - hier hart auf 8 gekappt.
+            // ISO/IEC 8825-1 kennt > 8 Laengenbytes nicht (> 2^64 Bytes).
+            // Der Fehler-Vertrag bleibt sentinel {0,0} + log (konform zu
+            // indefinite-Form und Puffer-Ende; s. test_tlv_parser.cc).
+            if (num_bytes > 8 ||
                 offset + 1 + num_bytes > buf.size())
             {
                 tlv_detail::log_error_ber_length_overflow(offset, buf.size());

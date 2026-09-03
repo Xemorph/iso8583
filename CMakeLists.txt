@@ -22,7 +22,7 @@ option(ISO8583_ENABLE_ICONV   "[DEPRECATED seit 0.3.0, removal 0.4] libiconv-Fal
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
 option(ISO8583_BUILD_EXAMPLES "Beispielprojekte bauen (tcp_gateway)"      OFF)
-option(ISO8583_BUILD_FUZZERS  "libFuzzer-Ziele bauen (nur clang, s. tests/fuzz)" OFF)
+option(ISO8583_BUILD_FUZZERS  "Fuzz-Ziele bauen (clang: libFuzzer+ASan; MSVC/GCC: Mini-Harness, s. tests/fuzz)" OFF)
 option(ISO8583_BUILD_CODEC_TOOLS "EBCDIC-Orakel-Tool bauen (tools/generate_ebcdic_tables; ICU 78.3, nie an Runtime gelinkt)" OFF)
 option(ISO8583_BERTLV         "DE-Schlüsseltyp auf int32_t erweitern (für volle \
 BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie 9F26, die als Big-Endian-Wert \
@@ -387,8 +387,8 @@ if(ISO8583_BUILD_TESTS)
 endif()
 
 # -----------------------------------------------------------------------------
-# Fuzz-Ziele (libFuzzer, nur clang — bei Nicht-clang-Toolchain wird gewarnt
-# und uebersprungen; s. tests/fuzz/CMakeLists.txt)
+# Fuzz-Ziele (F1..F5, s. tests/fuzz/CMakeLists.txt; clang: libFuzzer+ASan,
+# MSVC/GCC: Mini-Harness gegen Seeds + 256-Byte-Sweep)
 # -----------------------------------------------------------------------------
 if(ISO8583_BUILD_FUZZERS)
     add_subdirectory(tests/fuzz)

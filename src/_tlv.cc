@@ -1,4 +1,6 @@
 #include "_tlv.hh"
+// [stdc++]
+#include <limits>
 // [tng]
 #include "_logger.hh"
 
@@ -52,6 +54,15 @@ namespace TNG_NAMESPACE::tlv_detail {
                       "TLV-Kontext benötigt eine feste SE-Länge");
     }
 
+    // [ISO8583] Phase 4 (F5, P3): SE-Tag paßt nicht in TNG_KEY_TYPE.
+    void log_warn_se_key_too_wide(std::size_t se_num) {
+        TNG_LOG_WARN("[ISOTLVParser] SE-Tag 0x{:X} ({}) passt nicht in TNG_KEY_TYPE "
+                     "(max. {}) - SE wird NICHT gespeichert (kein Fehlrouting). "
+                     "Für EMV-Tags >= 0x8000 ISO8583_BERTLV=ON (int32_t-Keys) nutzen.",
+            se_num, se_num,
+            static_cast<std::size_t>(std::numeric_limits<TNG_KEY_TYPE>::max()));
+    }
+
     void log_debug_tcc(const std::string& tcc) {
         TNG_LOG_DEBUG("[ISOTLVParser] TCC='{}'", tcc);
     }
@@ -82,6 +93,18 @@ namespace TNG_NAMESPACE::tlv_detail {
         const nonstd::string_view& description,
         bool sensitive)
     {
+        // [ISO8583] Phase 4 (F5, P3): kein stiller static_cast-Verlust. Ein
+        // BER-Tag, das in TNG_KEY_TYPE nicht passt (z.B. 0x9F26 = 40742 >
+        // int16_max in der Default-Build), würde via static_cast<int16_t>(40742)
+        // == -24794 als verfälschter negativer Key gespeichert - beim
+        // Reserialize (sorted_se_keys, key >= 0-Filter) ginge er verloren bzw.
+        // es träfe ein falsches SE (Fehlrouting). Stattdessen: warnen + SE
+        // überspringen. In der ISO8583_BERTLV-Build (int32_t) passen alle
+        // 2-Byte-EMV-Tags; dieser Pfad greift dort nicht.
+        if (se_num > static_cast<std::size_t>(std::numeric_limits<TNG_KEY_TYPE>::max())) {
+            log_warn_se_key_too_wide(se_num);
+            return; // SE wird bewusst NICHT gespeichert (kein Fehlrouting)
+        }
         auto se = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
             static_cast<TNG_KEY_TYPE>(se_num));
         se->value(std::vector<uint8_t>(
