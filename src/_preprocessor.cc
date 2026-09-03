@@ -97,6 +97,17 @@ namespace TNG_NAMESPACE::spec {
     // case-insensitiv: das Dateisystem ist es auch, und fs::canonical() kann
     // eine andere Groß-/Kleinschreibung liefern als fs::absolute() - ein
     // case-sensitiver Vergleich würde dann gültige Includes verwerfen.
+    //
+    // Alias-Fallback: 8.3-Kurznamen (GitHub-Windows-Runner setzt
+    // TEMP=C:\Users\RUNNER~1\AppData\Local\Temp, fs::canonical() liefert
+    // C:\Users\runneradmin\...) oder Symlinks/Junctions (macOS /
+    // tmp->/private/tmp) sind lexikalisch verschieden, aber physikalisch
+    // identisch. Nach einem negativen lexikalischen Ergebnis wird `p` mit
+    // fs::weakly_canonical() aufgelöst (löst das existierende Präfix auf,
+    // funktioniert auch wenn die Endkomponente noch fehlt) und erneut
+    // gegen die kanonisierte Wurzel geprüft. Fail-closed bleibt erhalten:
+    // ein wirklich außerhalb liegender Pfad kanonisiert auf eine
+    // außerhalb liegende Form und wird weiterhin abgelehnt.
     static bool isWithinRoot(const std::filesystem::path& p, const std::filesystem::path& root) {
         auto cmp = [](const std::filesystem::path& a, const std::filesystem::path& b) {
 #if defined(_WIN32)
@@ -111,13 +122,22 @@ namespace TNG_NAMESPACE::spec {
             return a == b;
 #endif
         };
-        auto itP = p.begin();
-        for (auto itR = root.begin(); itR != root.end(); ++itR) {
-            if (itP == p.end() || !cmp(*itP, *itR))
-                return false;
-            ++itP;
-        }
-        return true; // alle Root-Komponenten abgedeckt, `p` darf tiefer liegen
+        auto withinLexical = [&cmp, &root](const std::filesystem::path& a) {
+            auto itP = a.begin();
+            for (auto itR = root.begin(); itR != root.end(); ++itR) {
+                if (itP == a.end() || !cmp(*itP, *itR))
+                    return false;
+                ++itP;
+            }
+            return true; // alle Root-Komponenten abgedeckt, `a` darf tiefer liegen
+        };
+        if (withinLexical(p))
+            return true;
+        std::error_code ec;
+        const auto alias = std::filesystem::weakly_canonical(p, ec);
+        if (!ec)
+            return withinLexical(alias);
+        return false;
     }
 
     static std::string rootsToString(const std::vector<std::filesystem::path>& roots) {
