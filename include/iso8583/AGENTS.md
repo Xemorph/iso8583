@@ -309,6 +309,40 @@ static auto [parser, spec] =
     iso8583::spec::SpecDecoder::loadBothFromYamlCached("mastercard.yml");
 ```
 
+### SpecLoadOptions & Include-Sandbox (0.3.0)
+
+Die `...FromYaml{,Cached}`-Overloads mit `const SpecLoadOptions&` steuern das
+Vertrauensmodell beim Laden. Specs können Third-Party-/Remote-Herkunft haben;
+der Lade-Pfad ist **fail-closed** und beschränkt:
+
+```cpp
+auto [parser, spec] =
+    iso8583::spec::SpecDecoder::loadBothFromYaml("third_party.yml",
+        iso8583::spec::SpecLoadOptions{
+            .trackSourceMap  = true,
+            .sandbox         = true,   // !include_files außerhalb der roots → ablehnen
+            .roots           = {"/opt/specs"}, // leer → Verzeichnis der Top-Level-Spec
+            .allowSmapWrite  = true,   // .smap-Sidecar nur innerhalb der roots
+            .maxSpecBytes    = 32u*1024u*1024u,  // pro Quell-Datei, beim Streamen erzwungen
+            .maxIncludeFiles = 1024,             // distinct Dateien pro Load
+            .maxSmapBytes    = 16u*1024u*1024u,  // übergroße Sidecars → verwerfen/regenerieren
+        });
+```
+
+- **Include-Sandbox (Default an):** `!include_files`-Einträge, die außerhalb
+der `roots` landen — `../`-Traversals, absolute/UNC-Pfade, Symlink-Escapes —
+werden **abgelehnt** (lexikalisch und, falls die Datei existiert, über den
+kanonisierten, Symlink-auflösenden Pfad). Leere `roots` = Verzeichnis der
+Top-Level-Spec (Nutzer-Input, selbst nicht sandboxed).
+- **`fields:` muss eine nicht-leere Map sein** — leere Maps/Sequenzen und
+  nicht-numerische DE-Keys werfen positionsgenau (`SpecValidationError`), nie
+ein roher `std::stoi`.
+- **Migration (Betrifft dich, falls):** Top-Level-Specs, die `!include_files`
+  *außerhalb* des eigenen Verzeichnisses nutzen, brauchen jetzt explizite
+  `roots` (oder bewusst `sandbox=false` für voll vertrauenswürdige Spec-Bäume).
+  Die alten `bool trackSourceMap`-Overloads bleiben source-kompatibel (bauen
+  intern Default-Optionen).
+
 ---
 
 ## YAML-Spezifikationsformat
@@ -316,6 +350,7 @@ static auto [parser, spec] =
 ```yaml
 spec:     "My Spec"
 encoding: ebcdic          # global: ascii | bcd | ebcdic | binary
+strict:   true            # (Default) fail-closed: Trunkatur/Übergröße/ungültiges EBCDIC → throw
 
 definitions:              # wiederverwendbare Bausteine
   pan_field:
@@ -421,6 +456,14 @@ fields:
 - `!merge [...]` — Maps mergen, spätere Einträge überschreiben frühere
 - `!include <name>` — **deprecated** Alias für `!use` (emittiert eine Warnung)
 
+**Feld-/Spec-Attribute (0.3.0):**
+- `strict: true|false` (Spec-Wurzel, Default **true**) — Strict/Fail-closed-Modus;
+  `parser.strict(bool)` steuert ihn zur Laufzeit (siehe „Strict-Modus" unten).
+- `sensitive: true` (Feld, `children`-Eintrag oder `definitions:`) — der
+  **Wert** wird in `dump()`/`operator<<` und Log-Ausgaben als `***` maskiert
+  (PCI); `value()`/`to_json()` bleiben unmaskiert (siehe „Logging"). Auf
+  nested/TLV/BERTLV-Containern verbreitet es sich auf alle Children/Tags.
+
 **Format/Encoding-Kombinationen:**
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
 - `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
@@ -450,6 +493,48 @@ benennt jeder Key eine SE-Nummer oder ein BER-Tag:
   generische `"SE<n>"`-Beschreibung zurück.
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
+
+---
+
+## Strict-Modus & Fail-closed-Verhalten (0.3.0)
+
+Die Bibliothek ist im Default **strict** (Spec-Wurzel `strict: true`, Default
+`true`; zur Laufzeit `parser.strict(bool)` / `strict() const`). Strict bedeutet
+**fail-closed**: statt abgeschnittene Frames still zu clampen, überdimensionale
+Felder zu verwerfen oder ungültige EBCDIC-Bytes auf `.` zu mappen, wirft der
+Pfad einen **positionsgenauen** `std::runtime_error` mit dem `[ISO8583]`-
+Präfix (Feld, Offset, Byte, Hexdump):
+
+- Feld am Pufferende abgeschnitten (erwartet X Bytes, verbleiben Y)
+- Serialisierung größer als Feld-Maximum (Frame würde fehlerhaft → Werfen)
+- Längenpräfix am Pufferende abgeschnitten
+- ungültiges EBCDIC-Byte (tabelle- und Orakelpfad)
+- Bitmap-Byte am Pufferende; zu kurzer Wire-Header (WLP-FO 93 B / BASE1)
+- TLV: explizite `offset+N`-Prechecks (`read_num`/BCD), `BerLength` > 8
+  Längenbytes abgelehnt, `store_se` warnt/lehnt nicht-repräsentierbare
+  BER-Tags ab (keine stille `static_cast`-Trunkierung)
+
+**Escape-Hatch für tolerante Integratoren:** `strict: false` in der Spec oder
+`parser.strict(false)` → altes clamp/WARN/`.`-Sentinel-Verhalten, aber nie
+*still* (jeder Fall loggt mindestens WARN/ERROR).
+
+---
+
+## EBCDIC-Konvertierung & Determinismus (0.3.0)
+
+EBCDIC↔ASCII ist **vollständig tabellen-getrieben** (IBM-1047) —
+`kEbcdicToAscii`/`kAsciiToEbcdic`/`kEbcdicValid` in `include/iso8583/_codec.hh`
+— ohne Laufzeit-Converter (kein libiconv, kein ICU). Die Tabellen sind gegen
+ein exakt gepinntes **ICU-78.3**-Orakel verifiziert
+(`tools/generate_ebcdic_tables/`, Build-/CI-only; ICU wird **nie** in die
+Laufzeit-Targets verlinkt) und über eine Cross-Toolchain-Diff stabil gehalten:
+gleiche Bytes + gleiche Spec liefern auf allen Toolchains/Plattformen das
+gleiche Ergebnis. Der **Strict-Whitelist** ist bewusst *stärker* als ICU
+(ICU 78.3 konvertiert alle 256 Bytes; Strict akzeptiert nur die 85
+IBM-1047-Druck-/Ziffern-Bytes E2A bzw. 84 mappablen ASCII-Zeichen A2E).
+`libiconv`/`ISO8583_ENABLE_ICONV` sind **deprigiert** (Removal 0.4) und
+dienen nur noch als Übergangs-Fallback — der Standard-EBCDIC-Pfad nutzt sie
+nicht.
 
 ---
 
@@ -524,6 +609,11 @@ if (h && h->isRejected())
 Verfügbare Header-Typen: `iso8583::BaseHeader`, `iso8583::BASE1Header`
 (Visa), `iso8583::WLP_FOHeader` (Worldline).
 
+`WLP_FOHeader::pack()` serialisiert den **vollen 93-Byte-Header** (4-Byte-
+ASCII-Längenpräfix + EBCDIC-Bytes); `parse()`/`unparse()` prüfen das
+gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
+(WLP < 93 B / BASE1 < erwartete Länge) — nie OOB-Zugriff.
+
 ---
 
 ## Typische Fehler, die zu vermeiden sind
@@ -543,16 +633,27 @@ Verfügbare Header-Typen: `iso8583::BaseHeader`, `iso8583::BASE1Header`
 
 ---
 
-## Thread-Sicherheit
+## Thread-Sicherheit (0.3.0)
 
-| Operation | Sperrentyp |
-|---|---|
-| `set`, `unset`, `reset`, `unparse` | Exklusive Schreibsperre |
-| `get`, `tryGet`, `has`, `size` | Geteilte Lesesperre |
+Eine `ISOMessage` darf **sicher von mehreren Threads gleichzeitig** genutzt
+werden. Alle öffentlichen Eintritte (`set`/`unset`/`has`/`get`/`tryGet`/
+`tryGetValue`/`tryGetValueRef`/`reset`/`keys`/`size`/`to_json`/`dump`/`parser`/
+`parse`/`unparse`/`header`/`direction`/`hasMTI`/`mti`/`isRequest`/…) nehmen
+denselben **rekursiven Message-Lock** genau einmal; interne Aufrufketten
+(z. B. `parse → recalcBitmap → set`) laufen unter dem bereits gehaltenen
+Lock. Writer und Reader schließen sich aus (ein Lock, **kein** paralleler-
+Reader-Modus). `to_json`/`dump` sichern den Feldsatz unter dem Lock und
+formatieren außerhalb (kurze Lock-Besitzzeiten).
 
-Gleichzeitiges Lesen aus mehreren Threads ist sicher.
-Eine Nachricht niemals ändern, während ein anderer Thread liest, ohne externe
-Synchronisation.
+- **Parser-Objekte sind nach dem Laden immutable** → sicher teilbar über
+  Threads und Messages; paralleles `parse`/`unparse` auf *verschiedenen*
+  Messages mit demselben Parser ist sicher.
+- Logger-Globalen (`setLevel`/`setLogger`/`currentLogger`/`getLevel`) sind
+  atomar.
+- **Restrisiken (dokumentiert in `ISOMessage.hh`):** `mti()` liefert ein
+  `string_view` **in** den mutablen Feld-Speicher — vor threadübergreifender
+  Nutzung kopieren: `std::string m = msg->mti();`. `tryGetValueRef` ist eine
+  zero-copy-Referenz mit derselben Einschränkung.
 
 ---
 

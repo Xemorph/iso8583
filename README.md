@@ -36,6 +36,43 @@ Abhängigkeiten (alle über vcpkg): `nlohmann-json`, `fmt`, `ryml` (rapidyaml,
 ≥ 0.15.2), `robin-map`, optional `libiconv` (EBCDIC-Konvertierung unter
 Nicht-Linux-Plattformen), `catch2` (nur für Tests).
 
+## Sicherheit (0.3.0)
+
+`libiso8583` 0.3.0 ist für den produktiven Einsatz im Finanzumfeld (PCI)
+härter gemacht. Kernaussagen:
+
+- **Strict-Modus (Default):** Abgechnittene Frames, überdimensionale Felder
+  und ungültige EBCDIC-Bytes werfen einen positionsgenauen `[ISO8583]`-
+  `std::runtime_error` (Feld, Offset, Byte, Hexdump), statt still zu
+  clampen, Felder zu verwerfen oder auf `.` zu mappen. Escape-Hatch:
+  `strict: false` in der Spec oder `parser.strict(false)` zur Laufzeit.
+- **Determinismus (ICU-Pin):** EBCDIC-Konvertierung ist rein
+  **tabellen-getrieben** (IBM-1047) und gegen ein exakt gepinntes
+  **ICU-78.3**-Orakel verifiziert — gleiche Bytes + gleiche Spec liefern auf
+  allen Toolchains/Plattformen das gleiche Ergebnis (keine Abhängigkeit von
+  libiconv-Debug-/Release-Divergenzen). `libiconv`/`ISO8583_ENABLE_ICONV`
+  ist deprigiert (Removal 0.4).
+- **Spec-Sandbox (Default):** `!include_files`-Einträge, die außerhalb des
+  Spec-Verzeichnisses (oder expliziter `SpecLoadOptions::roots`) landen —
+  `../`-Traversals, absolute/UNC-Pfade, Symlink-Escapes — werden
+  **fail-closed** abgelehnt. `SpecLoadOptions` (Größen-/Zahl-Caps,
+  `sandbox=false` als Escape-Hatch) gibt dir die Kontrolle.
+- **Thread-Sicherheit:** Eine `ISOMessage` kann sicher von mehreren Threads
+  geteilt werden (alle öffentlichen Eintritte sind gegenseitig exklusiv
+  gesichert); Parser-Objekte sind nach dem Laden immutable und teilbar.
+- **PCI-Logging:** `sensitive: true` auf einem Feld maskiert dessen Wert in
+  `dump()`/Log-Ausgaben als `***` (die Beschreibung bleibt sichtbar).
+  Produktiv auf **WARN** oder niedriger laufen lassen — `DEBUG` gibt
+  Feldwerte aus und gehört nicht in geteilte/long-lived Logsinks.
+- **Fail-closed statt Absturz:** Jeder neue Fehlerweg wirft einen
+  positionsgenauen `std::runtime_error` — nie UB, OOB, rohe STL-Exceptions
+  oder still verschluckte Frame-Korruption.
+
+Details: [`docs/plans/security-implementation-plan.md`](docs/plans/security-implementation-plan.md)
+und die Root-`AGENTS.md` (Security-Invarianten P1–P4, „Strict-Modus",
+„Spec-Sandbox & Lade-Limits", „Threading-Modell", „EBCDIC-Konvertierung &
+Determinismus", „Memory-Sicherheits-Regeln").
+
 ## Bauen
 
 ```bash

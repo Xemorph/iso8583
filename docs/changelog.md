@@ -1,5 +1,191 @@
 # Changelog
 
+## 0.3.0
+
+> **Wichtig:** 0.3.0 ist ein Sicherheits-/Robustheits-Release für den
+> produktiven Einsatz im Finanzumfeld (PCI). Mehrere Verhaltensänderungen sind
+> bewusst **breaking** (0.x); Details unten. Die Public-API ist ansonsten
+> stabil (nur additive Zugänge) — aber `ISOBaseParser` bekommt ein neues
+> Mitglied (`strict_`), daher müssen **Shared-Library-Konsumenten neu
+> kompiliert** werden (siehe ABI-Hinweis unten).
+
+### Neu: Strict-Modus als Standard (fail-closed)
+
+Die Bibliothek verhält sich jetzt im Default **strict**: statt abge-
+schnittene Frames still zu clampen, überdimensionale Felder zu verwerfen
+oder ungültige EBCDIC-Bytes auf `.` zu mappen, wirft der Dekodier-/Encoder-Pfad
+einen **positionsgenauen** `std::runtime_error` mit dem `[ISO8583]`-Präfix
+(Feld, Offset, Byte, Hexdump).
+
+- Neues Spec-Rot-Attribut `strict: true|false` (Default **`true`**) und
+  Laufzeit-`ISOBaseParser::strict(bool)` / `strict() const`.
+- Betroffene Fälle: Pufferende-Trunkatur (Feld am Ende abgeschnitten),
+  Serialisierung größer als Feld-Maximum (Frame würde fehlerhaft),
+  Längenpräfix am Pufferende abgeschnitten, ungültiges EBCDIC-Byte
+  (tabelle- und Orakelpfad), Bitmap-Byte am Pufferende, überlanger
+  Wire-Header (WLP-FO 93 B / BASE1), TLV-`offset+N`-Prechecks.
+- **Escape-Hatch für tolerante Integratoren:** `strict: false` in der Spec
+  oder `parser.strict(false)` zur Laufzeit → altes (clamp/WARN/`.`-Sentinel)
+  Verhalten, aber nie mehr *still* (jeder Fall loggt mindestens WARN/ERROR).
+
+### ⚠️ Breaking: WLP-FO-Header wird jetzt vollständig (93 Byte) serialisiert
+
+`WLP_FOHeader::pack()` erzeugte bisher nur 89 Byte und ließ das 4-Byte-ASCII-
+Längenpräfix sowie Bytes 4..93 weg — ausgehende WLP-Frames waren dadurch
+korrupt (Längenpräfix verloren, Rest verschoben). `pack()` liefert jetzt den
+**vollen 93-Byte-Header**, und `parse()` prüft das **gepackte** Ergebnis
+(früher: nur das gespeicherte Header-Objekt). Ein zu kurzer Wire-Header wirft
+fail-closed statt zu OOB-Zugriff.
+
+**Betrifft dich, falls** du WLP-FO-Nachrichten (Worldline) *erzeugst*: Die
+ausgehenden Frame-Bytes ändern sich (Korrektur). Bei reinem Empfang
+(`unparse`) ändert sich nichts.
+
+### Neu: EBCDIC-Konvertierung tabellen-getrieben + ICU-78.3-Orakel-Pin
+
+Die EBCDIC↔ASCII-Konvertierung ist jetzt **vollständig tabellen-getrieben**
+(IBM-1047) und läuft **ohne** Laufzeit-Converter (kein libiconv, kein ICU zur
+Laufzeit):
+
+- `kEbcdicToAscii` / `kAsciiToEbcdic` / `kEbcdicValid` in
+  `include/iso8583/_codec.hh` werden aus einem exakt gepinnten **ICU-78.3**-
+  Orakel erzeugt (`tools/generate_ebcdic_tables/`, Build-/CI-only — ICU wird
+  nie in die Laufzeit-Targets verlinkt).
+- **Determinismus:** Die 256-Byte-Verdicts beider Richtungen sind gecheckt
+  und über eine Cross-Toolchain-Diff in der CI abgeglichen (MSVC/clang/GCC
+  liefern byte-identische Tabellen). Die historische libiconv-Debug-/
+  Release-Divergenz ist damit eliminiert.
+- **Strict-Whitelist** ist bewusst *stärker* als ICU: ICU 78.3 konvertiert
+  alle 256 Bytes (C1-Steuerzeichen, Binär-Bytes), der Strict-Modus akzeptiert
+  nur die 85 IBM-1047-Druck-/Ziffern-Bytes (E2A) bzw. die 84 mappablen
+  ASCII-Zeichen (A2E). `tests/test_encoding_determinism.cc` pinnt beide
+  Zählungen.
+- `libiconv` / `ISO8583_ENABLE_ICONV` sind **deprigiert (Removal in 0.4)**
+  und dienen nur noch als Übergangs-Fallback; der Standard-EBCDIC-Pfad nutzt
+  sie nicht. Das Configure warnt bei `ISO8583_ENABLE_ICONV=ON`.
+
+### Neu: Spec-Sandbox + Lade-Limits
+
+Specs können Third-Party-/Remote-Herkunft haben; ein bösartiger oder
+korrupter Spec darf den Host nicht kompromittieren. Der Lade-Pfad ist deshalb
+**fail-closed** und beschränkt:
+
+- **Include-Sandbox (Default an):** `!include_files`-Einträge, die außerhalb
+der `roots` (leer → Verzeichnis der Top-Level-Spec) landen —
+`../`-Traversals, absolute/UNC-Pfade, Symlink-Escapes — werden **abgelehnt**
+(lexikalisch und, falls die Datei existiert, über den kanonisierten,
+Symlink-auflösenden Pfad).
+- **`SpecLoadOptions`** (neues public API, `ISOSpec.hh`) steuert:
+  `sandbox`, `roots`, `allowSmapWrite` (Sidecar nur innerhalb `roots`),
+  `maxSpecBytes` (32 MiB/Datei, beim Streamen erzwungen), `maxIncludeFiles`
+  (1024), `maxSmapBytes` (16 MiB; übergroße Sidecars werden verworfen).
+- **Leere `fields:`** → sauberer, positionsgenauer Fehler (statt der früheren
+  `rbegin()==rend()`-UB); nicht-numerische DE-Keys und `std::stoi`-Entwürfe
+  werden sauber validiert.
+- Die alten `loadFromYaml(path, bool trackSourceMap)`-Overloads bleiben
+  source-kompatibel (bauen interne Default-Optionen).
+
+**Migration (Betrifft dich, falls):** Top-Level-Specs, die `!include_files`
+außerhalb des eigenen Verzeichnisses nutzen, brauchen jetzt explizite `roots`
+(`SpecLoadOptions::roots`) oder bewusst `sandbox=false`.
+
+### Neu: `ISOMessage` ist thread-sicher teilbar
+
+Eine `ISOMessage` kann jetzt **sicher von mehreren Threads gleichzeitig**
+genutzt werden: alle öffentlichen Eintritte
+(`set`/`unset`/`has`/`get`/`tryGet`/`tryGetValue`/`tryGetValueRef`/`reset`/
+`keys`/`size`/`to_json`/`dump`/`parser`/`parse`/`unparse`/`header`/
+`direction`/`hasMTI`/`mti`/`isRequest`/…) nehmen denselben **rekursiven
+Message-Lock** genau einmal; interne Aufrufketten (z. B. `parse →
+recalcBitmap → set`) laufen unter dem bereits gehaltenen Lock. Writer und
+Reader schließen sich aus (ein Lock, kein paralleler-Reader-Modus).
+`to_json`/`dump` sichern den Feldsatz unter dem Lock und formatieren außerhalb
+(kurze Lock-Besitzzeiten).
+
+- Parser-Objekte sind nach dem Laden **immutable** → sicher teilbar über
+  Threads und Messages (paralleles `parse`/`unparse` auf *verschiedenen*
+  Messages mit demselben Parser ist sicher).
+- Logger-Globalen (`setLevel`/`setLogger`/`currentLogger`/`getLevel`) sind
+  atomar.
+- **Restrisiko (dokumentiert in `ISOMessage.hh`):** `mti()` liefert ein
+  `string_view` *in* den mutablen Feld-Speicher — vor threadübergreifender
+  Nutzung kopieren (`std::string m = msg->mti();`). `tryGetValueRef` ist eine
+  zero-copy-Referenz mit derselben Einschränkung.
+
+### Neu: PCI-Logging-Hygiene (`sensitive:`)
+
+Neues Feld-Attribut `sensitive: true` (auch für TLV-`children`-Einträge und
+`definitions:`): Der **Wert** wird in `dump()`/`operator<<` und in
+Log-Ausgaben als `***` maskiert (die Beschreibung bleibt sichtbar). Auf
+nested/TLV-BERTLV-Containern verbreitet es sich auf alle Children/Tags.
+`value()`/`to_json()` bleiben bewusst **unmaskiert** (programmatische
+Daten-API) — nie `to_json()` in einen Log-Sink für sensible Daten.
+Produktiv-Loglevel: **WARN** oder niedriger.
+
+### Spec-Cache-Härtung
+
+- Cache-Eintrag trägt jetzt `{parser, spec, mtime, contentHash}`;
+  **Publish-then-Verify**: Ein Parser wird nur unter exakt dem
+  Dateisnapshot publiziert, aus dem er gebaut wurde → eine zur Laufzeit
+  ausgetauschte Spec kann nie einen „gemischten" Parser liefern (TOCTOU am
+  Publish-Punkt geschlossen).
+- **LRU-Cap: 64 Einträge** (evictiert least-recent) — schließt das
+  unbeschränkte Wachstum.
+- `CacheValidation::TrustUntilInvalidated` bleibt, ist aber **als unsicher
+  für rollende Spec-Änderungen** dokumentiert (Prozess bei Spec-Wechsel neu
+  starten, `invalidateCache(path)` manuell aufrufen, oder `CheckEveryCall`
+  verwenden).
+
+### Memory-Sicherheit (Fail-closed statt Absturz)
+
+- **A1:** Bitmap-Puffer-Prüfungen vor jedem Byte-Zugriff (positionsgenaues
+  Throw statt OOB-Read); expliziter `bmp.size() > 65`-Guard.
+- **A3:** Alle Header-Getter/Setter (WLP-FO, BASE1) rufen `require(n)` auf
+  und werfen bei zu kurzem Header; Konstruktoren aus User-Vektoren validieren
+  sofort (fail-closed, keine OOB-Write).
+- **A5:** `ISOMessage::parser(p)` wirft bei falschem Parser-Typ.
+- **A4 (Audit-Regel, Root-`AGENTS.md`):** `dynamic_bitset::operator[]`
+  prüft nur per `assert()` (in Release aus) — **niemals** `bmp[n]` ohne
+  vorherigen `bmp.size() > n`-Guard indexieren.
+- **Iconv-Fallback (so lange gebaut):** E2BIG-Grow-Loop ist jetzt
+  no-progress-erkennend und hard-capped (EBCDIC↔ASCII ist 1:1).
+- **TLV-Härtung:** `read_num`/BCD-Policy mit expliziten `offset+N <=
+  buf.size()`-Prechecks; `BerLength` lehnt `num_bytes > 8` ab (keine
+  Shift-Overflow); `store_se` lehnt/warnt, wenn das BER-Tag nicht in
+  `TNG_KEY_TYPE` passt (keine stille `static_cast`-Trunkierung → keine
+  SE-Misrouting).
+
+### Fuzzing + Sanitizer-CI
+
+- **libFuzzer-Targets** (`tests/fuzz/`, nur mit `ISO8583_BUILD_FUZZERS=ON`):
+  `fuzz_unparse` (F1), `fuzz_spec` (F2), `fuzz_serialize` (F3),
+  `fuzz_header` (F4), `fuzz_tlv` (F5) + `fuzz_codec`.
+- **CI-Matrix:** pro PR `debug` + `debug-asan` (MSVC & Linux/clang) + `tsan`
+  (Linux/clang); **nightly** Fuzz-Soak (alle Targets) + Cross-Toolchain-
+  Verdict-Diff (EBCDIC-Tabellen).
+- **MSVC-ASan:** `parserTable()` ist jetzt ein bewusst ge-leaktes
+  Prozess-Lebenszeit-Singleton — MSVC-ASan (Debug CRT) faultet sonst beim
+  STL-`unordered_map`-`atexit`-Teardown; die Tabelle wird nie dealloziert
+  (OS räumt beim Prozessende auf), die Logik bleibt unverändert.
+
+### Sonstige Bugfixes
+
+- **WLP-FO-Timestamp-Breite:** `getFormattedTimestamp()` erzeugt jetzt eine
+  fixe 26-Zeichen-Timestamp (Subsekunden via `duration_cast<microseconds>` +
+  `setw(6)`); rohe 100-ns-Clock-Ticks + `setw(4)` lieferten auf Windows
+  24–29 Zeichen und einen ~10 % `Timestamp format error`-Flake.
+- **`ISOMessage`-Sicherheitsnetz:** alle Standard-Ausnahmen ohne
+  `[ISO8583]`-Präfix aus `parse`/`unparse` werden mit
+  `[ISO8583] ISOMessage::parse|unparse: …` neu geworfen (keine rohen
+  `std::system_error`/`std::stoi` entweichen).
+
+### ABI-Hinweis
+
+`ISOBaseParser` (public) bekommt das neue Mitglied `strict_` →
+**Shared-Library-Konsumenten müssen neu kompiliert** werden. Es werden keine
+bestehenden Symbole entfernt oder umbenannt; alle neuen Zugänge sind
+additive.
+
 ## 0.2.1
 
 ### Bugfix: `!merge`-Tag bei Sequenz-Definitionen ging beim Vorverarbeiten verloren
