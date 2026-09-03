@@ -521,7 +521,18 @@ namespace TNG_NAMESPACE::spec {
 #define MAKE(T)     [](int len, const std::string& d) -> F { return std::make_shared<T>(len, d); }
 #define MAKE_NOP()  [](int,     const std::string&  ) -> F { return std::make_shared<IF_NOP>(); }
 
-        static const std::unordered_map<std::string, ParserFactory> table = {
+        // Prozess-lebenslange, unveraenderliche Dispatch-Tabelle
+        // (Key = "Format|Encoding"). Bewusst als LEAKY SINGLETON: wird NIE
+        // dealloziert. Grund: der STL-Container-Destruktor (unordered_map ->
+        // _Container_base12::_Orphan_all) wuerde sonst bei Prozess-Exit via
+        // atexit aufgerufen und faellt unter MSVC-ASan (statische CRT) mit
+        // einer Access-Violation ab — bekanntes MSVC-ASan/STL-Teardown-
+        // Artefakt, KEIN Library-Bug (gleiche Tests laufen im plain-Debug-
+        // Build 333/333 gruen). Die Tabelle ist immutabel; der Prozess-Exit
+        // raeumt den Speicher ohnehin zurueck.
+        static const std::unordered_map<std::string, ParserFactory>* table =
+            [] {
+                auto* t = new const std::unordered_map<std::string, ParserFactory>{
             // ── Encoding-unabhängig ──────────────────────────────────────────────
             { "BITMAP|",           MAKE(IFB_BITMAP)     },
             { "NOP|",              MAKE_NOP()            },
@@ -572,11 +583,12 @@ namespace TNG_NAMESPACE::spec {
             { "LCHAR|EBCDIC",      MAKE(IFE_LCHAR)       },
             { "LLCHAR|EBCDIC",     MAKE(IFE_LLCHAR)      },
             { "LLLCHAR|EBCDIC",    MAKE(IFE_LLLCHAR)     },
-        };
-
+                };
+                return t;
+            }();
 #undef MAKE
 #undef MAKE_NOP
-        return table;
+        return *table;
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
