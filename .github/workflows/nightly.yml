@@ -1,0 +1,178 @@
+# =============================================================================
+# Nightly (Security-Plan 4.2): Fuzz-Soak + Cross-Toolchain-Verdict-Diff
+# =============================================================================
+#
+# * Fuzz-Soak: alle sechs Fuzz-Ziele (F1-F5 + codec) mit echtem libFuzzer
+#   (clang/ASan), je 1 h Zeitbudget pro Ziel (GitHub-Job-Limit 6 h).
+#   Seed-Corpus: issues/a/test_message.txt (dehexiert) + Trunkaturen +
+#   256-Byte-Tabellen-Sweep (s. Security-Plan 4.1, Corpus-Abschnitt).
+#   Neufunde werden als Artifact hochgeladen (corpus/ + crash-/interesting-
+#   Dateien); ein Job scheitert genau dann, wenn libFuzzer einen Crash
+#   (Exit-Code 77/1) oder ASan meldet.
+#
+# * Verdict-Diff (P3): regneriert die EBCDIC-Orakel-Verdicts mit der
+#   Clang-Toolchain in ein Temp-Verzeichnis und difft sie gegen die
+#   gecheckten pinned-JSONs (die mit der GCC-Toolchain erzeugt/verifiziert
+#   wurden). Leerer Diff = Tabellen-Verhalten toolchain-stabil.
+#
+# Trigger: taeglich 04:00 UTC + manuell (workflow_dispatch).
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  # ── Fuzz-Soak (eins pro Ziel, parallel) ──────────────────────────────────
+  fuzz-soak:
+    name: Fuzz soak / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ fuzz_codec, fuzz_unparse, fuzz_spec, fuzz_serialize, fuzz_header, fuzz_tlv ]
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang ninja-build libiconv-hook-dev
+          clang --version
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgGitCommitId: '1f5e0348089e8a9b187f57d42866ebc871e815da'
+
+      - name: Configure (clang + libFuzzer + ASan)
+        env:
+          VCPKG_CMAKE_C_COMPILER: clang
+          VCPKG_CMAKE_CXX_COMPILER: clang++
+        run: >
+          cmake -B build-fuzz
+          -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DISO8583_BUILD_SHARED=ON
+          -DISO8583_ENABLE_ICONV=ON
+          -DISO8583_BUILD_TESTS=OFF
+          -DISO8583_BUILD_FUZZERS=ON
+          -DISO8583_INSTALL=OFF
+
+      - name: Build
+        run: cmake --build build-fuzz --parallel
+
+      - name: Prepare seed corpus
+        run: |
+          mkdir -p corpus
+          # issues/a/test_message.txt ist hex-kodiert (1 Byte = 2 hex-Zeichen)
+          if [ -f issues/a/test_message.txt ]; then
+            python3 - <<'PY'
+            import pathlib
+            raw = pathlib.Path("issues/a/test_message.txt").read_text().strip()
+            wire = bytes.fromhex(raw)
+            pathlib.Path("corpus/wire_reference.bin").write_bytes(wire)
+            # Trunkaturen (alle Praefixlaengen) ueben die B1/B6-Guards.
+            for i in range(1, len(wire) + 1):
+                pathlib.Path(f"corpus/trunc_{i:04d}.bin").write_bytes(wire[:i])
+            PY
+          fi
+          # 256-Byte-Tabellen-Sweep (Phase-0-Tabelle, je Einzelbyte).
+          python3 - <<'PY'
+          import pathlib
+          for b in range(256):
+              pathlib.Path(f"corpus/byte_{b:02x}.bin").write_bytes(bytes([b]))
+          PY
+          ls corpus | head -5
+          echo "corpus files: $(ls corpus | wc -l)"
+
+      - name: Run fuzz target (1h soak)
+        run: |
+          # Linux: Exe unter tests/fuzz/; Windows (faelleweise): unter bin/
+          EXE=$(ls build-fuzz/tests/fuzz/${{ matrix.target }} build-fuzz/bin/${{ matrix.target }} 2>/dev/null | head -1)
+          echo "Running: $EXE"
+          "$EXE" \
+            -max_total_time=3600 \
+            -rss_limit_mb=8192 \
+            -artifact_prefix=corpus/ \
+            corpus/
+
+      - name: Upload findings
+        if: ${{ always() && !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}-findings
+          path: |
+            corpus/
+          retention-days: 14
+
+  # ── Cross-Toolchain-Verdict-Diff (P3) ────────────────────────────────────
+  # Regneriert die ICU-78.3-Orakel-Verdicts mit Clang in ein Temp-Verzeichnis
+  # und difft gegen die gecheckten pinned-JSONs. Leerer Diff => die
+  # EBCDIC-Tabellen-Verhalte sind toolchain-stabil (P3-Watchdog).
+  verdict-diff:
+    name: EBCDIC verdict diff (clang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang ninja-build
+          clang --version
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Setup vcpkg (ICU 78.3 via Manifest-Pin)
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgGitCommitId: '1f5e0348089e8a9b187f57d42866ebc871e815da'
+
+      - name: Configure (Codec-Tool)
+        env:
+          VCPKG_CMAKE_C_COMPILER: clang
+          VCPKG_CMAKE_CXX_COMPILER: clang++
+        run: >
+          cmake -B build-verify
+          -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DISO8583_BUILD_TESTS=OFF
+          -DISO8583_BUILD_CODEC_TOOLS=ON
+          -DISO8583_INSTALL=OFF
+
+      - name: Build oracle tool
+        run: cmake --build build-verify --target iso8583_ebcdic_table_gen --parallel
+
+      - name: Regenerate verdicts (clang) + diff vs pinned
+        run: |
+          TOOL=$(find build-verify -name 'iso8583_ebcdic_table_gen' -type f | head -1)
+          echo "Tool: $TOOL"
+          "$TOOL" --out /tmp/verdicts-clang
+          diff -r /tmp/verdicts-clang tools/generate_ebcdic_tables/pinned \
+            && echo "VERDICTS STABLE (clang == pinned)"
+
+      - name: Upload regenerated verdicts
+        if: ${{ always() && !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdicts-clang
+          path: /tmp/verdicts-clang/
+          retention-days: 14

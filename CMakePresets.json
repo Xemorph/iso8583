@@ -46,13 +46,14 @@
     {
       "name": "debug-asan",
       "displayName": "Debug + AddressSanitizer (MSVC /fsanitize=address, statisch)",
-      "description": "Sanitizer-Preset: MSVC-ASan mit statischer CRT (/MTd), statischem iso8583 und x64-windows-static-Triplet. ASan-Runzeit wird statisch verlinkt -> kein DLL-Suche-Problem unter ctest.",
+      "description": "Sanitizer-Preset: MSVC-ASan mit statischer CRT (/MTd), statischem iso8583 und dem Custom-Triplet cmake/triplets/x64-windows-static-asan.cmake — damit vcpkg-Abhaengigkeiten (v.a. Catch2) ebenfalls mit ASan gebaut werden und kein LNK2038 (annotate_*)-Mismatch beim Test-Link entsteht. ASan-Runzeit wird statisch verlinkt -> kein DLL-Suche-Problem unter ctest.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE":                "Debug",
         "ISO8583_BUILD_TESTS":             "ON",
         "ISO8583_BUILD_SHARED":            "OFF",
-        "VCPKG_TARGET_TRIPLET":            "x64-windows-static",
+        "VCPKG_TARGET_TRIPLET":            "x64-windows-static-asan",
+        "VCPKG_OVERLAY_TRIPLETS":          "${sourceDir}/cmake/triplets",
         "CMAKE_MSVC_RUNTIME_LIBRARY":      "MultiThreadedDebug",
         "CMAKE_C_FLAGS":                   "/fsanitize=address /Zi",
         "CMAKE_CXX_FLAGS":                 "/fsanitize=address /Zi",
