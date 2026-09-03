@@ -10,6 +10,12 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <atomic>
+#if defined(_WIN32)
+#include <process.h> // getpid()
+#else
+#include <unistd.h>  // getpid()
+#endif
 
 using namespace TNG_NAMESPACE;
 using namespace TNG_NAMESPACE::spec;
@@ -26,9 +32,15 @@ struct TempDir {
     fs::path path;
 
     TempDir() {
+        // Pro Instanz eindeutig (PID + Zaehler): ctest -j faehrt mehrere
+        // Test-Prozesse parallel; die alte Thread-ID-Hash-Namenskennung
+        // kollidierte ueber Prozessgrenzen (gleiche Haupt-Thread-IDs) und
+        // liess parallele Tests dasselbe Temp-Verzeichnis teilen (Reste,
+        // exists()-Rennbedingungen).
+        static std::atomic<unsigned long long> counter{0};
+        const auto pid = static_cast<unsigned long long>(::getpid());
         path = fs::temp_directory_path()
-             / ("iso8583_sbx_" + std::to_string(
-                    std::hash<std::thread::id>{}(std::this_thread::get_id())));
+             / ("iso8583_sbx_" + std::to_string(pid) + "_" + std::to_string(counter++));
         fs::create_directories(path);
     }
 

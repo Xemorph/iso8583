@@ -17,6 +17,11 @@
 #include <string>
 #include <thread>
 #include <vector>
+#if defined(_WIN32)
+#include <process.h> // getpid()
+#else
+#include <unistd.h>  // getpid()
+#endif
 
 using namespace TNG_NAMESPACE;
 using namespace TNG_NAMESPACE::spec;
@@ -33,9 +38,13 @@ struct TempDir {
     fs::path path;
 
     TempDir() {
+        // Pro Instanz eindeutig (PID + Zaehler): ctest -j faehrt mehrere
+        // Test-Prozesse parallel; die alte Thread-ID-Hash-Namenskennung
+        // kollidierte ueber Prozessgrenzen (gleiche Haupt-Thread-IDs).
+        static std::atomic<unsigned long long> counter{0};
+        const auto pid = static_cast<unsigned long long>(::getpid());
         path = fs::temp_directory_path()
-             / ("iso8583_cch_" + std::to_string(
-                    std::hash<std::thread::id>{}(std::this_thread::get_id())));
+             / ("iso8583_cch_" + std::to_string(pid) + "_" + std::to_string(counter++));
         fs::create_directories(path);
     }
 
@@ -234,9 +243,13 @@ TEST_CASE("Cache TOCTOU - hot-swapped spec yields only consistent versions",
     // laeuft, wirft ("Datei nicht lesbar") - ein Artefakt des Test-Setups
     // unter Windows, KEIN Cache-Inkonsistenz-Fall: jedes Load, das ein
     // Ergebnis liefert, MUSS versionskonsistent sein (unterhalb gecheckt).
-    // Diskriminator: existiert die Datei im Fehlermoment, handelt es sich
-    // um einen echten Load-/Cache-Fehler -> Re-Throw. Unter Linux (rename
-    // = atomar) tritt dieser Fall nie auf.
+    // Diskriminator (0.3.1-Fix): der alte Diskriminator (exists()-Check im
+    // Fehlermoment) hatte selbst ein Mikrosekunden-TOCTOU-Fenster - die
+    // Datei fehlt beim Open-Fehler, ist beim exists()-Check aber schon
+    // wieder da (Rename-Fenster geschlossen) => falscher Re-Throw (Flake).
+    // Jetzt wird NUR die IO-ebene-Signatur "Datei nicht lesbar" als
+    // transient behandelt; echte Load-/Cache-Fehler bleiben hart. Unter
+    // Linux (rename = atomar) tritt dieser Fall nie auf.
     int transientFileRaces = 0;
     bool sawV1 = false, sawV2 = false;
     const auto t0 = std::chrono::steady_clock::now();
@@ -251,11 +264,16 @@ TEST_CASE("Cache TOCTOU - hot-swapped spec yields only consistent versions",
             (void)parser;
             spec = sp;
         }
-        catch (const std::exception&)
+        catch (const std::exception& e)
         {
-            std::error_code ec;
-            if (fs::exists(file, ec) && !ec)
-                throw; // Datei vorhanden -> kein Swap-Race, echtes Fehler
+            // Signatur-Diskriminator: NUR IO-ebene-Fehler des Loaders
+            // ("Datei nicht lesbar") sind Swap-/AV-Race-Artefakte und
+            // werden toleriert. Echte Load-/Cache-Fehler (Sandbox,
+            // Parsing, Validierung) haben andere Meldungen und werden
+            // sofort weitergeworfen. Anhaltende IO-Fehler (Datei
+            // dauerhaft weg) faengt die transientFileRaces-Grenze ab.
+            if (std::string(e.what()).find("Datei nicht lesbar") == std::string::npos)
+                throw;
             ++transientFileRaces;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Windows-CI: Sandbox/Sidecar-Fehlpositiv "außerhalb der erlaubten Wurzel"**
+  (12 Test-Failures in den Windows-Jobs): `isWithinRoot()` verglich den
+  Kandidatenpfad (`fs::absolute`, nicht kanonisiert) rein lexikalisch mit der
+  kanonisierten Sandbox-Wurzel. Windows-8.3-Kurznamen (GitHub-Windows-Runner
+  setzen `TEMP=C:\Users\RUNNER~1\AppData\Local\Temp`; `fs::canonical` liefert
+  `C:\Users\runneradmin\...`) und Symlinks/Junctions (macOS `/tmp` →
+  `/private/tmp`) sind lexikalisch verschieden, aber physikalisch identisch —
+  in-Wurzel-`!include_files` und `.smap`-Schreibzugriffe wurden fälschlich
+  verworfen. Fix: nach negativem lexikalischem Vergleich Fallback auf
+  `fs::weakly_canonical` des Kandidaten (Fail-closed bleibt erhalten: wirklich
+  außerhalb liegende Pfade kanonisieren auf außerhalb liegende Formen).
+- **Test-Härtung**: Die `TempDir`/`TempYaml`-Helfer benennen ihre
+  Temp-Verzeichnisse/Dateien jetzt nach PID+Zähler statt Thread-ID-Hash. Unter
+  `ctest -j` kollidierten mehrere Test-Prozesse prozessübergreifend über
+  gleiche Haupt-Thread-IDs auf denselben Verzeichnisnamen (Rest-Dateien,
+  `exists()`-Rennbedingungen zwischen parallelen Tests).
+- **TOCTOU-Test (Windows-Flake)**: Der alte Diskriminator (exists()-Check im
+  Fehlermoment) hatte selbst ein Mikrosekunden-TOCTOU-Fenster (Datei fehlt
+  beim `open`-Fehler, ist beim `exists()`-Check schon wieder da) → seltene
+  Fehl-Failures. Jetzt zählen nur IO-ebene-Ladefehler des Loaders
+  (`Datei nicht lesbar`) als transient; echte Load-/Cache-Fehler (Sandbox,
+  Parsing, Validierung) werden unverändert sofort weitergeworfen. Anhaltende
+  IO-Fehler deckt die Race-Grenze ab.
+
 ## 0.3.0
 
 > **Wichtig:** 0.3.0 ist ein Sicherheits-/Robustheits-Release für den

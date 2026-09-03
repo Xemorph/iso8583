@@ -13,6 +13,12 @@
 #include <fstream>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#if defined(_WIN32)
+#include <process.h> // getpid()
+#else
+#include <unistd.h>  // getpid()
+#endif
 #include <nlohmann/json.hpp>
 
 using namespace TNG_NAMESPACE;
@@ -29,8 +35,13 @@ struct TempYaml {
     std::filesystem::path path;
 
     explicit TempYaml(const std::string& content) {
+        // Pro Instanz eindeutig (PID + Zaehler): ctest -j faehrt mehrere
+        // Test-Prozesse parallel; die alte Thread-ID-Hash-Namenskennung
+        // kollidierte ueber Prozessgrenzen (gleiche Haupt-Thread-IDs).
+        static std::atomic<unsigned long long> counter{0};
+        const auto pid = static_cast<unsigned long long>(::getpid());
         path = std::filesystem::temp_directory_path()
-            / ("libiso8583_test_" + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + ".yml");
+            / ("libiso8583_test_" + std::to_string(pid) + "_" + std::to_string(counter++) + ".yml");
         std::ofstream f(path);
         f << content;
     }
@@ -48,9 +59,12 @@ struct TempDir {
     std::filesystem::path dir;
 
     TempDir() {
+        // Pro Instanz eindeutig (PID + Zaehler), s. TempYaml: verhindert
+        // Verzeichnis-Kollisionen zwischen parallelen ctest-Prozessen.
+        static std::atomic<unsigned long long> counter{0};
+        const auto pid = static_cast<unsigned long long>(::getpid());
         dir = std::filesystem::temp_directory_path()
-            / ("libiso8583_dir_" + std::to_string(
-                std::hash<std::thread::id>{}(std::this_thread::get_id())));
+            / ("libiso8583_dir_" + std::to_string(pid) + "_" + std::to_string(counter++));
         std::filesystem::create_directories(dir);
     }
 
