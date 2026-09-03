@@ -62,6 +62,8 @@ vendored inside the tree — see §14.3; their license headers are kept.)
 | `.clangd` | clangd/IDE config (see §9). |
 | `.github/workflows/ci.yml`, `docs.yml` | CI (Linux GCC-13 **and** Windows MSVC, both Ninja — see §9) and GitHub-Pages docs publishing. |
 | `.cache/` | Local CMake-LSP (neocmakelsp) cache — git-ignored, do not edit. |
+| `scratch/` | Local-only scratch area: diagnostic probes, build logs, hand-off notes, one-off scripts (git-ignored, disposable, never committed). |
+| `binaries/` | Local-only probe binaries (`.exe`/`.obj`/`.pdb`/`.ilk`) moved out of the repo root (git-ignored). |
 | `changelog.md` | Change history (tracked; `docs/changelog.md` is a tracked mirror — **update both**, see §14.2). |
 | `IDEA.md` | One-liner: "C++20 library to parse ISO 8583 messages". |
 

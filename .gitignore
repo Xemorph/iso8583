@@ -71,3 +71,9 @@ Desktop.ini
 # -- Doxygen ------------------------------------------------------------------
 docs/_doxygen/
 docs/_build/
+
+# -- Lokale Scratch- & Binär-Ablagen (Repo-Root) ------------------------------
+# scratch/  = einmaliige Probes, Build-Logs, Handoff-Notizen (verwertbar, nie committen)
+# binaries/ = Probe-Binaries (.exe/.obj/.pdb/.ilk) aus dem Repo-Root
+scratch/
+binaries/
