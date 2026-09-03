@@ -280,3 +280,59 @@ TEST_CASE("Full unparse - no parser set returns SIZE_MAX", "[unparse][error]") {
     auto result = msg->unparse(msg, buf);
     CHECK(result == SIZE_MAX);
 }
+
+// =============================================================================
+// Full unparse: all-zero Bitmap (P4-Regressionsfix)
+// =============================================================================
+//
+// Regression: Wenn die primäre Bitmap keine Bits gesetzt hat (z.B. 64
+// Null-Bytes: MTI + all-zero-Bitmap), lieferte bmp.find_first() npos. Der
+// alte Code wandelte npos nach TNG_KEY_TYPE (int16_t: 0xFFFF -> -1) und
+// klemmte hf auf -1; der Feld-Loop-Range wurde dadurch invertiert
+// (_begin > _end) und std::for_each lief ueber das Ende des Parser-Deques
+// hinaus ("cannot seek deque iterator out of range" Debug-Assert / UBS in
+// Release).
+
+TEST_CASE("Full unparse - all-zero bitmap, exactly MTI + bitmap", "[unparse][error]") {
+    auto parser = std::make_shared<ISOBaseParser>("ZeroBMP-Parser", 0);
+    parser->add(std::make_shared<IFE_NUMERIC>(4, "MTI"));
+    parser->add(std::make_shared<IFB_BITMAP>(8, "Bitmap"));
+    parser->add(std::make_shared<IFB_NUMERIC>(16, "PAN"));   // DE2
+    parser->add(std::make_shared<IFE_CHAR>(10, "Amount"));   // DE3
+
+    auto buf = B({
+        0xF0, 0xF2, 0xF0, 0xF0,                           // MTI: 0200
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00    // Bitmap: keine Bits
+    });
+
+    auto msg = std::make_shared< Message >();
+    msg->parser(parser);
+    std::size_t consumed = msg->unparse(msg, buf);
+
+    CHECK(consumed == 12);
+    CHECK(msg->hasMTI());
+    CHECK(!msg->has(2));
+    CHECK(!msg->has(3));
+}
+
+TEST_CASE("Full unparse - 64 zero bytes (F1-Fuzz-Sample) stays in range", "[unparse][error]") {
+    auto parser = std::make_shared<ISOBaseParser>("ZeroBMP64-Parser", 0);
+    parser->add(std::make_shared<IFE_NUMERIC>(4, "MTI"));
+    parser->add(std::make_shared<IFB_BITMAP>(8, "Bitmap"));
+    parser->add(std::make_shared<IFB_NUMERIC>(16, "PAN"));  // DE2
+
+    std::vector<uint8_t> buf(64, 0x00);  // exakt der F1-Fuzz-Sample von P4
+
+    auto msg = std::make_shared< Message >();
+    msg->parser(parser);
+
+    // strict (Default): saubere Decodierung von MTI + Bitmap, dann verworfene
+    // Rest-Bytes - aber KEIN deque-Iterator-OOB und kein Hang.
+    REQUIRE_THROWS_AS(msg->unparse(msg, buf), std::runtime_error);
+
+    // Legacy (strict=false): Legacy-Warnung statt Exception.
+    parser->strict(false);
+    auto msg2 = std::make_shared< Message >();
+    msg2->parser(parser);
+    REQUIRE_NOTHROW(msg2->unparse(msg2, buf));
+}

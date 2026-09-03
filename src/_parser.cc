@@ -299,12 +299,24 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         if (!m->set(bitmap))
             throw std::runtime_error("[ISO8583] Bitmap: ISOMessage::set fehlgeschlagen (Speicherfehler?)");
 
+        // [ISO8583] P4: find_first() liefert npos, wenn die Bitmap gar
+        // keine Bits gesetzt hat (z.B. all-zero-Bitmap). Der alte Code
+        // konvertierte npos nach TNG_KEY_TYPE (mit int16_t-Keys: 0xFFFF ->
+        // -1) und klemmte hf auf -1, wodurch der Feld-Loop-Range unten
+        // invertiert wurde (_begin > _end). std::for_each lief dann ueber
+        // das Ende des Parser-Deques hinaus: "cannot seek deque iterator
+        // out of range" (Debug-Assert) bzw. undefiniertes Verhalten
+        // (Release-Build). Ohne gesetzte Bits bleibt der volle Feld-Range
+        // erhalten; der Loop ueberspringt alle abwesenden Felder, da
+        // bmp[i] == false ist.
         auto last_idx = bmp.find_first();
-        for (auto idx = last_idx; idx != dynamic_bitset<>::npos; ) {
-            last_idx = idx;
-            idx = bmp.find_next(idx);
+        if (last_idx != dynamic_bitset<>::npos) {
+            for (auto idx = last_idx; idx != dynamic_bitset<>::npos; ) {
+                last_idx = idx;
+                idx = bmp.find_next(idx);
+            }
+            hf = std::min(hf, (TNG_KEY_TYPE)last_idx);
         }
-        hf = std::min(hf, (TNG_KEY_TYPE)last_idx);
     }
 
     // -- Datenfelder ----------------------------------------------------------
@@ -312,6 +324,12 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     CONST_ITERATOR _end   = (hf + 1 < (TNG_KEY_TYPE)l_.size())
                           ? (l_.cbegin() + hf + 1)
                           : l_.cend();
+    if (_end < _begin) {
+        // [ISO8583] P4: Defensive in der Tiefe - eine invertierte Range
+        // wuerde std::for_each ueber das Ende der Parser-Liste (deque)
+        // laufen lassen.
+        _end = _begin;
+    }
 
     TNG_KEY_TYPE i = first_field();
     std::for_each(_begin, _end,
