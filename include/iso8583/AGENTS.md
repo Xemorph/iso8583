@@ -225,6 +225,11 @@ msg->parser(parser);
 spec->name();      // z. B. "Mastercard GMC"
 spec->encoding();  // z. B. "EBCDIC"
 
+// Netzwerk-Header aus dem YAML-Root-Key "header:"
+spec->hasHeader();   // true, wenn der Key definiert ist
+spec->headerSize();  // z. B. 93 (0, wenn der Key fehlt); der Parser
+                     // behandelt 0 wie "kein Header"
+
 // Prüfen, ob ein DE definiert ist
 spec->has(2);      // true, wenn DE002 existiert
 

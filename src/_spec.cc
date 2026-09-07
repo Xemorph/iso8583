@@ -801,6 +801,10 @@ namespace TNG_NAMESPACE::spec {
         std::string              desc;
         std::string              defaultEncoding;
         std::size_t              hdr_sz = 0;
+        // Wurde das YAML-Root-Key "header" definiert? (Kann true sein bei
+        // hdr_sz == 0 – ISOSpec::hasHeader() meldet die Präsenz des Keys,
+        // der Parser behandelt 0 wie "kein Header".)
+        bool                     headerKey = false;
         // [ISO8583] strikte Dekodierung (YAML-Root-Key `strict:`, Default: true)
         bool                     strict = true;
         std::map<int, SpecField> fields;
@@ -824,6 +828,7 @@ namespace TNG_NAMESPACE::spec {
         LoadedSpec result;
         result.desc = getStr(yaml, "spec", "<unnamed>");
         result.hdr_sz = getSizeT(yaml, "header", 0);
+        result.headerKey = hasKey(yaml, "header");
         result.strict = getBool(yaml, "strict", true);
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
 
@@ -1077,8 +1082,10 @@ namespace TNG_NAMESPACE::spec {
             infos.reserve(b.loaded.fields.size());
             for (const auto& [key, f] : b.loaded.fields)
                 infos.push_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(key), f));
+            const std::optional<std::size_t> hdr =
+                b.loaded.headerKey ? std::make_optional(b.loaded.hdr_sz) : std::nullopt;
             b.spec = std::make_shared<ISOSpec>(
-                b.loaded.desc, b.loaded.defaultEncoding, std::move(infos));
+                b.loaded.desc, b.loaded.defaultEncoding, std::move(infos), std::move(hdr));
         }
         return b;
     }

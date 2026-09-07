@@ -4,6 +4,14 @@
 
 ### Added
 
+- **`ISOSpec`-Introspektion für Netzwerk-Header**: `spec->hasHeader()`
+  (true, wenn die YAML-Root-Key `header:` definiert ist) und
+  `spec->headerSize()` (Byte-Anzahl des Headers; `0`, wenn die Key fehlt).
+  Damit ist die im Parser bereits verdrahtete `header:`-Größe (z. B.
+  proprietärer Frame-Header vor dem ISO-8583-Body) ohne Zugriff auf die
+  privaten Parser-Interna abfragbar. `docs/internals/yaml_format.md`
+  dokumentiert die Root-Keys (`spec:`, `encoding:`, `strict:`, `header:`).
+
 - **FAQ-Seite (`docs/faq.md`)**: Neue Doku-Seite für typische
   Fehlerszenarien und deren Triage. Erster Eintrag:
   `std::system_error: Resource deadlock would occur` nach `unparse()`

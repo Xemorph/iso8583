@@ -28,6 +28,7 @@
 #include "config.h"
 #include "detail/_interfaces.hh"
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -124,6 +125,10 @@ namespace TNG_NAMESPACE {
         ///     // Check existence
         ///     spec->has(2);       // true if DE002 is defined
         ///
+        ///     // Network header (root YAML key `header:`)
+        ///     spec->hasHeader();   // true if the spec declares a header
+        ///     spec->headerSize();  // e.g. 93 bytes
+        ///
         ///     // Query a field
         ///     if (auto f = spec->field(2)) {
         ///         f->description;           // "Primary Account Number"
@@ -148,6 +153,26 @@ namespace TNG_NAMESPACE {
             /// if no global encoding was specified.
             std::string_view encoding() const noexcept { return encoding_; }
 
+            /// @brief Returns `true` if the YAML spec defines a root `header:` key.
+            ///
+            /// The root key declares a fixed-size network header in front of
+            /// the ISO-8583 message body (e.g. a proprietary frame header):
+            ///
+            ///     header: 93    # 93-byte header before the message body
+            ///
+            /// Note: `hasHeader()` reports whether the *key* is defined.
+            /// The parser itself treats a header size of `0` identically to
+            /// "no header" (no header bytes are read/written on the wire),
+            /// so code gating on actual wire behavior should check
+            /// `headerSize() > 0`.
+            bool hasHeader() const noexcept { return headerSize_.has_value(); }
+
+            /// @brief Size of the network header in bytes.
+            ///
+            /// Value of the root YAML `header:` key.
+            /// @return `0` if the key is not defined.
+            std::size_t headerSize() const noexcept { return headerSize_.value_or(0); }
+
             /// @brief Returns field info for a DE key, or `nullopt` if not defined.
             /// @param key DE number to look up.
             std::optional<SpecFieldInfo> field(TNG_KEY_TYPE key) const;
@@ -161,11 +186,15 @@ namespace TNG_NAMESPACE {
             const std::vector<SpecFieldInfo>& fields() const noexcept { return fields_; }
 
             /// @brief Internal constructor – use @ref SpecDecoder::loadBothFromYaml.
+            /// @param headerSize Value of the root YAML `header:` key; `nullopt`
+            ///        if the key is absent (→ `hasHeader()` is false).
             ISOSpec(std::string name, std::string encoding,
-                std::vector<SpecFieldInfo> fields)
+                std::vector<SpecFieldInfo> fields,
+                std::optional<std::size_t> headerSize = std::nullopt)
                 : name_(std::move(name))
                 , encoding_(std::move(encoding))
                 , fields_(std::move(fields))
+                , headerSize_(std::move(headerSize))
             {
             }
 
@@ -173,6 +202,9 @@ namespace TNG_NAMESPACE {
             std::string              name_;
             std::string              encoding_;
             std::vector<SpecFieldInfo> fields_;
+            // nullopt = YAML-Root-Key "header" fehlt; ansonsten deren Wert
+            // (können auch 0 sein – hasHeader() meldet dann trotzdem true).
+            std::optional<std::size_t> headerSize_;
         };
 
         // ── SpecDecoder ───────────────────────────────────────────────────────
@@ -185,6 +217,8 @@ namespace TNG_NAMESPACE {
         ///
         ///     spec:     "My Spec Name"
         ///     encoding: ebcdic        # ascii | bcd | ebcdic | binary
+        ///     header:   93            # optional: N-Byte-Netzwerk-Header vor dem Nachrichtenkörper
+        ///     strict:   true          # optional: strikte Dekodierung (Default true)
         ///
         /// @par Field definition:
         ///

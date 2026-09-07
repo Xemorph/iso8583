@@ -8,6 +8,7 @@
 #include <iso8583/ISOMessage.hh>
 // [tng/internal]
 #include "_tlv.hh"
+#include "_parser.hh"
 // [stdc++]
 #include <filesystem>
 #include <fstream>
@@ -1390,4 +1391,72 @@ fields:
 
 TEST_CASE("SpecDecoder - invalidateCache() for a non-cached path is a no-op", "[spec][cache]") {
     CHECK_NOTHROW(spec::SpecDecoder::invalidateCache("/pfad/der/nie/gecacht/wurde.yml"));
+}
+
+// =============================================================================
+// Root-Key "header": ISOSpec-Introspektion (hasHeader()/headerSize())
+// =============================================================================
+
+TEST_CASE("ISOSpec - hasHeader/headerSize reflect the root 'header:' key", "[spec]") {
+    // Mit Root-Key header: (93-Byte-Netzwerk-Header vor dem Nachrichtenkörper)
+    {
+        const TempYaml yaml(R"(
+spec: "With Header"
+encoding: ascii
+header: 93
+
+fields:
+  "000":
+    format: numeric
+    length: 4
+  "001":
+    format: bitmap
+    length: 8
+  "002":
+    format: llchar
+    length: 19
+)");
+        auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+        REQUIRE(parser != nullptr);
+        REQUIRE(spec != nullptr);
+        CHECK(spec->hasHeader());
+        CHECK(spec->headerSize() == 93);
+
+        // Konsistenz: der geladene Parser hält dieselbe Größe (Wire-Verhalten)
+        auto* base = static_cast<ISOBaseParser*>(parser.get());
+        CHECK(base->headerLength() == spec->headerSize());
+    }
+
+    // Ohne Root-Key header: (MINIMAL_SPEC deklariert keinen Header)
+    {
+        const TempYaml yaml(MINIMAL_SPEC);
+        auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+        REQUIRE(parser != nullptr);
+        REQUIRE(spec != nullptr);
+        CHECK_FALSE(spec->hasHeader());
+        CHECK(spec->headerSize() == 0);
+    }
+
+    // Definiert, aber Null: der Key ist vorhanden -> hasHeader() ist true
+    // (wörtliche Key-Präsenz-Semantik); headerSize() liefert 0, und der
+    // Parser behandelt 0 wie "kein Header" (keine Wire-Bytes).
+    {
+        const TempYaml yaml(R"(
+spec: "Zero Header"
+encoding: ascii
+header: 0
+
+fields:
+  "000":
+    format: numeric
+    length: 4
+  "001":
+    format: bitmap
+    length: 8
+)");
+        auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+        REQUIRE(spec != nullptr);
+        CHECK(spec->hasHeader());
+        CHECK(spec->headerSize() == 0);
+    }
 }

@@ -21,6 +21,32 @@ fields:
     length: 19
 ```
 
+## Root-Keys
+
+Keys auf der Top-Level-Ebene der Spec (neben `definitions:` und `fields:`):
+
+| Key | Typ | Default | Wirkung |
+|---|---|---|---|
+| `spec` | String | `<unnamed>` | Menschenlesbarer Spec-Name (Introspektion: `ISOSpec::name()`) |
+| `encoding` | String | `""` | Globales Encoding: `ascii` \| `bcd` \| `ebcdic` \| `binary`; kann pro Feld überschrieben werden |
+| `strict` | Bool | `true` | Strikte Dekodierung: Bytes außerhalb der Encoding-Whitelist (z. B. EBCDIC-Steuer-/Binär-Bytes) werden mit positioniertem Fehler abgelehnt; `false` = Legacy-Mapping (`.`-bzw. `?`-Füllzeichen) |
+| `header` | Integer | – (Key fehlt) | Fester Netzwerk-Header von N Bytes **vor** dem ISO-8583-Nachrichtenbody auf der Wire (z. B. proprietärer Frame-Header). Key fehlt → kein Header. Introspektion: `ISOSpec::hasHeader()` (Key definiert?) und `ISOSpec::headerSize()` (Byte-Anzahl, 0 wenn Key fehlt). Hinweis: Der Parser behandelt die Größe `0` wie "kein Header" (keine Wire-Bytes). |
+
+Beispiel:
+
+```yaml
+spec: "Worldline"
+encoding: ebcdic
+strict: true
+header: 93        # 93-Byte-Netzwerk-Header vor dem Nachrichtenbody
+
+fields:
+  "000":
+    type: scalar
+    format: numeric
+    length: 4
+```
+
 ## Definitionen und Wiederverwendung
 
 ```yaml
