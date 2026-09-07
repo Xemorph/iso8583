@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **FAQ-Seite (`docs/faq.md`)**: Neue Doku-Seite für typische
+  Fehlerszenarien und deren Triage. Erster Eintrag:
+  `std::system_error: Resource deadlock would occur` nach `unparse()`
+  (Windows/MSVC) — Mechanismus (MSVC-STL wirft genau diese Meldung bei
+  Re-Sperr einer **nicht-rekursiven** Sperre durch den haltenden Thread;
+  `call_once`/`once_flag` ausgeschlossen, auf Linux/GCC stillsteht das
+  Muster statt zu werfen), Audit-Ergebnis (alle libiso8583-Sperren auf dem
+  Decode-Pfad sind rekursiv oder RAII-gescoped — die Meldung kann nicht aus
+  der Bibliothek stammen), typische Host-Code-Verursacher (gelockte/
+  verschachtelte `std::mutex`, re-entrante Logger-Callbacks, `join()` auf
+  sich selbst) und Differenzialtests.
+
 ### Fixed
 
 - **Windows-CI: Sandbox/Sidecar-Fehlpositiv "außerhalb der erlaubten Wurzel"**

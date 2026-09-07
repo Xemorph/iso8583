@@ -40,3 +40,4 @@ Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
    :caption: Projekt
 
    changelog
+   faq
