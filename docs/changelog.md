@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-### Fixed
-
 - **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**
   (Folgefehler von `e07dbe4`, das nur `ci.yml` anfasste): `-DISO8583_ENABLE_ICONV=ON`
   (in 0.4.0 entfernte CMake-Option, wurde still ignoriert) und das apt-Paket
