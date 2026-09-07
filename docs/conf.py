@@ -14,7 +14,7 @@ from pathlib import Path
 # ── Projektinformationen ──────────────────────────────────────────────────────
 project   = "libiso8583"
 author    = "iso8583-Kontributoren"
-release   = "0.2.0"
+release   = "0.4.0"
 copyright = f"2024, {author}"
 
 # ── Erweiterungen ─────────────────────────────────────────────────────────────

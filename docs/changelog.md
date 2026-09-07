@@ -9,6 +9,9 @@
   (in 0.4.0 entfernte CMake-Option, wurde still ignoriert) und das apt-Paket
   `libiconv-hook-dev` (Iconv-Linkage ist aus dem Build entfernt) sind aus dem
   Fuzz-Soak-Job entfernt.
+- **Docs: `docs/conf.py`-Release-String** von `0.2.0` auf `0.4.0`
+  aktualisiert (seit dem 0.3.0-Release veraltet; fließt in die
+  Sphinx-Footer-/Metadaten der gebauten Doku-Seiten ein).
 
 ## 0.4.0
 
