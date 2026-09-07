@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**
+  (Folgefehler von `e07dbe4`, das nur `ci.yml` anfasste): `-DISO8583_ENABLE_ICONV=ON`
+  (in 0.4.0 entfernte CMake-Option, wurde still ignoriert) und das apt-Paket
+  `libiconv-hook-dev` (Iconv-Linkage ist aus dem Build entfernt) sind aus dem
+  Fuzz-Soak-Job entfernt.
+
 ## 0.4.0
 
 > 0.4.0 entfernt den seit 0.3.0 deprivierten libiconv-Fallback

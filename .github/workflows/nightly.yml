@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y clang ninja-build libiconv-hook-dev
+          sudo apt-get install -y clang ninja-build
           clang --version
 
       - uses: lukka/get-cmake@latest
@@ -64,7 +64,6 @@ jobs:
           -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
           -DISO8583_BUILD_SHARED=ON
-          -DISO8583_ENABLE_ICONV=ON
           -DISO8583_BUILD_TESTS=OFF
           -DISO8583_BUILD_FUZZERS=ON
           -DISO8583_INSTALL=OFF
