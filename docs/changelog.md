@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.4.0
+
+> 0.4.0 entfernt den seit 0.3.0 deprivierten libiconv-Fallback
+> (`ISO8583_ENABLE_ICONV`, `src/_iconv_wrapper.{cc,hh}`) — der EBCDIC-Codec
+> ist voll tabellenbasiert (ICU-78.3-Orakel-Pin) und der Baum enthält keine
+> `thread_local`-Deskriptoren mehr. Die Public API ist ansonsten additiv:
+> `ISOSpec` erhält `hasHeader()`/`headerSize()` (Introspektion des
+> YAML-Root-Keys `header:`; bestehende 3-Arg-Konstruktion bleibt
+> source-kompatibel, Shared-Library-Konsumenten kompilieren neu gegen den
+> Header).
+
 ### Added
 
 - **`ISOSpec`-Introspektion für Netzwerk-Header**: `spec->hasHeader()`
