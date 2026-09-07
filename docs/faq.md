@@ -53,9 +53,8 @@ die Meldung kommt also nie aus `call_once`/`once_flag`.
   auf dem `unparse()`-Pfad: Seit 0.3.0 ist die EBCDIC-Konvertierung reine
   Tabellen-Lookups (`e2a_n` aus `kEbcdicToAscii`/`kAsciiToEbcdic`,
   ICU-78.3-gepinnt, s. [`internals/encoding.md`](internals/encoding.md)) —
-  kein iconv, kein ICU zur Laufzeit. Die einzigen `thread_local`-Descriptoren
-  des Baums (iconv, `src/_codec.cc`) liegen im deprecated Fallback, das der
-  Codec-Pfad nie aufruft (Removal in 0.4).
+  kein iconv, kein ICU zur Laufzeit. Seit 0.4.0 (Entfernung des iconv-
+  Fallbacks) enthält der Baum gar keine `thread_local`-Deskriptoren mehr.
 - Auch bei 0.2.x (iconv-basierter Codec) würde ein fehlgeschlagene
   `iconv_open`/`EILSEQ` mit einem völlig anderen Fehlertext auftauchen,
   nicht mit dieser.
@@ -94,9 +93,9 @@ Bibliothek. Das Zwei-Nachrichten-Muster ist die klassische Signatur einer
 2. Differenzialtest: Die verdächtige `std::mutex` durch
    `std::recursive_mutex` ersetzen — verschwindet der Fehler, ist das die
    Sperre.
-3. Bei 0.2.x-Nutzern: **Upgrade auf ≥ 0.3.0** (converter-freie,
-   tabellengetriebene EBCDIC-Konvertierung) und unabhängig davon
-   `ISO8583_ENABLE_ICONV=OFF` setzen.
+3. Bei Nutzern ≤ 0.3.x: **Upgrade auf ≥ 0.4.0** — der iconv-Fallback
+   (`ISO8583_ENABLE_ICONV`, `thread_local`-Deskriptoren) ist vollständig
+   entfernt, die EBCDIC-Konvertierung läuft rein tabellenbasiert.
 
 **Prävention im eigenen Host-Code:** Logger-Callbacks und alle
 Handler-Pfade, die unter Bibliotheks-Aufrufen laufen, dürfen nur

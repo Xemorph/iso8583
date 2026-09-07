@@ -5,8 +5,7 @@
 // Deckt die Umstellung von toEbcdic()/fromEbcdic() (entfernte, unbedingt von
 // iconv abhängige Wrapper) auf codec::to<Encoder::EBCDIC>()/
 // codec::as<std::string, Encoder::EBCDIC>() ab - dieselben Funktionen, die
-// der Rest der Bibliothek für EBCDIC-Felder verwendet und die ENABLE_ICONV
-// bereits korrekt respektieren.
+// der Rest der Bibliothek für EBCDIC-Felder verwendet.
 
 #include <catch2/catch_test_macros.hpp>
 

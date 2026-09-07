@@ -24,6 +24,25 @@
   verschachtelte `std::mutex`, re-entrante Logger-Callbacks, `join()` auf
   sich selbst) und Differenzialtests.
 
+### Removed
+
+- **iconv-Fallback & `ISO8583_ENABLE_ICONV`** (geplanter Removal aus 0.3.0):
+  Der deprivierte libiconv-Fallback für EBCDIC ist vollständig entfernt —
+  CMake-Option, `src/_iconv_wrapper.{cc,hh}`, die `ENABLE_ICONV`-
+  Compile-Definition, die `Iconv::Iconv`-Linkage, `libiconv` in
+  `vcpkg.json`/`vcpkg-port/vcpkg.json`, die Preset-Einträge, die
+  CI-Flags (inkl. `libiconv-hook-dev` auf Linux) und die beiden
+  deprivierten Exporte `codec::ebcdic_to_ascii_cached()`/
+  `codec::ascii_to_ebcdic_cached()` (public header). Der EBCDIC-Codec ist
+  voll tabellenbasiert (ICU-78.3-Orakel-Pin, s. 0.3.0) und hat den Fallback
+  auf dem Runtime-Pfad nie mehr genutzt; der Baum enthält jetzt keine
+  `thread_local`-Deskriptoren mehr. **Breaking (Build):**
+  `-DISO8583_ENABLE_ICONV=…` wird nicht mehr erkannt (CMake ignoriert
+  unbekannte Optionen still); auf Nicht-Linux-Plattformen entfällt die
+  libiconv-Abhängigkeit. Für Code, der nur die Public API der 0.3.x nutzt,
+  gibt es keine ABI-Veränderung (außer den zwei deprivierten Fallback-
+  Symbolen, die kein Codec-Pfad je aufrief).
+
 ### Fixed
 
 - **Windows-CI: Sandbox/Sidecar-Fehlpositiv "außerhalb der erlaubten Wurzel"**

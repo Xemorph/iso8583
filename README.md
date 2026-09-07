@@ -33,8 +33,7 @@ einem anderen Kontext einsetzt.**
   `vcpkg.json` automatisch aufgelöst)
 
 Abhängigkeiten (alle über vcpkg): `nlohmann-json`, `fmt`, `ryml` (rapidyaml,
-≥ 0.15.2), `robin-map`, optional `libiconv` (EBCDIC-Konvertierung unter
-Nicht-Linux-Plattformen), `catch2` (nur für Tests).
+≥ 0.15.2), `robin-map`, `catch2` (nur für Tests).
 
 ## Sicherheit (0.3.0)
 
@@ -50,8 +49,8 @@ härter gemacht. Kernaussagen:
   **tabellen-getrieben** (IBM-1047) und gegen ein exakt gepinntes
   **ICU-78.3**-Orakel verifiziert — gleiche Bytes + gleiche Spec liefern auf
   allen Toolchains/Plattformen das gleiche Ergebnis (keine Abhängigkeit von
-  libiconv-Debug-/Release-Divergenzen). `libiconv`/`ISO8583_ENABLE_ICONV`
-  ist deprigiert (Removal 0.4).
+  libiconv-Debug-/Release-Divergenzen). Der historische libiconv-Fallback
+  (`ISO8583_ENABLE_ICONV`) wurde in 0.4.0 entfernt.
 - **Spec-Sandbox (Default):** `!include_files`-Einträge, die außerhalb des
   Spec-Verzeichnisses (oder expliziter `SpecLoadOptions::roots`) landen —
   `../`-Traversals, absolute/UNC-Pfade, Symlink-Escapes — werden
@@ -85,7 +84,6 @@ Wichtige CMake-Optionen (siehe `CMakeLists.txt`):
 | Option | Standard | Bedeutung |
 |---|---|---|
 | `ISO8583_BUILD_SHARED` | `ON` | Shared Library (`.so`/`.dll`) statt statisch bauen |
-| `ISO8583_ENABLE_ICONV` | `ON` | `libiconv` für EBCDIC-Konvertierung nutzen |
 | `ISO8583_BUILD_TESTS`  | `OFF` | Unit-Tests bauen (benötigt Catch2) |
 | `ISO8583_BERTLV`       | `OFF` | DE-Schlüsseltyp auf `int32_t` erweitern (volle BER-TLV/EMV-Tag-Unterstützung, z.B. 2-Byte-Tags wie `9F26`) |
 | `ISO8583_INSTALL`      | `ON` | Install-Targets erzeugen |

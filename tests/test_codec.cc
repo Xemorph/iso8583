@@ -126,9 +126,9 @@ TEST_CASE("as<string, EBCDIC> - with offset", "[encoder][ebcdic]") {
 TEST_CASE("EBCDIC - special characters '!' and '|' follow IBM-1047, not CP500", "[encoder][ebcdic]") {
     // Regressionstest für die Umstellung der Fallback-Tabelle
     // (kEbcdicToAscii in include/iso8583/_codec.hh) von CP500 auf IBM-1047 -
-    // dieselbe Codepage, die der iconv-Pfad in dieser Datei bereits nutzt
-    // (enc.open("IBM-1047", ...)). Beide Pfade (mit UND ohne ENABLE_ICONV)
-    // müssen für dieselben Bytes dasselbe Ergebnis liefern.
+    // dieselbe Codepage, die der (in 0.4.0 entfernte) iconv-Pfad historisch
+    // genutzt hat. Die Tabelle ist gegen das ICU-78.3-Orakel gepinnt und
+    // muss für dieselben Bytes dasselbe Ergebnis liefern.
     //
     // '!' liegt bei IBM-1047 auf Byte 0x5A (bei CP500 auf 0x4F).
     // '|' liegt bei IBM-1047 auf Byte 0x4F (bei CP500 auf 0xBB).

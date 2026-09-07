@@ -112,7 +112,7 @@ degradieren strict-Specs stillschweigend auf das Legacy-Verhalten.
 - **Header-**Unpacking (`WLP_FOHeader`/`BASE1Header`) bleibt
   bewusst non-strict: Header-Klassen tragen keinen Strict-Zustand
   und konvertieren mit `rejectInvalid=false`.
-- `ISO8583_ENABLE_ICONV` (und `src/_iconv_wrapper.cc`) ist seit
-  0.3.0 **depräkariert** (Entfernung in 0.4): Die Wrapper-Funktion
-  existiert noch als Übergangs-Fallback, liegt aber nicht mehr auf
-  dem Runtime-Pfad. Configure warnt bei `ON`.
+- Der historische **libiconv-Fallback** (`ISO8583_ENABLE_ICONV`,
+  `src/_iconv_wrapper.cc`) war seit 0.3.0 depriviert (der Codec-Pfad
+  nutzte ihn nie mehr) und wurde in **0.4.0 vollständig entfernt**
+  (Option, Quelldateien, vcpkg-Abhängigkeit, CI-Flags).

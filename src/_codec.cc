@@ -9,140 +9,20 @@
 // Neue Kombinationen: in fmt_types.hh einen neuen Typ anlegen und hier
 // die entsprechenden Instanziierungen ergänzen.
 //
-// [ISO8583] Phase 2: Der EBCDIC-Pfad der Codec-Instanziierungen ist voll
-// tabellenbasiert (kEbcdicToAscii/kAsciiToEbcdic, vom ICU-78.3-Orakel
-// verifiziert – s. tools/generate_ebcdic_tables). Der unten eingeblendete
-// iconv-Block ist NICHT Teil des Codec-Pfads mehr; er hält nur den
-// deprivierten Fallback (ebcdic_to_ascii_cached/ascii_to_ebcdic_cached,
-// ISO8583_ENABLE_ICONV, Entfernung in 0.4) für Integratoren am Leben.
+// Der EBCDIC-Pfad der Codec-Instanziierungen ist voll tabellenbasiert
+// (kEbcdicToAscii/kAsciiToEbcdic, vom ICU-78.3-Orakel verifiziert –
+// s. tools/generate_ebcdic_tables). Der historische libiconv-Fallback
+// (ebcdic_to_ascii_cached/ascii_to_ebcdic_cached, ISO8583_ENABLE_ICONV)
+// wurde in 0.4.0 entfernt.
 
 // _codec_impl.hh einbinden BEVOR die expliziten Instanziierungen,
 // damit die Definitionen sichtbar sind.
 #define CODEC_IMPL_SOURCE
 #include <iso8583/_codec.hh>
-#include "_logger.hh"   // TNG_LOG_ERROR für Konvertierungsfehler
-#if ENABLE_ICONV
-// [ISO8583] Phase 2: nur für den deprivierten iconv-Fallback unten (nicht
-// mehr Teil des Codec-Pfads; Entfernung in 0.4).
-#include "_iconv_wrapper.hh"
-#endif
 #include <sstream>
 #include <stdexcept>
 
 namespace TNG_NAMESPACE::codec {
-
-#if ENABLE_ICONV
-    namespace detail {
-
-        // [ISO8583] DEPRECATED seit 0.3.0 (Entfernung in 0.4): Dieser Block
-        // wird vom Codec (as</to> EBCDIC-Zweige) NICHT mehr verwendet – der
-        // EBCDIC-Pfad ist voll tabellenbasiert. Die Funktionen sind nur noch
-        // für Integratoren da, die bewusst iconv nutzen wollen.
-
-        // Ein iconv_t-Deskriptor pro Thread und Richtung wird einmalig geöffnet
-        // und über alle nachfolgenden Aufrufe hinweg wiederverwendet, statt bei
-        // JEDEM einzelnen EBCDIC-Feld iconv_open()/iconv_close() neu aufzurufen.
-        // Micro-Benchmark (100.000 Konvertierungen, glibc, x86_64):
-        //   iconv_open()+convert()+iconv_close() pro Aufruf:  ~0.44 us/Aufruf
-        //   wiederverwendeter Deskriptor + reset() davor:      ~0.08 us/Aufruf
-        // -> Faktor ~5x, da iconv_open() ein Gconv-Modul-Lookup durchführt statt
-        // nur einen billigen Zähler zu inkrementieren. reset() vor jeder
-        // Konvertierung ist dagegen kein Syscall (nur iconv() mit Null-Puffern)
-        // und schützt vorsorglich vor Shift-State-Resten - für EBCDIC
-        // (zustandslos) zwar nicht nötig, aber robuster, falls die Zielcodepage
-        // jemals gegen eine zustandsbehaftete getauscht wird.
-
-        // Kompakte Hex-Darstellung der Eingabe für Fehlermeldungen (Bytes
-        // durch Leerzeichen getrennt, kein nachstehendes Leerzeichen).
-        static std::string hexdump(const std::string& s, std::size_t max_bytes = 64) {
-            static const char* digits = "0123456789abcdef";
-            std::string out;
-            out.reserve(std::min(s.size(), max_bytes) * 3 + 4);
-            for (std::size_t i = 0; i < s.size() && i < max_bytes; ++i) {
-                if (!out.empty()) out.push_back(' ');
-                const unsigned char c = static_cast<unsigned char>(s[i]);
-                out.push_back(digits[c >> 4]);
-                out.push_back(digits[c & 0xF]);
-            }
-            if (s.size() > max_bytes) out += " ...";
-            return out;
-        }
-
-        // [ISO8583] 3.4 (PCI-Logging-Hygiene): statt des kompletten Feld-Werts
-        // (bis 64 Bytes — bei EBCDIC-PAN-Feldern ein Klartext-PAN-Echo) nur
-        // ein 12-Byte-Fenster um die fehlerhafte Position — identische
-        // Informationsmenge wie der Default-Pfad (Tabellen-Codec).
-        static std::string hexdump_window(const std::string& s, std::size_t pos) {
-            if (s.empty()) return "<leer>";
-            const std::size_t begin = (pos > 4) ? (pos - 4) : 0;
-            const std::size_t end = std::min(s.size(), begin + 12);
-            std::string out;
-            for (std::size_t i = begin; i < end; ++i) {
-                if (!out.empty()) out.push_back(' ');
-                const unsigned char c = static_cast<unsigned char>(s[i]);
-                static const char* digits = "0123456789abcdef";
-                out.push_back(digits[c >> 4]);
-                out.push_back(digits[c & 0xF]);
-            }
-            if (end < s.size()) out += " ...";
-            return out;
-        }
-
-        // Wandelt einen Fehler der System-iconv in die Exceptions-Konvention der
-        // Bibliothek um: sauberes, kontextreiches std::runtime_error statt eines
-        // nackten std::system_error (dessen what() unter MSVC bei POSIX-Werten
-        // wie EILSEQ nur "unknown error" lautet).
-        static void throw_conversion_error(
-            const char* direction, const std::string& input,
-            std::string::size_type pos, const std::exception& e) {
-            const auto* se = dynamic_cast<const std::system_error*>(&e);
-            const int err = se ? static_cast<int>(se->code().value()) : -1;
-            TNG_LOG_ERROR("[codec] {}-Konvertierung fehlgeschlagen (errno={}, EILSEQ={}): Eingabe ({} B), Fenster um Position {}: {}",
-                direction, err, (err == 42 || err == 133) ? 1 : 0,
-                input.size(), pos, hexdump_window(input, pos));
-            std::string what = std::string(direction) + "-Konvertierung fehlgeschlagen: ";
-            if (pos < input.size())
-                what += "Byte 0x" + hexdump(std::string(1, input[pos])) +
-                        " an Position " + std::to_string(pos) + " ist nicht konvertierbar";
-            else
-                what += "Eingabe ist nicht konvertierbar";
-            what += " (errno=" + std::to_string(err) +
-                    (err == 42 || err == 133 ? "/EILSEQ" : "") + "). ";
-            what += (std::string(direction) == "EBCDIC->ASCII")
-                    ? "Das Feld enthaelt vermutlich binäre Daten statt gueltiger EBCDIC-Zeichen. "
-                    : "Der Wert enthaelt vermutlich Zeichen, die in IBM-1047 nicht darstellbar sind. ";
-            what += "Eingabe (" + std::to_string(input.size()) + " B), Fenster um die fehlerhafte Position: " + hexdump_window(input, pos);
-            throw std::runtime_error(std::move(what));
-        }
-
-        std::string ebcdic_to_ascii_cached(const std::string& data) {
-            std::string out;
-            std::string::size_type pinpos = 0;
-            try {
-                thread_local iconv_wrapper::iconv enc("IBM-1047", "");
-                enc.reset();
-                enc.convert(data, &pinpos, &out);
-                return out;
-            } catch (const std::exception& e) {
-                throw_conversion_error("EBCDIC->ASCII", data, pinpos, e);
-            }
-        }
-
-        std::string ascii_to_ebcdic_cached(const std::string& data) {
-            std::string out;
-            std::string::size_type pinpos = 0;
-            try {
-                thread_local iconv_wrapper::iconv enc("", "IBM-1047");
-                enc.reset();
-                enc.convert(data, &pinpos, &out);
-                return out;
-            } catch (const std::exception& e) {
-                throw_conversion_error("ASCII->EBCDIC", data, pinpos, e);
-            }
-        }
-
-    } // namespace detail
-#endif
 
 // -----------------------------------------------------------------------------
 // parsed_length

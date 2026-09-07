@@ -537,9 +537,8 @@ gleiche Bytes + gleiche Spec liefern auf allen Toolchains/Plattformen das
 gleiche Ergebnis. Der **Strict-Whitelist** ist bewusst *stärker* als ICU
 (ICU 78.3 konvertiert alle 256 Bytes; Strict akzeptiert nur die 85
 IBM-1047-Druck-/Ziffern-Bytes E2A bzw. 84 mappablen ASCII-Zeichen A2E).
-`libiconv`/`ISO8583_ENABLE_ICONV` sind **deprigiert** (Removal 0.4) und
-dienen nur noch als Übergangs-Fallback — der Standard-EBCDIC-Pfad nutzt sie
-nicht.
+Der historische libiconv-Fallback (`ISO8583_ENABLE_ICONV`) wurde in
+0.4.0 entfernt — es gibt keinen Converter mehr außer den Tabellen.
 
 ---
 

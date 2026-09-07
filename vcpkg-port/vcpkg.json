@@ -12,10 +12,6 @@
       "name": "ryml",
       "version>=": "0.15.2"
     },
-    "robin-map",
-    {
-      "name": "libiconv",
-      "platform": "!linux"
-    }
+    "robin-map"
   ]
 }

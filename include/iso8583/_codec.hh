@@ -288,18 +288,6 @@ namespace TNG_NAMESPACE::codec {
             }
         }
 
-#if ENABLE_ICONV
-        // [ISO8583] DEPRECATED seit 0.3.0 (Entfernung in 0.4): Seit Phase 2
-        // ist der EBCDIC-Codec voll tabellenbasiert und ruft diese Funktionen
-        // NICHT mehr auf. Sie bleiben nur als Fallback für Integratoren
-        // verfügbar, die bewusst eine iconv-basierte Konvertierung nutzen
-        // wollen (ISO8583_ENABLE_ICONV=ON). Implementierung in _codec.cc.
-        /// \deprecated seit 0.3.0 – EBCDIC-Pfad ist tabellenbasiert (Phase 2).
-        TNG_EXPORT std::string ebcdic_to_ascii_cached(const std::string& data);
-        /// \deprecated seit 0.3.0 – EBCDIC-Pfad ist tabellenbasiert (Phase 2).
-        TNG_EXPORT std::string ascii_to_ebcdic_cached(const std::string& data);
-#endif
-
     }
 
 }

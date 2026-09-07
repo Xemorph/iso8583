@@ -651,7 +651,7 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::parse(::TNG_NAMESPACE::ISOCompon
         return p_->parse(c);
     } catch (const std::exception& e) {
         // Letztes Netz (Encode-Richtung): nicht bereits positionierte Fehler
-        // (z.B. EILSEQ aus iconv) sauber und kontextreich neu werfen.
+        // (z.B. EILSEQ-artige Codec-Fehler) sauber und kontextreich neu werfen.
         if (std::string(e.what()).rfind("[ISO8583]", 0) == 0)
             throw;
         throw std::runtime_error(std::string("[ISO8583] ISOMessage::parse: ") + e.what());

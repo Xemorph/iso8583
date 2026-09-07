@@ -18,7 +18,6 @@ project(libiso8583
 # Standard-Optionen
 # -----------------------------------------------------------------------------
 option(ISO8583_BUILD_SHARED   "Shared Library (.dll/.so) bauen"          ON)
-option(ISO8583_ENABLE_ICONV   "[DEPRECATED seit 0.3.0, removal 0.4] libiconv-Fallback für EBCDIC halten (Codec ist voll tabellenbasiert)" ON)
 option(ISO8583_INSTALL        "Install-Targets erzeugen"                  ON)
 option(ISO8583_BUILD_TESTS    "Unit-Tests bauen (benötigt Catch2)"        OFF)
 option(ISO8583_BUILD_EXAMPLES "Beispielprojekte bauen (tcp_gateway)"      OFF)
@@ -61,18 +60,9 @@ find_package(fmt            CONFIG REQUIRED)
 find_package(ryml           CONFIG REQUIRED)
 find_package(tsl-robin-map  CONFIG REQUIRED)
 
-if(ISO8583_ENABLE_ICONV)
-    find_package(Iconv REQUIRED)
-    # [ISO8583] Phase 2 (0.3.0): Der EBCDIC-Codec ist voll tabellenbasiert
-    # (ICU-78.3-Orakel-Pin, s. tools/generate_ebcdic_tables) und nutzt
-    # libiconv nicht mehr. Die Option hält nur noch den deprivierten
-    # iconv-Fallback (src/_iconv_wrapper.cc) am Leben und wird in 0.4
-    # entfernt.
-    message(WARNING "ISO8583_ENABLE_ICONV ist deprecated (0.3.0) und wird in 0.4 entfernt: "
-            "Der EBCDIC-Codec ist seit Phase 2 voll tabellenbasiert (ICU-78.3-Orakel-Pin, "
-            "s. tools/generate_ebcdic_tables) und nutzt libiconv nicht mehr. "
-            "Setze ISO8583_ENABLE_ICONV=OFF, um die libiconv-Abhängigkeit zu entfernen.")
-endif()
+# Historie: libiconv war optionaler EBCDIC-Fallback (ISO8583_ENABLE_ICONV).
+# Der Codec ist seit 0.3.0 voll tabellenbasiert (ICU-78.3-Orakel-Pin, s.
+# tools/generate_ebcdic_tables); der Fallback wurde in 0.4.0 entfernt.
 
 # -----------------------------------------------------------------------------
 # Quell-Dateien
@@ -91,20 +81,8 @@ set(ISO8583_SOURCES
     src/_utils.cc
 )
 
-# _iconv_wrapper.cc/.hh nutzen <iconv.h> UNBEDINGT (kein #ifdef-Guard darin) -
-# dürfen deshalb nur Teil des Builds sein, wenn ISO8583_ENABLE_ICONV
-# tatsächlich gesetzt ist. Vorher war _iconv_wrapper.cc IMMER Teil von
-# ISO8583_SOURCES, unabhängig von der Option - auf Plattformen ohne in libc
-# eingebautes iconv (anders als bei glibc/Linux) hätte das den Build entweder
-# nicht mehr gelinkt oder eine vom Nutzer bewusst abgeschaltete Abhängigkeit
-# klammheimlich zurückgeholt.
-if(ISO8583_ENABLE_ICONV)
-    list(APPEND ISO8583_SOURCES src/_iconv_wrapper.cc)
-endif()
-
 set(ISO8583_PRIVATE_HEADERS
     src/_date.hh
-    src/_iconv_wrapper.hh
     src/_logger.hh
     src/_padder.hh
     src/_parser.hh          # ISOBaseParser, ISOFieldParser<> – bewusst NICHT öffentlich
@@ -177,7 +155,6 @@ target_compile_definitions(iso8583
     PUBLIC
         $<$<BOOL:${ISO8583_BERTLV}>:ISO8583_BERTLV>
     PRIVATE
-        $<$<BOOL:${ISO8583_ENABLE_ICONV}>:ENABLE_ICONV=1>
         # Windows: beim Bauen der DLL exportieren, beim Nutzen importieren
         $<$<AND:$<BOOL:${ISO8583_BUILD_SHARED}>,$<CXX_COMPILER_ID:MSVC>>:ISO8583_DLL_EXPORTS>
 )
@@ -243,11 +220,10 @@ target_link_libraries(iso8583
     PRIVATE
         fmt::fmt
         ryml::ryml
-        $<$<BOOL:${ISO8583_ENABLE_ICONV}>:Iconv::Iconv>
 )
 
 # -----------------------------------------------------------------------------
-# Diagnose: PRIVATE-Linkage (oben) bestimmt NICHT, ob fmt/iconv als
+# Diagnose: PRIVATE-Linkage (oben) bestimmt NICHT, ob fmt/ryml als
 # separate DLL neben iso8583.dll landen oder statisch mit hineinkompiliert
 # werden - PRIVATE steuert nur, ob Konsumenten von iso8583::iso8583 selbst
 # find_package(fmt) etc. aufrufen müssen. Ob es am Ende eine oder mehrere
@@ -268,17 +244,6 @@ foreach(_iso8583_dep fmt::fmt ryml::ryml)
         endif()
     endif()
 endforeach()
-if(ISO8583_ENABLE_ICONV AND TARGET Iconv::Iconv)
-    get_target_property(_iso8583_iconv_loc Iconv::Iconv IMPORTED_LOCATION)
-    if(NOT _iso8583_iconv_loc)
-        get_target_property(_iso8583_iconv_loc Iconv::Iconv IMPORTED_LOCATION_RELEASE)
-    endif()
-    if(_iso8583_iconv_loc MATCHES "\\.dll$" OR _iso8583_iconv_loc MATCHES "\\.so")
-        message(STATUS "Iconv::Iconv: SHARED (${_iso8583_iconv_loc}) -> landet als eigene DLL/SO neben iso8583")
-    elseif(_iso8583_iconv_loc)
-        message(STATUS "Iconv::Iconv: STATIC (${_iso8583_iconv_loc}) -> wird in iso8583.dll mit hineinkompiliert")
-    endif()
-endif()
 
 # Auf POSIX: dl für shared-lib-Laufzeitladung (quill benötigt es manchmal)
 if(UNIX)

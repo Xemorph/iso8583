@@ -10,7 +10,6 @@ vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         -DISO8583_BUILD_SHARED=ON
-        -DISO8583_ENABLE_ICONV=ON
         -DISO8583_INSTALL=ON
 )
 

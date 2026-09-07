@@ -24,7 +24,7 @@ verwandelt — inklusive ASCII- **und** EBCDIC-(IBM-1047)-Pfad.
 
 - CMake ≥ 3.21
 - [vcpkg](https://vcpkg.io) mit gesetzter Umgebungsvariable `VCPKG_ROOT`
-  (die Abhängigkeiten — `nlohmann-json`, `fmt`, `ryml`, `robin-map`, `libiconv` —
+  (die Abhängigkeiten — `nlohmann-json`, `fmt`, `ryml`, `robin-map` —
   werden automatisch im Manifest-Modus über `vcpkg.json` aufgelöst)
 - C++20-Compiler:
   - **Windows:** Visual Studio 2022 oder neuer (MSVC). Am einfachsten von einer
@@ -168,7 +168,6 @@ Zwei Konventionen, die zur Bibliothek passen müssen:
 |---|---|---|
 | `ISO8583_BUILD_EXAMPLES` | `OFF` | `ON` → `examples/tcp_gateway` wird eingebunden |
 | `ISO8583_BUILD_SHARED` | `ON` | Shared-Build: das Beispiel definiert `ISO8583_DLL` (MSVC: dllimport) selbst, und die `iso8583`-Binärdatei wird neben den Gateway kopiert |
-| `ISO8583_ENABLE_ICONV` | `ON` | EBCDIC-Konvertierung der Bibliothek über `libiconv` |
 
 ## Grenzen des Beispiels (bewusst)
 
