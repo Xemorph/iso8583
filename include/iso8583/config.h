@@ -19,7 +19,7 @@
 #define TNG_NAMESPACE iso8583
 
 /// @brief Library version string in `MAJOR.MINOR.PATCH-STAGE` format.
-#define TNG_CORE_VERSION   "0.4.0"
+#define TNG_CORE_VERSION   "0.5.0"
 
 // ── DLL visibility ───────────────────────────────────────────────────────────
 //

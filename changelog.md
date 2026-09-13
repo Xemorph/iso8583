@@ -60,6 +60,14 @@
   `child_as_string` übergab die Byte-Länge an `codec::as<...,BCD>`,
   das Ziffern zählt (2 pro Byte); jetzt `length × 2` (Decode/Encode
   symmetrisch, Roundtrip bytegenau).
+- **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**
+  (Folgefehler von `e07dbe4`, das nur `ci.yml` anfasste):
+  `-DISO8583_ENABLE_ICONV=ON` (in 0.4.0 entfernte CMake-Option, wurde
+  still ignoriert) und das apt-Paket `libiconv-hook-dev` (Iconv-Linkage
+  ist aus dem Build entfernt) sind aus dem Fuzz-Soak-Job entfernt.
+- **Docs: `docs/conf.py`-Release-String** von `0.2.0` auf `0.5.0`
+  aktualisiert (seit dem 0.3.0-Release veraltet; fließt in die
+  Sphinx-Footer-/Metadaten der gebauten Doku-Seiten ein).
 
 ### ABI-Hinweis
 
@@ -107,17 +115,6 @@ Kurze Checkliste für Bibliotheks-Konsumenten (z. B. Tauri-/GUI-Backends):
    `sensitive:` wirkt nur auf dem dump-/Log-Pfad; undeclared Tags bleiben
    dynamisch (`BinaryField`, generische `"SE<n>"`-Beschreibung); `length`
    in `children` ist reine Dokumentation (die Länge liegt im Length-Feld).
-
-## Unreleased
-
-- **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**
-  (Folgefehler von `e07dbe4`, das nur `ci.yml` anfasste): `-DISO8583_ENABLE_ICONV=ON`
-  (in 0.4.0 entfernte CMake-Option, wurde still ignoriert) und das apt-Paket
-  `libiconv-hook-dev` (Iconv-Linkage ist aus dem Build entfernt) sind aus dem
-  Fuzz-Soak-Job entfernt.
-- **Docs: `docs/conf.py`-Release-String** von `0.2.0` auf `0.4.0`
-  aktualisiert (seit dem 0.3.0-Release veraltet; fließt in die
-  Sphinx-Footer-/Metadaten der gebauten Doku-Seiten ein).
 
 ## 0.4.0
 
