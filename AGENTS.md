@@ -54,7 +54,7 @@ vendored inside the tree — see §14.3; their license headers are kept.)
 | `data/iso4217/` | ISO-4217 currency source data (`codes-all.csv`, vendored for reproducible/air-gapped builds — see `data/iso4217/README.md`). |
 | `scripts/generate_currency_table.py` | Regenerates `include/iso8583/detail/_currency_table.hh` from the CSV (run via CMake target `update-currency-table`, which is `EXCLUDE_FROM_ALL` — manual only, commit the result). |
 | `cmake/iso8583Config.cmake.in` | CMake package config template for `find_package(iso8583 CONFIG)`. |
-| `vcpkg-port/` | vcpkg port for downstream consumption (`portfile.cmake`, `vcpkg.json`, `usage`). Portfile fetches tag `v${VERSION}`; its SHA512 is a placeholder `0` until filled after the first release tag is pushed (release step — see §14.2). Repo URL: `Xemorph/iso8583`. |
+| `vcpkg-port/` | vcpkg port for downstream consumption (`portfile.cmake`, `vcpkg.json`, `usage`). Portfile fetches tag `v${VERSION}`; its SHA512 is filled in per release after the tag is pushed (release step 4 — see §14.2). Repo URL: `Xemorph/iso8583`. |
 | `vcpkg/` | **Local, untracked** vcpkg checkout (`.gitignore`) — NOT part of the repository. `vcpkg-configuration.json` (tracked) is `{}` — no custom registries/overrides. Fresh clone: point `VCPKG_ROOT` at any vcpkg checkout; manifest mode resolves `vcpkg.json` automatically. |
 | `tools/generate_ebcdic_tables/` | **Build/CI-only** EBCDIC oracle tool (ICU 78.3): regenerates/verifies the pinned IBM-1047 verdict JSONs that prove the checked-in codec tables (`include/iso8583/_codec.hh`) are deterministic. Built only with `ISO8583_BUILD_CODEC_TOOLS=ON`; ICU is linked to the tool executable, never into the library. See §4 (Determinism & oracle pin). |
 | `.gitattributes` | Forces LF on `tools/generate_ebcdic_tables/pinned/*.json` so the byte-stable oracle pin survives checkouts with `core.autocrlf=true`. |
@@ -74,7 +74,7 @@ every release (procedure: §14.2):
 3. `version` in root `vcpkg.json`
 4. `version` in `vcpkg-port/vcpkg.json`
 
-Currently all four say **0.2.1** (synced). If you ever observe skew, the
+Currently all four say **0.5.0** (synced). If you ever observe skew, the
 release that introduced it missed a spot — fix it, don't normalize to the
 wrong value.
 
@@ -411,6 +411,9 @@ sphinx-build -b html docs docs/_build/html # → docs/_build/html/index.html
 
 ## 10. Recent history (see `changelog.md`)
 
+- **0.5.0** — typed TLV/BER-TLV children (FR-1/FR-2): declared `children` are decoded/encoded per declared `format`/`encoding` via the codec (BREAKING: text children now yield `OpaqueField` instead of `BinaryField`), the `...bertlv` shorthand accepts a `children:` Map (undeclared tags stay dynamic), D5 child whitelist (fail-closed), `SpecFieldInfo::tlv_children` introspection (ABI: layout change), BCD digit-count fix. Consumer migration checklist in the changelog.
+- **0.4.0** — iconv fallback removed (`ISO8583_ENABLE_ICONV` / `_iconv_wrapper`): the EBCDIC codec is fully table-based (no `thread_local` in the tree); `ISOSpec::hasHeader()`/`headerSize()` introspection; FAQ page; `isWithinRoot` Windows alias fix.
+- **0.3.0** — security/robustness release: strict mode (default), EBCDIC tables pinned against the ICU-78.3 oracle, spec include sandbox (`SpecLoadOptions`), thread-safe `ISOMessage` (one message from N threads), PCI masking (`sensitive: true`), `.smap` sidecar contract, `QuillBridge`.
 - **0.2.1** — fix: `!merge` definitions with **sequence** values (used via `!use`) were lost during preprocessing (rapidyaml same-tree `merge_with` clears the source node's val-tag; restored from the still-readable source node before the self-merge). Regression test added.
 - **0.2.0** —
   - C++20 becomes the hard baseline (was C++17).
@@ -505,7 +508,7 @@ Use `[!](BREAKING)` for breaking changes. One commit per logical change.
 1. Bump **all four** version spots: `project(VERSION …)` in `CMakeLists.txt`, `TNG_CORE_VERSION` in `include/iso8583/config.h`, `version` in root `vcpkg.json`, `version` in `vcpkg-port/vcpkg.json`.
 2. Update `changelog.md` **and** its tracked mirror `docs/changelog.md` (both must end up identical).
 3. Push + create tag `vX.Y.Z` (the vcpkg portfile fetches `REF v${VERSION}` from `Xemorph/iso8583`).
-4. **After the tag exists**: compute the tag's SHA512 → fill it into `vcpkg-port/portfile.cmake` (currently placeholder `0` — the port is unusable until this is filled).
+4. **After the tag exists**: compute the tag's SHA512 (GitHub codeload tarball of the tag) → fill it into `vcpkg-port/portfile.cmake` (currently holds the v0.5.0 archive hash; each release replaces it).
 5. Push to `main` → docs auto-publish to GitHub Pages (`docs.yml`).
 6. Release commit: `[~](FIX) Release vX.Y.Z: <summary>`.
 
