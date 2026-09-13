@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.5.0
+
+> 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):
+> Deklarierte TLV-/BERTLV-Kinder werden gemäß ihrer deklarierten
+> `format`/`encoding` **typisiert** dekodiert und kodiert — gewollt
+> **breaking** für Text-Kinder (früher rohes `BinaryField`) — und die
+> `...bertlv`-Kurzform erlaubt erstmals eine optionale `children:`-Map.
+> Das `SpecFieldInfo`-Layout ändert sich (`tlv_children`): Shared-
+> Library-Konsumenten kompilieren neu gegen die geändete Public Header.
+
+### Added
+
+- **FR-1: Typisierte TLV-/BERTLV-Kinder** (gleiche Regeln für beide TLV-
+  Formen): deklarierte `children` mit `format: char`/`numeric`/
+  `nopad_char` dekodieren zu `OpaqueField` via Codec (Encoding
+  `ascii`/`ebcdic`/`bcd`, explizit deklariert oder vererbt — bei
+  `...bertlv`-Kindern muss es explizit gesetzt werden, da dort nichts
+  vererbt wird) und kodieren zurück (Byte-für-Byte-Roundtrip);
+  `format: binary` und undeclared Tags bleiben rohes `BinaryField`
+  (inkl. generischer `"SE<n>"`-Beschreibung). Der Strict-Modus wird an
+  die Kind-Codecs propagiert. `length` bleibt reine Dokumentation (die
+  TLV-Länge liegt im Length-Feld des Frames).
+- **FR-2: `...bertlv`-Kurzform mit `children:`-Map** (Hex-Tag-Keys,
+  z. B. `"9F26": { format: binary, length: 8 }`): bekannte/erwartete
+  EMV-Tags können deklariert und typisiert werden; undeclared Tags
+  werden weiterhin dynamisch dekodiert. `type: nested`, ein eigener
+  `tlv:`-Block und `children` als Sequence bleiben unzulässig — jetzt
+  mit präzisen, separaten Fail-closed-Fehlern statt einer
+  Sammelmeldung.
+- **Kind-Whitelist (D5, Fail-closed beim Laden, positionierte Fehler):**
+  erlaubte Kind-Formate sind `binary`, `char`, `numeric`, `nopad_char`
+  (L-präfixierte Formate, `bitmap`, `remaining`, `nop` sind widersprüchlich
+  und werden verworfen); erlaubte deklarierte Kind-Encodings `ascii`,
+  `ebcdic`, `bcd`, `binary`, Text-Formate nur mit `ascii`/`ebcdic`/`bcd`;
+  Kind-Deklarationen müssen Maps sein; ein Text-Kind, das nach der
+  Encoding-Auflösung (Feld → globale Spec-`encoding`) auf ein
+  unbrauchbares Encoding landet, wird verworfen.
+- **`SpecFieldInfo::tlv_children`** (`std::map<int, SpecFieldInfo>`):
+  deklarierte TLV-/BERTLV-Kinder per `loadBothFromYaml` introspektierbar
+  (beide TLV-Formen; Key = voller Tag-Wert als `int`, damit 2-Byte-EMV-
+  Tags wie `0x9F26` auch in `int16_t`-Builds passen).
+
+### Changed (BREAKING)
+
+- **Text-Kinder von TLV-/BERTLV-Containern** (`char`/`numeric`/
+  `nopad_char`) sind jetzt typisierte `OpaqueField` statt rohem
+  `BinaryField` (Codec-Konvertierung; im Strict-Modus werfen nicht-
+  mappbare Bytes statt `.` zu mappen). Specs, die das alte Verhalten
+  (Rohbytes) brauchen, deklarieren die betroffenen Kinder als
+  `format: binary`.
+- Ungültige BERTLV-Kombinationen (`type: nested` + `...bertlv`, eigener
+  `tlv:`-Block + `...bertlv`, `children` als Sequence + `...bertlv`)
+  erzeugen jetzt jeweils eine eigene, präzise Fehlermeldung.
+
+### Fixed
+
+- **BCD-TLV-Kinder: halbierte Ziffernanzahl beim Decode** —
+  `child_as_string` übergab die Byte-Länge an `codec::as<...,BCD>`,
+  das Ziffern zählt (2 pro Byte); jetzt `length × 2` (Decode/Encode
+  symmetrisch, Roundtrip bytegenau).
+
+### ABI-Hinweis
+
+- `SpecFieldInfo` ist per Wert zurückgegeben und enthält jetzt das neue
+  Mitglied `tlv_children` — das Layout ändert sich; Shared-Library-
+  Konsumenten müssen gegen die neue Bibliothek neu kompiliert werden.
+
 ## Unreleased
 
 - **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**

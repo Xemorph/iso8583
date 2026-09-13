@@ -281,6 +281,12 @@ for (const auto& f : spec->fields())
 | `is_nested` | `bool` | `true` für composite Sub-Nachrichten-DEs |
 | `is_bitmap` | `bool` | `true` für das Bitmap-DE |
 | `children` | `vector<SpecFieldInfo>` | Sub-Felder verschachtelter DEs (leer bei Blättern) |
+| `tlv_children` | `std::map<int, SpecFieldInfo>` | Deklarierte TLV-/BERTLV-Kinder (beide TLV-Formen; leer sonst). Der `int`-Key trägt den vollen Tag-Wert — 2-Byte-EMV-Tags wie `0x9F26` passen damit auch in `int16_t`-Builds; das `key`-Mitglied des Kinds ist der eingrenzende `TNG_KEY_TYPE`-Blick (seit 0.5.0) |
+
+> **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
+> per-Wert zurückgegebenen `SpecFieldInfo` — das Layout ändert sich, und
+> Shared-Library-Consumer müssen gegen die neue Bibliothek neu kompiliert
+> werden.
 
 ### Wann loadFromYaml vs. loadBothFromYaml
 
@@ -386,8 +392,11 @@ fields:
     format: lllbertlv     # LLL-Präfix + BER-TLV-Payload (ISO/IEC 8825-1)
     length: 999
     description: "ICC Data (BER-TLV)"
-    # Kein 'type: nested', 'children' oder 'tlv:'-Block — BER-TLV-Tags sind
-    # dynamisch (keine feste, vorab deklarierte SE-Liste), daher nicht nötig.
+    # Seit 0.5.0 (FR-2): optionale 'children:'-Map (HEX-Tag-Keys) deklariert
+    # bekannte/erwartete Tags mit typisierter Dekodierung (s. u.).
+    # 'type: nested', ein eigener 'tlv:'-Block und 'children' als Sequence
+    # bleiben unzulässig (Fail-closed beim Laden); undeclared Tags werden
+    # weiterhin dynamisch dekodiert.
   "057":                  # BER-TLV mit Tag-Beschreibungen (optional)
     type: nested
     format: lllbinary
@@ -396,19 +405,20 @@ fields:
     tlv:
       ber: true
     children:             # Map = TLV-Modus; Keys sind HEX-Tags (ber: true)
-      "9F26":              # reales EMV-Tag: Application Cryptogram
+      "9F26":              # reales EMV-Tag: Application Cryptogram (binär)
         format: binary
         length: 8
         description: "Application Cryptogram"
-      "5A":                 # reales EMV-Tag: Application PAN
-        format: binary
+      "5A":                 # reales EMV-Tag: Application PAN — seit 0.5.0
+        format: numeric     # typisiert dekodiert (BCD → OpaqueField "4111…")
         length: 10
+        encoding: bcd
         description: "Application PAN"
-    # Momentan wird nur 'description' an das dekodierte Feld übergeben (jedes
-    # SE/Tag wird weiterhin als rohes BinaryField dekodiert — 'format'/'length'
-    # hier sind nur Dokumentation und werden beim Decode noch nicht erzwungen).
-    # Nicht deklarierte Tags fallen automatisch auf eine generische
-    # "SE<n>“-Beschreibung zurück.
+    # Seit 0.5.0: deklarierte Kinder werden typisiert dekodiert/kodiert
+    # (char/numeric/nopad_char → OpaqueField via Codec, binary → BinaryField
+    # mit Rohbytes) — Whitelist und Encoding-Regeln s. u. "TLV-children".
+    # Nicht deklarierte Tags fallen weiterhin automatisch auf eine generische
+    # "SE<n>"-Beschreibung zurück (BinaryField, dynamisch).
   "048":                  # Mastercard-artiges fixes TLV — SE-Keys DEZIMAL
     type: nested
     format: lllchar
@@ -474,28 +484,53 @@ fields:
 - `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
 - `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
-  (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**, darf NICHT mit
-  `type: nested`, `children` oder einem `tlv:`-Block kombiniert werden.
-  Erzeugt zur Laufzeit eine verschachtelte `Message`, deren Kind-Keys die
-  rohen BER-Tag-Werte sind (siehe `BERTLVParser` in `src/_tlv.hh`). Benötigt
-  `ISO8583_BERTLV` (s. o.), wenn ein Tag außerhalb des `int16_t`-Bereichs
-  liegt, z. B. reale 2-Byte-EMV-Tags wie `9F26`.
+  (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**. Seit 0.5.0 (FR-2)
+  darf zusätzlich eine optionale `children:`-**Map** (HEX-Tag-Keys) bekannte/
+  erwartete Tags deklarieren (typisierte Dekodierung, s. u. „TLV-`children`“);
+  undeclared Tags bleiben dynamisch. Weiterhin unzulässig (Fail-closed beim
+  Laden): `type: nested`, ein eigener `tlv:`-Block und `children` als
+  Sequence. Erzeugt zur Laufzeit eine verschachtelte `Message`, deren
+  Kind-Keys die rohen BER-Tag-Werte sind (siehe `BERTLVParser` in
+  `src/_tlv.hh`). Benötigt `ISO8583_BERTLV` (s. o.), wenn ein Tag außerhalb
+  des `int16_t`-Bereichs liegt, z. B. reale 2-Byte-EMV-Tags wie `9F26`.
 
 **TLV-`children`-Key-Notation:** Wenn `type: nested` mit einem expliziten
-`tlv:`-Block und einer `children:`-**Map** (im Gegensatz zur `bertlv`-
-Format-Kurzform oben, die gar keine `children` braucht) kombiniert wird,
-benennt jeder Key eine SE-Nummer oder ein BER-Tag:
+`tlv:`-Block und einer `children:`-**Map** kombiniert wird — oder wenn die
+`bertlv`-Kurzform (seit 0.5.0 erlaubt) eine solche Map trägt — benennt jeder
+Key eine SE-Nummer oder ein BER-Tag:
 - `tlv: {ber: true}` → Keys sind **hexadezimal** (`"9F26"`, `"5A"`, `"1A"`),
   passend zur EMV-Book-3-/ISO-7816-Schreibweise.
 - Fixformat-TLV (Mastercard/Visa, mit `tag_bytes`/`len_bytes`) → Keys sind
   **dezimale** SE-Nummern (`"26"`), unverändert zu früheren Versionen.
 - Ein explizites `"0x"`-Präfix (z. B. `"0x1A"`) erzwingt Hexadezimal,
   unabhängig vom TLV-Modus.
-- Momentan wird nur `description` an das dekodierte Feld übergeben (jedes
-  SE/Tag wird weiterhin als rohes `BinaryField` dekodiert — `format`/`length`
-  in `children` bleiben Dokumentation, noch nicht beim Decode erzwungen).
-  Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
-  generische `"SE<n>"`-Beschreibung zurück.
+- Seit 0.5.0 werden deklarierte Kinder **typisiert** dekodiert und kodiert
+  (gleiche Regeln für `tlv:`-Block und `...bertlv`-Kurzform, D5):
+  - `format: char` / `numeric` / `nopad_char` → `OpaqueField` via Codec
+    (Encoding: `ascii`/`ebcdic`/`bcd` — explizit deklariert ODER vererbt;
+    bei der `...bertlv`-Kurzform muss Text-Kinder das Encoding **explizit**
+    nennen, da dort nichts vererbt wird).
+  - `format: binary` → `BinaryField` mit Rohbytes (Encoding beliebig aus
+    `ascii`/`ebcdic`/`bcd`/`binary` — wird ignoriert).
+  - **Whitelist (Fail-closed beim Laden):** erlaubte Kind-Formate sind
+    `binary`, `char`, `numeric`, `nopad_char` — L-präfixierte Formate
+    (`llchar`, …), `bitmap`, `remaining` und `nop` sind widersprüchlich
+    (die TLV-Länge liegt im Length-Feld) und werden verworfen. Erlaubte
+    deklarierte Kind-Encodings: `ascii`, `ebcdic`, `bcd`, `binary`;
+    Text-Formate nur mit `ascii`/`ebcdic`/`bcd`. Kind-Deklarationen müssen
+    Maps sein.
+  - `length` bleibt reine Dokumentation (die TLV-Länge steht im
+    Length-Feld des Frames).
+  - Strict-Modus wird an die Kind-Codecs propagiert (nicht-mappbare
+    EBCDIC-Bytes → positionierter Fehler; non-strict → Legacy-`.`-Mapping).
+  - Deklarierte Kinder sind per `loadBothFromYaml` über
+    `SpecFieldInfo::tlv_children` (`std::map<int, SpecFieldInfo>`; `int`-Key
+    trägt den vollen Tag-Wert, damit 2-Byte-EMV-Tags wie `0x9F26` auch in
+    `int16_t`-Builds passen) introspektierbar.
+- Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
+  generische `"SE<n>"`-Beschreibung zurück (Rohbytes, `BinaryField`) —
+  unabhängig davon, ob das Containerfeld ein `tlv:`-Block oder die
+  `...bertlv`-Kurzform ist.
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
 

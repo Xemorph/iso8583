@@ -284,7 +284,7 @@ fields:
   "003": { type: scalar, format: numeric, length: 6, encoding: bcd }  # per-field override
   "052": { type: scalar, format: binary, length: 8, sensitive: true }  # PCI: value → "***" in dumps/logs
   "055": { !merge [ !template LLL(BINARY, 255), description: "ICC Data" ] }
-  "056": { format: lllbertlv, length: 999 }             # BER-TLV container, scalar only (ISO/IEC 8825-1, EMV Book 3 Annex B)
+  "056": { format: lllbertlv, length: 999 }             # BER-TLV container, scalar only (ISO/IEC 8825-1, EMV Book 3 Annex B); since 0.5.0 an optional children: map (hex tags) may declare typed children
   "057":                                                  # TLV with declared tags
     type: nested
     format: lllbinary
@@ -311,13 +311,13 @@ fields:
 
 Directives: `!include_files [a.yml, b.yml]` (root level, **must be followed by `---`**), `!use <name>`, `!template P(F, N)` (e.g. `LL(CHAR, 19)`), `!merge [...]`, `!include` (deprecated alias of `!use`, emits a warning).
 
-Formats: `numeric`, `char`, `binary`, `bitmap`, `nop`, `remaining`, plus L-prefix variants (`llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`, …) and `bertlv` (optionally `l/ll/lll/llllbertlv`). `bertlv` is **scalar-only** — it must not be combined with `type: nested`, `children`, or a `tlv:` block; at runtime it produces a nested `Message` whose child keys are the raw BER tag values (`BERTLVParser` in `src/_tlv.hh`).
+Formats: `numeric`, `char`, `binary`, `bitmap`, `nop`, `remaining`, plus L-prefix variants (`llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`, …) and `bertlv` (optionally `l/ll/lll/llllbertlv`). `bertlv` is **scalar-only** — since 0.5.0 (FR-2) it may carry an optional `children:` **map** (hex tag keys) declaring known/expected tags for typed decoding; undeclared tags stay dynamic. `type: nested`, a separate `tlv:` block, and `children` as a sequence remain forbidden (fail-closed at load). At runtime it produces a nested `Message` whose child keys are the raw BER tag values (`BERTLVParser` in `src/_tlv.hh`).
 
 TLV `children` key notation:
 - `tlv: {ber: true}` → keys are **hex** (`"9F26"`, `"5A"`), per EMV Book 3 / ISO 7816 convention.
 - fixed-format TLV (`tag_bytes`/`len_bytes`) → keys are **decimal** SE numbers (`"26"`).
 - Explicit `"0x1A"` prefix forces hex regardless of mode.
-- Currently **only `description` is propagated** to decoded fields; every SE/tag is still decoded as a raw `BinaryField` (`format`/`length` in children are documentation only). Undeclared tags fall back to a generic `"SE<n>"` description.
+- Since 0.5.0 declared TLV children are **typed** (both the `tlv:` block and the `...bertlv` shorthand, D5 whitelist, fail-closed at load): `char`/`numeric`/`nopad_char` decode to `OpaqueField` via the codec (encoding `ascii`/`ebcdic`/`bcd`, declared or inherited — for `...bertlv` children the encoding must be declared explicitly, nothing is inherited), `binary` and undeclared tags stay raw `BinaryField`. Allowed child formats: `binary`, `char`, `numeric`, `nopad_char` (L-prefixed formats, `bitmap`, `remaining`, `nop` are rejected — the TLV length lives in the frame's length field). `length` remains documentation-only. Declared children are introspectable via `SpecFieldInfo::tlv_children` (`std::map<int, SpecFieldInfo>`; the `int` key carries the full tag value so 2-byte EMV tags like `0x9F26` also fit `int16_t` builds — note the layout change for shared-library consumers). Undeclared tags fall back to a generic `"SE<n>"` description.
 
 Loader behaviors worth knowing:
 - **Root keys:** besides `spec:`/`encoding:`, the loader reads `strict:` (bool, default `true`) and `header:` (int; N-byte network header in front of the message body, absent/0 = no header). Introspection: `header` via `ISOSpec::hasHeader()`/`ISOSpec::headerSize()`; `strict` via the parser (`ISOParserPtrBase::strict()`, not on `ISOSpec`).

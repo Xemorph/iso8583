@@ -170,10 +170,53 @@ Encoding-Einstellung:
 | Format | Beschreibung |
 |---|---|
 | `tlv` (über `tlv:`-Knoten) | Festes TLV mit `tag_bytes`, `len_bytes`, `tcc` (Mastercard/Visa-SE) |
-| `...bertlv` (z. B. `lllbertlv`) | Dynamischer BER-TLV/EMV-Tags; die Kinderliste entfällt, das Präfix verhält sich wie `...binary` |
+| `...bertlv` (z. B. `lllbertlv`) | Dynamischer BER-TLV/EMV-Tags; das Präfix verhält sich wie `...binary`. Seit 0.5.0 (FR-2) optional mit `children:`-**Map** (HEX-Tag-Keys) für deklarierte/typisierte Kinder; undeclared Tags bleiben dynamisch. Unzulässig bleiben `type: nested`, ein eigener `tlv:`-Block und `children` als Sequence |
 
 Präfix-Zeichen: `L` (max. 9), `LL` (max. 99), `LLL` (max. 999),
 `LLLL` (max. 9999).
+
+#### Typisierte TLV-Kinder (seit 0.5.0)
+
+Deklarierte `children` (sowohl `tlv:`-Block als auch `...bertlv`-Kurzform)
+werden nicht mehr nur als Dokumentation gelesen, sondern **typisiert**
+dekodiert und kodiert:
+
+| Deklaration | Laufzeit-Typ | Encoding |
+|---|---|---|
+| `format: char` / `numeric` / `nopad_char` | `OpaqueField` (String via Codec) | `ascii`, `ebcdic` oder `bcd` — explizit deklariert ODER vererbt (Feld → globale Spec-`encoding`); bei `...bertlv`-Kindern muss das Encoding **explizit** gesetzt werden, weil dort nichts vererbt wird |
+| `format: binary` | `BinaryField` (Rohbytes) | beliebig aus `ascii`/`ebcdic`/`bcd`/`binary` (wird ignoriert) |
+| undeclared Tag | `BinaryField` (Rohbytes) + generische `"SE<n>"`-Beschreibung | — |
+
+Beispiel (BERTLV-Kurzform mit gemischten Kindern):
+
+```yaml
+"055":
+  format: lllbertlv
+  length: 999
+  description: "ICC Data"
+  children:
+    "5A": { format: char,   length: 4, encoding: ascii, description: "Application PAN" }
+    "95": { format: binary, length: 2, description: "PIN Block" }
+# Tag 0x8A (undeclared) wird dynamisch als BinaryField dekodiert ("SE138").
+```
+
+**Whitelist (Fail-closed beim Laden, positionierte Fehlermeldung):**
+- Erlaubte Kind-Formate: `binary`, `char`, `numeric`, `nopad_char`.
+  L-präfixierte Formate (`llchar`, …), `bitmap`, `remaining` und `nop`
+  sind bei TLV-Kindern widersprüchlich (die Länge liegt im Length-Feld
+  des Frames) und werden verworfen.
+- Erlaubte deklarierte Kind-Encodings: `ascii`, `ebcdic`, `bcd`, `binary`;
+  Text-Formate (`char`/`numeric`/`nopad_char`) nur mit `ascii`/`ebcdic`/`bcd`.
+- Kind-Deklarationen müssen Maps sein; ein Text-Kind, das nach der
+  Encoding-Auflösung auf ein unbrauchbares Encoding landet (z. B. globale
+  `encoding: binary`), wird verworfen.
+
+`length` bleibt reine Dokumentation (die TLV-Länge steht im Length-Feld).
+Der Strict-Modus wird an die Kind-Codecs propagiert (nicht-mappbare
+EBCDIC-Bytes → positionierter Fehler; non-strict → Legacy-`.`-Mapping).
+Deklarierte Kinder sind per `loadBothFromYaml` über
+`SpecFieldInfo::tlv_children` introspektierbar (Key = voller Tag-Wert als
+`int`, damit 2-Byte-EMV-Tags wie `0x9F26` auch in `int16_t`-Builds passen).
 
 ## Verschachtelte Felder
 
