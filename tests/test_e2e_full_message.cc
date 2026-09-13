@@ -396,3 +396,96 @@ fields:
     // ── Roundtrip: erneutes Serialisieren muss das Original reproduzieren ────
     CHECK(msg->parse(msg) == raw);
 }
+
+// =============================================================================
+// Szenario 5: BMP 55 - typisierte BERTLV-Kinder (FR-1/FR-2, 0.5.0)
+// =============================================================================
+
+TEST_CASE("E2E - Authorization Request with typed BERTLV children (FR-1/FR-2)", "[e2e][ber][typed]") {
+    // 0.5.0: 'children' als Map bei '...bertlv' (FR-2) mit typisierter
+    // Dekodierung der deklarierten Kinder (FR-1): '5A' als char/ascii ->
+    // OpaqueField, '95' als binary -> BinaryField; undeclared Tag 0x8A bleibt
+    // dynamisch (BinaryField + generische "SE138"-Beschreibung). Tags bewusst
+    // 1-Byte-Tags, damit der Test build-unabhaengig (int16_t/int32_t Keys)
+    // laeuft; reale 2-Byte-EMV-Tags wie 0x9F26 sind in test_tlv_parser.cc
+    // (debug-bertlv-Preset) abgedeckt.
+    E2ETempYaml yaml(R"(
+spec: "E2E typisierte BERTLV-Kinder 0.5.0"
+encoding: ascii
+
+fields:
+  "000": { format: numeric,  length: 4 }
+  "001": { format: bitmap,   length: 8 }
+  "002": { format: llchar,   length: 19, description: "PAN" }
+  "004": { format: numeric,  length: 12, description: "Amount" }
+  "055":
+    format: lllbertlv
+    length: 999
+    description: "ICC Data"
+    children:
+      "5A": { format: char,   length: 4, encoding: ascii, description: "Application PAN" }
+      "95": { format: binary, length: 2, description: "PIN Block" }
+)");
+
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // ── Wire-Buffer aufbauen ─────────────────────────────────────────────────
+    std::vector<uint8_t> raw;
+    append(raw, ascii_b("0100"));                           // MTI: Auth Request
+    append(raw, makeBitmap({ 2, 4, 55 }));                  // Bitmap
+
+    append(raw, ascii_b("16"));                             // DE2: LL-Prefix
+    append(raw, ascii_b("4111111111111111"));               // DE2: PAN
+    append(raw, ascii_b("000000012345"));                   // DE4: Amount
+
+    // DE55: BER-TLV-Payload (Aufsteigende Tag-Reihenfolge, damit der
+    // Byte-fuer-Byte-Roundtrip den identischen Wire-Layout reproduziert):
+    //   0x5A len 4 "1234"  (dek. char/ascii)
+    //   0x8A len 1 0x42    (undeclared, dynamisch)
+    //   0x95 len 2 DEAD    (dek. binary)
+    std::vector<uint8_t> de55_payload = {
+        0x5A, 0x04, '1', '2', '3', '4',
+        0x8A, 0x01, 0x42,
+        0x95, 0x02, 0xDE, 0xAD
+    };
+    append(raw, ascii_b("013"));                            // DE55: LLL-Prefix
+    append(raw, de55_payload);
+
+    // ── Dekodieren ───────────────────────────────────────────────────────────
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    const auto consumed = msg->unparse(msg, raw);
+    REQUIRE(consumed == raw.size());
+
+    CHECK(msg->hasMTI());
+    CHECK(msg->mti() == "0100");
+
+    CHECK(msg->get<OpaqueField>(2)->value() == "4111111111111111");
+    CHECK(msg->get<OpaqueField>(4)->value() == "000000012345");
+
+    const auto de55 = msg->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+
+    // Deklariertes Text-Kind: OpaqueField mit ASCII-Wert + propagierter
+    // Beschreibung.
+    const auto se5a = de55->get<OpaqueField>(0x5A);
+    REQUIRE(se5a != nullptr);
+    CHECK(se5a->value() == "1234");
+    CHECK(se5a->description() == "Application PAN");
+
+    // Deklariertes Binary-Kind: BinaryField mit Rohbytes.
+    const auto se95 = de55->get<BinaryField>(0x95);
+    REQUIRE(se95 != nullptr);
+    CHECK(se95->value() == std::vector<uint8_t>{ 0xDE, 0xAD });
+    CHECK(se95->description() == "PIN Block");
+
+    // Undeclared Tag: dynamisch dekodiert, generische Fallback-Beschreibung.
+    const auto se8a = de55->get<BinaryField>(0x8A);
+    REQUIRE(se8a != nullptr);
+    CHECK(se8a->value() == std::vector<uint8_t>{ 0x42 });
+    CHECK(se8a->description() == "SE138");
+
+    // ── Roundtrip: erneutes Serialisieren muss das Original reproduzieren ────
+    CHECK(msg->parse(msg) == raw);
+}

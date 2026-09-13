@@ -228,6 +228,168 @@ TEST_CASE("ISOTLVParser - TlvChildMap: deklarierter Text-Kind wird typisiert dek
     CHECK(se48 == nullptr); // wurde nicht gespeichert (nicht im Payload)
 }
 
+TEST_CASE("ISOTLVParser - TlvChildMap: EBCDIC-Kind wird typisiert dekodiert (FR-1)", "[tlv][typed][ebcdic]") {
+    // IBM-1047: 'A' = 0xC1, 'B' = 0xC2. Deklariertes EBCDIC-Text-Kind wird
+    // per Codec in einen ASCII-String konvertiert (OpaqueField).
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se72;
+    se72.text = true;
+    se72.enc = codec::Encoder::EBCDIC;
+    se72.description = "SE72-EBCDIC";
+    childMap[72] = se72;
+
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+    const std::vector<uint8_t> payload = { 0x00, 0x72, 0x02, 0xC1, 0xC2 };
+
+    auto msg = std::make_shared< Message >();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se = msg->get< OpaqueField >(72);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == "AB");
+    CHECK(se->description() == "SE72-EBCDIC");
+
+    // Roundtrip: der OpaqueField-Wert wird per Codec zurueck nach EBCDIC
+    // kodiert (0xC1 0xC2) und reproduziert den Payload bytefuerbyte.
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("ISOTLVParser - TlvChildMap: BCD-Kind wird typisiert dekodiert (FR-1)", "[tlv][typed][bcd]") {
+    // BCD: {0x12, 0x34} -> "1234".
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se72;
+    se72.text = true;
+    se72.enc = codec::Encoder::BCD;
+    se72.description = "SE72-BCD";
+    childMap[72] = se72;
+
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+    const std::vector<uint8_t> payload = { 0x00, 0x72, 0x02, 0x12, 0x34 };
+
+    auto msg = std::make_shared< Message >();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se = msg->get< OpaqueField >(72);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == "1234");
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("ISOTLVParser - TlvChildMap: binary-Kind bleibt BinaryField (No-Regression)", "[tlv][typed][binary]") {
+    // Deklariertes BINARY-Kind: Rohbytes bleiben ein BinaryField (keine
+    // Regression durch FR-1).
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se48;
+    se48.text = false;
+    se48.enc = codec::Encoder::BINARY;
+    se48.description = "SE48-Bin";
+    childMap[48] = se48;
+
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+    // TAG 48 = BCD 0x0048, LEN 2, Daten 0xDE 0xAD.
+    const std::vector<uint8_t> payload = { 0x00, 0x48, 0x02, 0xDE, 0xAD };
+
+    auto msg = std::make_shared< Message >();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se = msg->get< BinaryField >(48);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == std::vector<uint8_t>{ 0xDE, 0xAD });
+    CHECK(se->description() == "SE48-Bin");
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("ISOTLVParser - TlvChildMap: undeclared-Tag bleibt BinaryField mit SE<n>-Fallback", "[tlv][typed][undeclared]") {
+    // Gemischter Payload: deklariertes Text-Kind + undeclared-Tag.
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se72;
+    se72.text = true;
+    se72.enc = codec::Encoder::ASCII;
+    se72.description = "SE72";
+    childMap[72] = se72;
+
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+    // SE 48 (undeclared) zuerst, dann SE 72 (dek.): aufsteigende Tag-Reihenfolge,
+    // weil der Encoder die SEs sortiert schreibt (Byte-fuer-Byte-Roundtrip).
+    const std::vector<uint8_t> payload = {
+        0x00, 0x48, 0x02, 0x01, 0x02,
+        0x00, 0x72, 0x02, 'A', 'B'
+    };
+
+    auto msg = std::make_shared< Message >();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se72f = msg->get< OpaqueField >(72);
+    REQUIRE(se72f != nullptr);
+    CHECK(se72f->value() == "AB");
+
+    const auto se48 = msg->get< BinaryField >(48);
+    REQUIRE(se48 != nullptr);
+    CHECK(se48->value() == std::vector<uint8_t>{ 0x01, 0x02 });
+    CHECK(se48->description() == "SE48");
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("ISOTLVParser - TlvChildMap: strict wirft auf unmappbarem EBCDIC-Byte, non-strict mappt auf '.'", "[tlv][typed][strict][ebcdic]") {
+    // 0x9C hat in kEbcdicToAscii nur den Whitelist-Sentinel '.' (0x2E) und
+    // ist damit nicht-mappbar (ICU-78.3-Oracle-Pin; Zaehlpunkte sind in
+    // tests/test_encoding_determinism.cc fixiert).
+    const std::vector<uint8_t> payload = { 0x00, 0x72, 0x02, 0xC1, 0x9C };
+
+    auto makeTlv = [](bool strict) {
+        tlv_detail::TlvChildMap childMap;
+        tlv_detail::TlvChildInfo se72;
+        se72.text = true;
+        se72.enc = codec::Encoder::EBCDIC;
+        se72.description = "SE72";
+        childMap[72] = se72;
+        auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+        tlv->strict(strict);
+        return tlv;
+    };
+
+    // strict (Default): positionierte Exception statt Silent-Mapping.
+    {
+        auto tlv = makeTlv(true);
+        auto msg = std::make_shared< Message >();
+        CHECK_THROWS_AS(tlv->unparse(msg, payload), std::runtime_error);
+    }
+    // non-strict: Legacy-Sentinel '.' (0xC1 -> 'A', 0x9C -> '.').
+    {
+        auto tlv = makeTlv(false);
+        auto msg = std::make_shared< Message >();
+        CHECK(tlv->unparse(msg, payload) == payload.size());
+        const auto se = msg->get< OpaqueField >(72);
+        REQUIRE(se != nullptr);
+        CHECK(se->value() == "A.");
+    }
+}
+
+TEST_CASE("ISOTLVParser - TlvChildMap: Typ-Fehlmatch beim Encode (BinaryField in Text-Kind) wird verworfen", "[tlv][typed][error]") {
+    // Deklariertes Text-Kind (char) wird mit einem BinaryField besetzt:
+    // Fail-closed (Programmierfehler, nicht Datenkorruption).
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se72;
+    se72.text = true;
+    se72.enc = codec::Encoder::ASCII;
+    childMap[72] = se72;
+
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
+    auto msg = std::make_shared< Message >();
+    msg->set(std::make_shared< BinaryField >(72, std::vector<uint8_t>{ 0x01 }));
+
+    bool threw = false;
+    try
+    {
+        tlv->parse(msg);
+    }
+    catch (const std::runtime_error& e)
+    {
+        threw = true;
+        CHECK(std::string(e.what()).find("TLV-Kind SE72") != std::string::npos);
+    }
+    REQUIRE(threw);
+}
 // =============================================================================
 // BerTag - isolierte Read/Write-Tests (ISO/IEC 8825-1 §8.1.2)
 // =============================================================================
