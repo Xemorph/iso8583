@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased
+
+> 0.6.0-Kandidat (Plan `docs/plans/remaining-encoding-spec-schema.md`):
+> `remaining` folgt ab jetzt dem aufgelösten Feld-/Global-Encoding
+> (vorher encoding-neutral) und verlangt zwingend `length` (Maximum,
+> Fail-closed). Neue normative Spec-Schema-Referenz für Menschen und
+> KI-Generatoren: `docs/internals/spec_schema.md`.
+
+### ⚠️ Breaking: `remaining` ist encoding-aware (0.6.0-Kandidat)
+
+- `format: remaining` ist **nicht mehr encoding-neutral**: Es folgt der
+  üblichen Encoding-Auflösung (Feld-`encoding` > globale `encoding` >
+  `""`). `""`/`binary` → rohes `BinaryField` (Verhalten unverändert);
+  `ascii`/`ebcdic`/`bcd` → `OpaqueField` (Text bzw. BCD-Ziffern) —
+  d. h. in Specs mit globalem Text-Encoding dekodiert `remaining` ab
+  jetzt `OpaqueField` statt `BinaryField` (0.5.0-TLV-Children-Muster,
+  bewusst gewollt).
+- `remaining`+`ebcdic` ist EBCDIC-Text (IBM-1047-Tabelle), **nicht**
+  HEX_EBCDIC (das gilt nur für `format: binary` unter `ebcdic`).
+- BCD: `length` zählt **Ziffern** (1 Byte = 2 Ziffern); dazu BCD-
+  Korrektur im `UNKNOWN`/`CONSUME`-Zweig des Feld-Parsers
+  (`src/_parser.hh`), damit `remaining`+`bcd` den kompletten
+  Restpuffer decodiert und korrekt `consumed` meldet.
+- Strict-Modus wird an die `remaining`-Konvertierung propagiert
+  (EBCDIC-Whitelist-Throw vs. Legacy `'.'`/`'?'`-Mapping).
+- Migration: Code, der `remaining`-Felder in Text-Specs als
+  `BinaryField` liest, muss `OpaqueField`/`tryGetValue<std::string>`
+  verwenden — oder das Feld lokal auf `encoding: binary` setzen.
+
+### Fail-closed: `remaining` verlangt `length`
+
+- `format: remaining` ohne `length` wird beim Laden mit einem
+  positionierten `SpecValidationError` abgelehnt (Fail-closed; ohne
+  Maximum würden 0 Bytes dekodiert). `length` gilt weiterhin als
+  Maximum (Clamp); ein längerer Payload wird gekürzt (strict: Fehler
+  „Unverbrauchte Bytes am Pufferende“).
+
+### Introspection: `REMAINING` meldet deklariertes `max_length`
+
+- `SpecFieldFormat::max_length` für `REMAINING` liefert das deklarierte
+  `length` (vorher wurde 0 erzwungen). Verhalten, keine
+  Layout-Änderung — keine ABI-Wirkung.
+
+### Neu: normative Spec-Schema-Referenz (`spec_schema.md`)
+
+- Neues Doku-Kapitel (Toctree *Internals*): Root-/Feld-Keys, komplette
+  Format×Encoding-Matrix (1:1 zur Parser-Dispatch-Tabelle),
+  `remaining`-Semantik, Direktiven, Nested/TLV/BERTLV-Regeln,
+  Encoding-Auflösung/-Vererbung, Fail-closed-Fehlerliste, Laufzeit-
+  Verhalten, komplette Beispiele und eine Generator-Checkliste — für
+  Menschen und KI-Agenten, die Spec-Dateien erzeugen sollen.
+- Synchron: `encoding.md` / `yaml_format.md` / beide `AGENTS.md`-
+  Referenzen (Neutral-Set, Formattabellen, Beispiele mit `length`,
+  Pitfall-/Fehlerlisten).
+- Neue Catch2-Tests (Matrix aller vier Encodings, Feld-Override,
+  Roundtrip, Strict/Legacy, Fail-closed ohne `length`, Clamp):
+  `tests/test_remaining_field.cc` (+6 TEST_CASEs).
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):
