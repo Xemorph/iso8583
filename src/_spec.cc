@@ -202,9 +202,13 @@ namespace TNG_NAMESPACE::spec {
     }
 
     /// Formate ohne Encoding-Konzept – ignorieren globales und Feld-Encoding.
+    ///
+    /// (0.6.0) 'REMAINING' ist NICHT mehr neutral: es folgt der Encoding-
+    /// Auflösung wie jedes andere Format (Feld > global > ""). ""/binary
+    /// bleiben roh (BinaryField), Text-Encodings dekodieren OpaqueField.
     static bool isEncodingNeutral(const std::string& fmt) {
         static const std::unordered_set<std::string> neutral = {
-            "BINARY", "BITMAP", "NOP", "UNUSED", "REMAINING"
+            "BINARY", "BITMAP", "NOP", "UNUSED"
         };
         return neutral.count(fmt) > 0;
     }
@@ -279,7 +283,9 @@ namespace TNG_NAMESPACE::spec {
             ryml::ConstNodeRef field = entry;
             if (!field.is_map()) continue;
 
-            // Warnung wenn length für nicht-triviale Formate fehlt
+            // Warnung wenn length für nicht-triviale Formate fehlt.
+            // 'remaining' ist hier ausgenommen: es hat eine eigene,
+            // härtere Regel (Fail-closed, siehe unten).
             if (hasKey(field, "format")) {
                 const auto fmt = toLower(getStr(field, "format"));
                 const bool needsLength = (fmt != "nop" && fmt != "bitmap" &&
@@ -287,6 +293,16 @@ namespace TNG_NAMESPACE::spec {
                 if (needsLength && !hasKey(field, "length"))
                     TNG_LOG_WARN("[SpecDecoder] Feld {} hat format='{}' aber kein 'length'",
                         key, fmt);
+
+                // Fail-closed (0.6.0): 'remaining' ohne 'length' dekodiert
+                // andernfalls still 0 Bytes (Clamp mit de_l_ = 0) – jetzt
+                // positionierter Validierungsfehler. 'length' = Maximum.
+                if (fmt == "remaining" && !hasKey(field, "length"))
+                    throw SpecValidationError(
+                        "Feld " + key + ": 'format: remaining' benötigt "
+                        "'length' (Maximum der verbleibenden Bytes) – ohne "
+                        "'length' würden 0 Bytes dekodiert",
+                        field.id(), smap);
             }
 
             // 'format: ...bertlv' ist eine Kurzschreibweise für ein BER-TLV-
@@ -652,7 +668,9 @@ namespace TNG_NAMESPACE::spec {
             { "UNUSED|",           MAKE_NOP()            },
             { "REMAINING|",        MAKE(IF_REMAINING)    },
             { "REMAINING|BINARY",  MAKE(IF_REMAINING)    },
+            { "REMAINING|ASCII",   MAKE(IFA_REMAINING) },
             { "REMAINING|EBCDIC",  MAKE(IFE_REMAINING)   },
+            { "REMAINING|BCD",     MAKE(IFB_REMAINING) },
             // ── BINARY ──────────────────────────────────────────────────────────
             { "BINARY|",           MAKE(IF_BINARY)       },
             { "LBINARY|",          MAKE(IF_LBINARY)      },
@@ -885,7 +903,9 @@ namespace TNG_NAMESPACE::spec {
         fmt.prefix_digits = static_cast<int>(prefix);
         fmt.type = prefix > 0 ? f.format.substr(prefix) : f.format;
 
-        if (fmt.type == "NOP" || fmt.type == "UNUSED" || fmt.type == "REMAINING")
+        // NOP/UNUSED haben keine Längen-Semantik; REMAINING (0.6.0) meldet
+        // sein deklariertes Maximum (length = Pflicht, Fail-closed beim Load).
+        if (fmt.type == "NOP" || fmt.type == "UNUSED")
             fmt.max_length = 0;
 
         return fmt;

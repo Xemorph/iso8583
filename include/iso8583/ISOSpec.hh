@@ -60,7 +60,10 @@ namespace TNG_NAMESPACE {
             ///
             ///   - `CHAR` / `NUMERIC`: number of characters or digits
             ///   - `BINARY`:           number of bytes
-            ///   - `BITMAP` / `NOP` / `REMAINING`: 0 (no meaningful length)
+            ///   - `REMAINING`:        declared maximum (bytes or BCD digits –
+            ///                         since 0.6.0 `length` is mandatory for
+            ///                         `remaining` and is reported here)
+            ///   - `BITMAP` / `NOP`:   0 (no meaningful length)
             int         max_length = 0;  ///< kept as int for API compatibility; always >= 0
 
             /// @brief Number of length-prefix digits (ISO 8583 L/LL/LLL convention).

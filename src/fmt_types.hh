@@ -12,6 +12,11 @@ namespace TNG_NAMESPACE {
 
     using IF_REMAINING = ISORemainderFieldParser< std::vector<uint8_t>, codec::Encoder::BINARY >;
     using IFE_REMAINING = ISORemainderFieldParser< std::string, codec::Encoder::EBCDIC >;
+    // (0.6.0) remaining ist encoding-aware: Text-Encodings dekodieren
+    // OpaqueField, ""/binary bleiben roh (BinaryField). Namenskonvention
+    // wie ueberall: IFA_ = ASCII, IFB_ = BCD, IFE_ = EBCDIC, IF_ = BINARY.
+    using IFA_REMAINING = ISORemainderFieldParser< std::string, codec::Encoder::ASCII >;
+    using IFB_REMAINING = ISORemainderFieldParser< std::string, codec::Encoder::BCD >;
 
     // -- Bitmap ---------------------------------------------------------------
     using IFB_BITMAP    = ISOBitmapFieldParser;

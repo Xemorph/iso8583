@@ -410,8 +410,15 @@ namespace TNG_NAMESPACE {
                 }
                 
                 std::size_t l = 0u;
-                if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME)
+                if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME) {
                     l /* remaining */ = b.size() - o;
+                    // (0.6.0) remaining + BCD: b.size() - o ist die Byte-Zahl,
+                    // BCD-Codecs zählen aber Ziffern (1 Byte = 2 Ziffern).
+                    // Ohne Umrechnung würde as<string, BCD> nur die halbe
+                    // Pufferlänge dekodieren.
+                    if constexpr (codec::Encoder::BCD == e_)
+                        l *= 2u;
+                }
                 else
                     l = codec::decode_length<pe_, l_>(b, o); // Something like this?
 
