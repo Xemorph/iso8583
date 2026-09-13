@@ -10,7 +10,7 @@
 > Das `SpecFieldInfo`-Layout ändert sich (`tlv_children`): Shared-
 > Library-Konsumenten kompilieren neu gegen die geändete Public Header.
 
-### Added
+### Neu: typisierte TLV-/BERTLV-Kinder (FR-1/FR-2), `children`-Map bei `bertlv`, `tlv_children`
 
 - **FR-1: Typisierte TLV-/BERTLV-Kinder** (gleiche Regeln für beide TLV-
   Formen): deklarierte `children` mit `format: char`/`numeric`/
@@ -54,7 +54,7 @@
   `tlv:`-Block + `...bertlv`, `children` als Sequence + `...bertlv`)
   erzeugen jetzt jeweils eine eigene, präzise Fehlermeldung.
 
-### Fixed
+### Bugfixes
 
 - **BCD-TLV-Kinder: halbierte Ziffernanzahl beim Decode** —
   `child_as_string` übergab die Byte-Länge an `codec::as<...,BCD>`,
@@ -69,7 +69,7 @@
   aktualisiert (seit dem 0.3.0-Release veraltet; fließt in die
   Sphinx-Footer-/Metadaten der gebauten Doku-Seiten ein).
 
-### ABI-Hinweis
+### ABI-Hinweis (0.5.0)
 
 - `SpecFieldInfo` ist per Wert zurückgegeben und enthält jetzt das neue
   Mitglied `tlv_children` — das Layout ändert sich; Shared-Library-
