@@ -1,8 +1,12 @@
 # Implementation Plan — Typisierte TLV-Kinder + `bertlv`-Kurzform mit `children`
 
-**Status:** In Umsetzung — vom Maintainer freigegeben (Freigabe = Arbeitsauftrag
-„Proceed with the plan“, WP1–WP3 implementiert und lokal verifiziert: debug &
-debug-bertlv Full-Suite grün).
+**Status:** Abgeschlossen — WP1–WP8 umgesetzt, lokal verifiziert (`debug` +
+`debug-bertlv`, ctest + Full-Suite grün), 5 commits (siehe Obsidian-Note
+`ai_connected/iso8583-dev/TLV-Typisierte-Kinder Umsetzung.md`). Verbleibende
+Schritte sind Releaseschritte des Maintainers (Version-Bump an 4 Stellen,
+Tag `v0.5.0`, vcpkg-Portfile-SHA512 — §14.2). Ursprünglich: In Umsetzung —
+vom Maintainer freigegeben (Freigabe = Arbeitsauftrag „Proceed with the
+plan“), WP1–WP3 dabei bereits implementiert und lokal verifiziert.
 Basis: Feature-Requests aus `ai_connected/iso8583/` (tng-wire-viewer, gepinnt auf
 `453cf4c5` / v0.4.0):
 - **FR-1** — Typisierte TLV-/BER-TLV-Kind-Dekodierung
