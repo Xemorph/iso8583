@@ -29,6 +29,7 @@
 #include "detail/_interfaces.hh"
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -110,6 +111,27 @@ namespace TNG_NAMESPACE {
             /// Empty for leaf fields.  Indexed from 0 (sub-field keys inside
             /// the nested parser start at 0).
             std::vector<SpecFieldInfo> children;
+
+            /// @brief Declared TLV children (SE numbers / BER tags), keyed by
+            ///        the raw tag value / SE number.
+            ///
+            /// Since 0.5.0 this is populated for TLV containers: fields with a
+            /// `tlv:` block (fixed-format TLV, decimal SE keys) and fields with
+            /// `format: ...bertlv` (hex tag keys).  Each child mirrors its YAML
+            /// declaration: `key` = tag value / SE number, `is_nested = false`,
+            /// `format`/`encoding` from the child's `format:`/`encoding:` keys,
+            /// `description` from the child's `description:` key.
+            /// Empty when no TLV children are declared.
+            ///
+            /// The map key is deliberately `int` (and **not** `TNG_KEY_TYPE`):
+            /// 2-byte EMV tags such as `0x9F26` (40742) do not fit into
+            /// `int16_t` in non-`ISO8583_BERTLV` builds.  In such builds the
+            /// child element's `key` member is only a narrowed view of the
+            /// value; the map key always carries the full tag value.
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.x).
+            std::map<int, SpecFieldInfo> tlv_children;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────

@@ -289,11 +289,12 @@ namespace TNG_NAMESPACE::spec {
                         key, fmt);
             }
 
-            // 'format: ...bertlv' ist eine reine Kurzschreibweise für scalare
-            // Felder (siehe parseSpecField) - BER-TLV-Tags sind dynamisch, eine
-            // vorab deklarierte Kinderliste ergibt keinen Sinn. Explizites
-            // 'type: nested', 'children' oder ein eigener 'tlv:'-Block wären
-            // daher widersprüchlich und werden hier abgelehnt.
+            // 'format: ...bertlv' ist eine Kurzschreibweise für ein BER-TLV-
+            // Containerfeld (siehe parseSpecField). Seit 0.5.0 (FR-2) dürfen
+            // bekannte/erwartete Tags zusätzlich über 'children' als Hex-Map
+            // deklariert werden (undeclared Tags bleiben dynamisch); ein
+            // eigener 'tlv:'-Block, explizit 'type: nested' oder 'children'
+            // als Sequence wären widersprüchlich und bleiben unzulässig.
             if (hasKey(field, "format")) {
                 const auto fmtUpper = toUpper(getStr(field, "format"));
                 std::size_t p = 0;
@@ -301,12 +302,25 @@ namespace TNG_NAMESPACE::spec {
                 if (fmtUpper.substr(p) == "BERTLV") {
                     const bool explicitNested = hasKey(field, "type") &&
                         toLower(getStr(field, "type")) == "nested";
-                    if (hasKey(field, "children") || hasKey(field, "tlv") || explicitNested)
+                    if (explicitNested)
                         throw SpecValidationError(
-                            "Feld " + key + ": 'format: ...bertlv' ist nur bei "
-                            "scalaren Feldern gültig - 'children', 'tlv' und "
-                            "'type: nested' dürfen nicht zusätzlich gesetzt sein",
+                            "Feld " + key + ": 'format: ...bertlv' impliziert "
+                            "bereits ein nested BER-TLV-Feld - 'type: nested' "
+                            "darf nicht zusätzlich gesetzt werden",
                             field.id(), smap);
+                    if (hasKey(field, "tlv"))
+                        throw SpecValidationError(
+                            "Feld " + key + ": 'format: ...bertlv' impliziert "
+                            "BER-TLV (ISO/IEC 8825-1) - ein eigener 'tlv:'-Block "
+                            "ist redundant und unzulässig",
+                            field.id(), smap);
+                    if (hasKey(field, "children") && !field["children"].is_map())
+                        throw SpecValidationError(
+                            "Feld " + key + ": 'format: ...bertlv' akzeptiert "
+                            "'children' nur als Map (Tag → Deklaration, z.B. "
+                            "'9F26': { format: binary }) - eine Sequence ist "
+                            "unzulässig",
+                            field["children"].id(), smap);
                 }
             }
 
@@ -332,6 +346,80 @@ namespace TNG_NAMESPACE::spec {
                             " benötigt 'tag_bytes' und 'len_bytes' "
                             "(oder 'ber: true' für BER-TLV mit variabler Länge)",
                             tlv.id(), smap);
+                }
+
+                // FR-1 (0.5.0, D5): TLV-Kind-Whitelist — gilt für beide
+                // TLV-Formen (tlv:-Block und ...bertlv). Läuft auf dem
+                // gepreprozessierten Baum → sieht die Endform nach
+                // !use/!template/!merge-Expansion. Die TLV-Länge liegt auf
+                // dem Wire im Length-Feld, daher sind L-präfixierte Formate,
+                // 'bitmap', 'remaining' und 'nop' bei TLV-Kindern
+                // widersprüchlich (Fail-closed statt stiller "documentation-
+                // only"-Semantik, Q2-Präzedenz aus 0.3.0).
+                const bool isTlvField = hasKey(field, "tlv")
+                    || (hasKey(field, "format") && [&] {
+                            const auto fu = toUpper(getStr(field, "format"));
+                            std::size_t q = 0;
+                            while (q < fu.size() && fu[q] == 'L') ++q;
+                            return fu.substr(q) == "BERTLV";
+                        }());
+                if (isTlvField && hasKey(field, "children")) {
+                    const ryml::ConstNodeRef ch = field["children"];
+                    if (ch.is_map()) {
+                        static const std::set<std::string> textChildFormats = {
+                            "CHAR", "NUMERIC", "NOPAD_CHAR" };
+                        static const std::set<std::string> allChildFormats = {
+                            "BINARY", "CHAR", "NUMERIC", "NOPAD_CHAR" };
+                        static const std::set<std::string> allChildEncodings = {
+                            "ASCII", "BCD", "BINARY", "EBCDIC" };
+                        for (const ryml::ConstNodeRef c : ch.children()) {
+                            const auto seKey = toStdString(c.key());
+                            if (!c.is_map())
+                                throw SpecValidationError(
+                                    "Feld " + key + ", TLV-Kind '" + seKey +
+                                    "': Kind-Deklaration muss eine Map sein "
+                                    "(z.B. { format: binary, "
+                                    "description: ... })",
+                                    c.id(), smap);
+                            if (hasKey(c, "format")) {
+                                const auto cf = toUpper(getStr(c, "format"));
+                                if (!allChildFormats.count(cf))
+                                    throw SpecValidationError(
+                                        "Feld " + key + ", TLV-Kind '" + seKey +
+                                        "': Format '" + cf +
+                                        "' unzulässig - die TLV-Länge liegt im "
+                                        "Length-Feld, L-präfixierte Formate "
+                                        "(llchar, ...), 'bitmap', 'remaining' "
+                                        "und 'nop' sind bei TLV-Kindern nicht "
+                                        "erlaubt (erlaubt: binary, char, "
+                                        "numeric, nopad_char)",
+                                        c["format"].id(), smap);
+                            }
+                            if (hasKey(c, "encoding")) {
+                                const auto ce = toUpper(getStr(c, "encoding"));
+                                if (!allChildEncodings.count(ce))
+                                    throw SpecValidationError(
+                                        "Feld " + key + ", TLV-Kind '" + seKey +
+                                        "': Encoding '" + ce +
+                                        "' unzulässig (erlaubt: ascii, "
+                                        "ebcdic, bcd, binary)",
+                                        c["encoding"].id(), smap);
+                                if (hasKey(c, "format")) {
+                                    const auto cf = toUpper(getStr(c, "format"));
+                                    if (textChildFormats.count(cf) &&
+                                        ce != "ASCII" && ce != "BCD" && ce != "EBCDIC")
+                                        throw SpecValidationError(
+                                            "Feld " + key + ", TLV-Kind '" + seKey +
+                                            "': Text-Format '" + cf +
+                                            "' benötigt ein Encoding ascii, "
+                                            "ebcdic oder bcd ('" + ce +
+                                            "' ist für Text-Kinder nicht "
+                                            "verwendbar)",
+                                            c["encoding"].id(), smap);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -372,11 +460,12 @@ namespace TNG_NAMESPACE::spec {
         f.format = toUpper(getStr(node, "format"));
 
         // ── format: ...BERTLV - Kurzschreibweise für ein BER-TLV-Feld ─────────────
-        // Nur bei scalaren Feldern gültig (siehe validateSpecYaml für die
-        // entsprechende Exklusivitätsprüfung gegen type/children/tlv). Anders
-        // als bei Mastercard/Visa-TLV (fixe, vorab bekannte SE-Liste über
-        // 'children') sind BER-TLV/EMV-Tags dynamisch - eine Kinderliste ergibt
-        // hier keinen Sinn. Es genügt also z.B.:
+        // Seit 0.5.0 (FR-2) dürfen bekannte/erwartete Tags zusätzlich über
+        // 'children' als Hex-Map deklariert werden (z.B. "9F26": { format: binary });
+        // undeclaried Tags bleiben dynamisch (BinaryField + "SE<n>"-Fallback).
+        // Ein eigener 'tlv:'-Block, explizit 'type: nested' oder 'children' als
+        // Sequence bleiben unzulässig (siehe validateSpecYaml). Es genügt also
+        // z.B.
         //   "055": { format: lllbertlv, length: 999, description: "ICC Data" }
         // ohne 'type: nested', 'children:' oder 'tlv:'.
         bool isBerTlvShorthand = false;
@@ -494,7 +583,31 @@ namespace TNG_NAMESPACE::spec {
                 for (ryml::ConstNodeRef entry : children.children()) {
                     const auto seKey = toStdString(entry.key());
                     const int  seNum = parseTlvChildKey(seKey, asHex, entry, smap);
-                    f.tlv_children[seNum] = parseSpecField(entry, seEnc, seKey, smap, depth + 1);
+                    SpecField child = parseSpecField(entry, seEnc, seKey, smap, depth + 1);
+                    // FR-1 (0.5.0, D5): Text-Kinder (char/numeric/nopad_char)
+                    // brauchen ein erlaubtes Encoding (explizit deklariert ODER
+                    // vererbt) - ansonsten wäre die Codec-Konversion beim
+                    // Decode nicht definiert. Fail-closed mit Position (zeigt
+                    // auf den Encoding-Knoten, falls vorhanden, sonst auf den
+                    // Kind-Knoten); baut auf der Whitelist-Prüfung in
+                    // validateSpecYaml auf (dort nur die deklarierten Werte).
+                    if (child.format == "CHAR" || child.format == "NUMERIC" ||
+                        child.format == "NOPAD_CHAR")
+                        if (child.encoding != "ASCII" && child.encoding != "EBCDIC" &&
+                            child.encoding != "BCD") {
+                            const bool hasEncKey = hasKey(entry, "encoding");
+                            const auto pos = hasEncKey ? entry["encoding"].id() : entry.id();
+                            throw SpecValidationError(hasEncKey
+                                ? "TLV-Kind '" + seKey + "' (Format " + child.format +
+                                  "') hat das unzulässige Encoding '" + child.encoding +
+                                  "' - Text-Kinder benötigen ascii, ebcdic oder bcd"
+                                : "TLV-Kind '" + seKey + "' (Format " + child.format +
+                                  "') hat kein erlaubtes Encoding (kein 'encoding:' "
+                                  "deklariert, vererbt: '" + seEnc + "') - erlaubt: "
+                                  "ascii, ebcdic, bcd",
+                                pos, smap);
+                        }
+                    f.tlv_children[seNum] = std::move(child);
                 }
             }
             else {
@@ -790,6 +903,16 @@ namespace TNG_NAMESPACE::spec {
         TNG_KEY_TYPE childKey = 0;
         for (const auto& child : f.children)
             info.children.push_back(makeSpecFieldInfo(childKey++, child));
+
+        // FR-2 (0.5.0): deklarierte TLV-Kinder (tlv:-Block- und bertlv-Felder
+        // identisch) in die Introspektion übernehmen (schließt die Lücke, dass
+        // f.tlv_children bisher nicht in SpecFieldInfo auftauchte). Der Key
+        // ist bewusst int (nicht TNG_KEY_TYPE): EMV-2-Byte-Tags wie 0x9F26
+        // passen ohne ISO8583_BERTLV nicht in int16_t - in solchen Builds ist
+        // das `key`-Mitglied des Kindes nur eine eingekürzte Sicht desselben
+        // Wertes (Map-Key trägt den vollen Wert).
+        for (const auto& [tag, child] : f.tlv_children)
+            info.tlv_children.emplace(tag, makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(tag), child));
 
         return info;
     }

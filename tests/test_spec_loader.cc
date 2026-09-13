@@ -668,7 +668,10 @@ fields:
     CHECK(se->value() == std::vector<uint8_t>{0xAB, 0xCD});
 }
 
-TEST_CASE("Error - format: bertlv combined with children is rejected", "[error][spec][ber]") {
+TEST_CASE("Error - format: bertlv combined with children as sequence is rejected", "[error][spec][ber]") {
+    // Seit 0.5.0 (FR-2) ist 'children' als Map (Tag → Deklaration) erlaubt;
+    // die Sequence-Form ist bei dynamischen BER-TLV-Tags weiter ohne Sinn
+    // und wird abgelehnt.
     TempYaml yaml(R"(
 spec: "Invalid"
 fields:
@@ -682,7 +685,7 @@ fields:
         length: 1
 )");
     CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
-        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+        Catch::Matchers::ContainsSubstring("nur als Map"));
 }
 
 TEST_CASE("Error - format: bertlv combined with tlv block is rejected", "[error][spec][ber]") {
@@ -699,7 +702,7 @@ fields:
       len_bytes: 2
 )");
     CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
-        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+        Catch::Matchers::ContainsSubstring("ist redundant und unzulässig"));
 }
 
 TEST_CASE("Error - format: bertlv combined with type: nested is rejected", "[error][spec][ber]") {
@@ -714,7 +717,303 @@ fields:
     length: 999
 )");
     CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
-        Catch::Matchers::ContainsSubstring("scalaren Feldern"));
+        Catch::Matchers::ContainsSubstring("impliziert bereits ein nested BER-TLV-Feld"));
+}
+
+// =============================================================================
+// FR-1/FR-2 (0.5.0): TLV-Kind-Whitelist (D5) + Introspektion (tlv_children)
+// =============================================================================
+
+TEST_CASE("Error - TLV child with L-prefixed format is rejected (tlv block and bertlv)", "[error][spec][tlv][ber]") {
+    // Die TLV-Laenge liegt auf dem Wire im Length-Feld -> L-Präfix ist
+    // widerspruechlich und wird fail-closed abgelehnt - in beiden TLV-Formen.
+    const auto run = [](const std::string& yaml) -> std::string {
+        TempYaml y(yaml);
+        try {
+            spec::SpecDecoder::loadFromYaml(y.str());
+            return "";
+        }
+        catch (const std::exception& e) { return e.what(); }
+    };
+    const std::string head = R"(
+spec: "Invalid TLV Child"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: )";
+    const std::string tail = R"(
+        length: 10
+)";
+    for (const auto* format : { "llchar", "lllchar", "llbinary" }) {
+        const auto msg = run(head + format + tail);
+        INFO("Format: " << format);
+        REQUIRE(msg.find("unzulässig") != std::string::npos);
+        CHECK(msg.find("TLV-Kind '26'") != std::string::npos);
+    }
+    // Gleiche Whitelist gilt für die ...bertlv-Kurzschreibweise.
+    const auto msg = run(R"(
+spec: "Invalid TLV Child - bertlv"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbertlv
+    length: 999
+    children:
+      "9F26":
+        format: lllbinary
+        length: 8
+)");
+    REQUIRE(msg.find("unzulässig") != std::string::npos);
+    CHECK(msg.find("TLV-Kind '9F26'") != std::string::npos);
+}
+
+TEST_CASE("Error - TLV child with remaining/nop/bitmap format is rejected", "[error][spec][tlv]") {
+    const auto run = [](const std::string& format) -> std::string {
+        const std::string yaml =
+            R"(
+spec: "Invalid TLV Child"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: )" + format + R"(
+        length: 10)";
+        TempYaml y(yaml);
+        try {
+            spec::SpecDecoder::loadFromYaml(y.str());
+            return "";
+        }
+        catch (const std::exception& e) { return e.what(); }
+    };
+    for (const auto* format : { "remaining", "nop", "bitmap" }) {
+        const auto msg = run(format);
+        INFO("Format: " << format);
+        REQUIRE(msg.find("unzulässig") != std::string::npos);
+    }
+}
+
+TEST_CASE("Error - TLV child with unsupported encoding is rejected", "[error][spec][tlv]") {
+    TempYaml yaml(R"(
+spec: "Invalid TLV Child Encoding"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: char
+        length: 10
+        encoding: unicode
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("Encoding 'UNICODE' unzulässig"));
+}
+
+TEST_CASE("Error - text TLV child with binary encoding is rejected", "[error][spec][tlv]") {
+    // 'binary' ist für Text-Kinder (char/numeric/nopad_char) nicht verwendbar;
+    // bei format: binary bleibt es ignoriert (Rohbytes).
+    TempYaml yaml(R"(
+spec: "Invalid TLV Child Encoding"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: char
+        length: 10
+        encoding: binary
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("benötigt ein Encoding ascii, ebcdic oder bcd"));
+}
+
+TEST_CASE("Error - TLV child declaration must be a map", "[error][spec][tlv]") {
+    TempYaml yaml(R"(
+spec: "Invalid TLV Child Shape"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26": "nur ein String, keine Map"
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("Kind-Deklaration muss eine Map sein"));
+}
+
+TEST_CASE("Error - text TLV child inherits unusable encoding from spec (fail-closed)", "[error][spec][tlv]") {
+    // Kein explizites 'encoding:' am Kind -> erbt die TLV-Daten-Encoding
+    // (bei Binary-Specs unverwendbar für Text-Kinder) -> positionierter
+    // Fehler statt stummer Decoding-Willkuer (D5).
+    TempYaml yaml(R"(
+spec: "Inherited Binary Encoding"
+encoding: binary
+fields:
+  "000": { format: numeric, length: 4, encoding: ascii }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllbinary
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: char
+        length: 10
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("hat kein erlaubtes Encoding"));
+}
+
+TEST_CASE("Error - bertlv text child without explicit encoding (inherited empty)", "[error][spec][ber][tlv]") {
+    // bertlv-Kurzschreibweise: die Kind-Daten-Encoding wird nicht aus der
+    // globalen Encoding vererbt (seEnc bleibt leer) -> Text-Kinder müssen
+    // 'encoding:' explizit deklariieren (Fail-closed).
+    TempYaml yaml(R"(
+spec: "BERTLV Child Without Encoding"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbertlv
+    length: 999
+    children:
+      "5A":
+        format: char
+        length: 16
+)");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(yaml.str()),
+        Catch::Matchers::ContainsSubstring("hat kein erlaubtes Encoding"));
+}
+
+TEST_CASE("FR-2 - bertlv + children map is accepted and exposed via SpecFieldInfo::tlv_children", "[spec][tlv][ber]") {
+    // FR-2: 'format: ...bertlv' darf 'children' als Hex-Map tragen; die
+    // Deklarationen tauchen in der Introspektion als tlv_children auf
+    // (int-Key, bewusst nicht TNG_KEY_TYPE: 0x9F26 passt ohne BERTLV nicht
+    // in int16_t, der Map-Key trägt immer den vollen Tag-Wert).
+    TempYaml yaml(R"(
+spec: "BERTLV with Declared Tags"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "055":
+    format: lllbertlv
+    length: 999
+    description: "ICC Data"
+    children:
+      "5A":
+        format: char
+        length: 16
+        encoding: ascii
+        description: "Application PAN"
+      "9F26":
+        format: char
+        length: 8
+        encoding: ascii
+        description: "Application Cryptogram"
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+    REQUIRE(spec->has(55));
+
+    auto de55 = spec->field(55);
+    REQUIRE(de55.has_value());
+    // Container-Semantik: BERTLV ist strukturell nested (Message mit Tag-
+    // Kindern); 'children' (Sequence) bleibt leer ...
+    CHECK(de55->is_nested);
+    CHECK(de55->children.empty());
+    // ... aber die deklarierten TLV-Kinder sind introspektierbar.
+    REQUIRE(de55->tlv_children.size() == 2);
+    REQUIRE(de55->tlv_children.count(0x5A) == 1);
+    REQUIRE(de55->tlv_children.count(0x9F26) == 1);
+
+    const auto& pan = de55->tlv_children.at(0x5A);
+    CHECK(pan.description == "Application PAN");
+    CHECK(pan.format.type == "CHAR");
+    CHECK(pan.encoding == "ASCII");
+    CHECK_FALSE(pan.is_nested);
+    CHECK_FALSE(pan.is_bitmap);
+
+    const auto& ac = de55->tlv_children.at(0x9F26);
+    CHECK(ac.description == "Application Cryptogram");
+    CHECK(ac.format.type == "CHAR");
+    CHECK(ac.encoding == "ASCII");
+}
+
+TEST_CASE("FR-2 - tlv-block children map is exposed via SpecFieldInfo::tlv_children (decimal SE keys)", "[spec][tlv]") {
+    TempYaml yaml(R"(
+spec: "TLV Block Introspection"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    description: "Network Data"
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26":
+        format: char
+        length: 10
+        description: "Some Subelement"
+      "72":
+        format: char
+        length: 4
+        encoding: bcd
+        description: "Message Reason Code"
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+    REQUIRE(spec->has(48));
+
+    auto de48 = spec->field(48);
+    REQUIRE(de48.has_value());
+    CHECK(de48->is_nested);          // type: nested
+    CHECK(de48->children.empty());   // Map-Kinder sind TLV-Kinder, keine Sequence-Kinder
+    REQUIRE(de48->tlv_children.size() == 2);
+    REQUIRE(de48->tlv_children.count(26) == 1);
+    REQUIRE(de48->tlv_children.count(72) == 1);
+    CHECK(de48->tlv_children.at(26).description == "Some Subelement");
+    CHECK(de48->tlv_children.at(72).encoding == "BCD");
 }
 
 // =============================================================================
