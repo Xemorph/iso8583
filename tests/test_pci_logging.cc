@@ -328,25 +328,29 @@ TEST_CASE("PCI Logging - TLV children and binary DE are masked", "[pci][tlv][dum
 
     const std::string dump = dumpToString(msg);
 
-    // SE01 (sensitive) maskiert ...
+    // SE01 (sensitive) maskiert ... (SE02-Kinder sind format: char → OpaqueField,
+    // FR-1 (0.5.0): der Dump zeigt jetzt Text statt Hex)
     REQUIRE(dump.find("***") != std::string::npos);
     // ... mit sichtbarer Beschreibung ...
     REQUIRE(dump.find("SE01 Sensitive") != std::string::npos);
-    // ... das SE01-Hex (A1 = "4131") fehlt im dump ...
+    // ... das SE01-Wert (Text "A1" bzw. altes Hex "4131") fehlt im dump ...
     REQUIRE(dump.find("4131") == std::string::npos);
-    // ... SE02 (nicht sensitive) bleibt im Klartext (B2 = "4232").
-    REQUIRE(dump.find("4232") != std::string::npos);
+    REQUIRE(dump.find("A1") == std::string::npos);
+    // ... SE02 (nicht sensitive) bleibt im Klartext (char → Text "B2").
+    REQUIRE(dump.find("B2") != std::string::npos);
     // DE52 (BinaryField, sensitive): sein Hex fehlt komplett.
     REQUIRE(dump.find("DEAD") == std::string::npos);
 
-    // Programatische API: SE01 unmasked lesbar.
+    // Programatische API: SE01 unmasked lesbar (FR-1: char-Kind → OpaqueField).
     const auto sub = msg->get<Message>(48);
     REQUIRE(sub != nullptr);
-    const auto se1 = sub->tryGetValue<BinaryField>(1);
+    const auto se1 = sub->tryGetValue<OpaqueField>(1);
     REQUIRE(se1.has_value());
-    const bool se1Expected = (se1->size() == 2 &&
-        se1->at(0) == static_cast<uint8_t>('A') && se1->at(1) == static_cast<uint8_t>('1'));
-    CHECK(se1Expected);
+    CHECK(*se1 == "A1");
+    // SE02 (char, nicht sensitive) ebenfalls OpaqueField.
+    const auto se2 = sub->tryGetValue<OpaqueField>(2);
+    REQUIRE(se2.has_value());
+    CHECK(*se2 == "B2");
 }
 
 // =============================================================================

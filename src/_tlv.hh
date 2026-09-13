@@ -47,6 +47,7 @@ namespace TNG_NAMESPACE {
         TNG_EXPORT void log_error_not_composite();
         TNG_EXPORT void log_warn_tcc_missing();
         TNG_EXPORT void log_warn_tcc_not_set();
+        TNG_EXPORT void log_warn_se_missing(std::size_t se_num);
         TNG_EXPORT void log_error_se_overflow(std::size_t se_num, std::size_t se_len,
             std::size_t pos, std::size_t buf_sz);
         TNG_EXPORT void log_debug_tcc(const std::string& tcc);
@@ -55,6 +56,70 @@ namespace TNG_NAMESPACE {
 
         TNG_EXPORT std::vector<TNG_KEY_TYPE> sorted_se_keys(const ISO_MAP& fields);
 
+        // ------------------------------------------------------------------------
+        // FR-1 (0.5.0): Einheitliche Kind-Struktur für TLV-Kind-Deklarationen
+        // ------------------------------------------------------------------------
+
+        /// @brief Einheitliche Kind-Struktur für TLV-Kind-Deklarationen
+        ///        (YAML-'children'-Einträge, s. docs/internals/yaml_format.md).
+        ///        Seit 0.5.0 ersetzt sie die drei parallelen Maps
+        ///        (DataEncodingMap/DescriptionMap/SensitiveMap).
+        struct TlvChildInfo {
+            codec::Encoder enc = codec::Encoder::BINARY; ///< Daten-Encoding (Text-Kind: ascii/ebcdic/bcd, sonst BINARY = rohe Bytes)
+            bool           text = false;                 ///< true = char/numeric/nopad_char → OpaqueField
+            std::string    description;                  ///< explizite Beschreibung (leer = "SE<n>"-Fallback)
+            bool           sensitive = false;            ///< PCI-Masking (Kind-ebene oder vom Elternfeld geerbt)
+        };
+
+        /// @brief Tag (bzw. SE-Nummer) → TlvChildInfo.
+        using TlvChildMap = std::unordered_map<std::size_t, TlvChildInfo>;
+
+        /// Runtime-Dispatch über das Kind-Encoding: `codec::as<>`/`codec::to<>`
+        /// sind Templates über das COMPILE-ZEIT-Encoding, das Kind-Encoding
+        /// ist erst zur Laufzeit bekannt.
+        /// @note BINARY wird manuell behandelt (rohe Byte-Kopie), da
+        ///       `codec::to<BINARY, std::string>` keine gültige Instanzierung ist.
+        inline std::string child_as_string(codec::Encoder enc, const std::vector<uint8_t>& buf,
+            std::size_t offset, std::size_t length, bool strict) {
+            switch (enc) {
+                case codec::Encoder::ASCII:  return codec::as< std::string, codec::Encoder::ASCII >(buf, offset, length, strict);
+                case codec::Encoder::EBCDIC: return codec::as< std::string, codec::Encoder::EBCDIC >(buf, offset, length, strict);
+                case codec::Encoder::BCD:    return codec::as< std::string, codec::Encoder::BCD >(buf, offset, length, strict);
+                case codec::Encoder::BINARY: // Fall-through – rohe Bytes
+                default:
+                    return std::string(buf.begin() + static_cast<std::ptrdiff_t>(offset),
+                                       buf.begin() + static_cast<std::ptrdiff_t>(offset + length));
+            }
+        }
+
+        inline void child_to_string(codec::Encoder enc, const std::string& value,
+            std::vector<uint8_t>& out, std::size_t offset, bool strict) {
+            switch (enc) {
+                case codec::Encoder::ASCII:  codec::to< codec::Encoder::ASCII >(value, out, offset, strict); break;
+                case codec::Encoder::EBCDIC: codec::to< codec::Encoder::EBCDIC >(value, out, offset, strict); break;
+                case codec::Encoder::BCD:    codec::to< codec::Encoder::BCD >(value, out, offset, strict); break;
+                case codec::Encoder::BINARY: // Fall-through – rohe Byte-Kopie
+                default:
+                    for (std::size_t i = 0; i < value.size(); ++i)
+                        out[offset + i] = static_cast<uint8_t>(value[i]);
+                    break;
+            }
+        }
+
+        /// Benötigte Byte-Anzahl der kodierten Darstellung eines String-Werts
+        /// (zur Laufzeit, vgl. `codec::required_sz_for_as<e>`).
+        inline std::size_t child_required_sz(codec::Encoder enc, std::size_t n) {
+            if (enc == codec::Encoder::BCD)
+                return (n + 1) / 2;
+            return n; // ASCII / EBCDIC / BINARY: 1:1
+        }
+
+        /// Speichert ein dekodiertes SE in die Ziel-Message.
+        ///
+        /// FR-1 (0.5.0): Deklarierte Text-Kinder (char/numeric/nopad_char)
+        /// werden per Codec in eine OpaqueField gespeichert (strict: nicht-mappbare
+        /// Bytes werfen ein std::runtime_error; nicht-strikt: Legacy-Sentinel-Mapping);
+        /// binäre Kinder und undeklarierte Tags bleiben BinaryField (rohe Bytes).
         TNG_EXPORT void store_se(
             const std::shared_ptr<ISOMessage>& msg,
             std::size_t  se_num,
@@ -64,7 +129,9 @@ namespace TNG_NAMESPACE {
             std::size_t  wire_offset,
             std::size_t  wire_len,
             const nonstd::string_view& description,
-            bool         sensitive);
+            bool         sensitive,
+            const TlvChildInfo* child, ///< nullptr = undeklariertes Tag
+            bool         strict);      ///< propagierter Strict-Modus (Codec-Whitelist)
 
     } // namespace tlv_detail
 
@@ -82,18 +149,15 @@ namespace TNG_NAMESPACE {
 
     public:
         static constexpr TNG_KEY_TYPE TCC_KEY = -2;
-        using DataEncodingMap = std::unordered_map<std::size_t, codec::Encoder>;
-        using DescriptionMap  = std::unordered_map<std::size_t, std::string>;
-        // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität aus der Spec
-        // ('children: <tag>: {sensitive: true}').
-        using SensitiveMap    = std::unordered_map<std::size_t, bool>;
 
-        explicit ISOTLVParser(DataEncodingMap data_enc_map = {}, DescriptionMap description_map = {},
-            SensitiveMap sensitive_map = {}, bool sensitive_all = false)
+        /// @brief Konstruiert den TLV-Parser.
+        /// @param child_map  Deklarierte Kind-Elemente (Tag/SE → TlvChildInfo;
+        ///        FR-1/FR-2, 0.5.0). Leere Map = alles undeklariert → BinaryField.
+        /// @param sensitive_all  PCI: gesamtes Feld sensitiv (erbt alle Kinder).
+        explicit ISOTLVParser(tlv_detail::TlvChildMap child_map = {},
+            bool sensitive_all = false)
             : ISOBaseParser("<tlv>", 0)
-            , data_enc_map_(std::move(data_enc_map))
-            , description_map_(std::move(description_map))
-            , sensitive_map_(std::move(sensitive_map))
+            , child_map_(std::move(child_map))
             , sensitive_all_(sensitive_all)
         {
         }
@@ -159,11 +223,16 @@ namespace TNG_NAMESPACE {
                     break;
                 }
 
+                // FR-1 (0.5.0): deklarierter Text-Kind → OpaqueField (Codec),
+                // sonst/undeklariert → BinaryField; strict wird propagiert.
+                const tlv_detail::TlvChildInfo* child = child_info(se_num);
                 tlv_detail::store_se(msg, se_num, b, pos, se_len,
                     base_offset + tag_start,
                     (pos - tag_start) + se_len,
                     description_for_wire(se_num),
-                    sensitive_for_wire(se_num));
+                    sensitive_for_wire(se_num),
+                    child,
+                    strict_);
                 tlv_detail::log_debug_se_read(se_num, se_len);
                 pos += se_len;
             }
@@ -197,11 +266,43 @@ namespace TNG_NAMESPACE {
             const auto se_keys = tlv_detail::sorted_se_keys(msg->value());
 
             for (const TNG_KEY_TYPE se_key : se_keys) {
-                auto se = msg->get< ::TNG_NAMESPACE::BinaryField >(se_key);
-                if (!se) continue;
+                const std::size_t se_num = static_cast<std::size_t>(se_key);
+                // FR-1 (0.5.0): deklarierter Text-Kind (char/numeric/nopad_char)
+                // erwartet eine OpaqueField (Codec-Rückkonvertierung, strict wird
+                // propagiert); binäre/undeklarierte Kinder erwarten BinaryField.
+                const tlv_detail::TlvChildInfo* child = child_info(se_key);
+                const bool want_text = (child && child->text);
 
-                const auto& data = se->value();
-                const auto  se_num = static_cast<std::size_t>(se_key);
+                std::vector<uint8_t> data;
+                if (want_text) {
+                    const auto of = msg->get< ::TNG_NAMESPACE::OpaqueField >(se_key);
+                    if (!of) {
+                        if (msg->has(se_key))
+                            // Fail-closed: anderes Komponenten-Typ vorhanden
+                            // (Programmierfehler, nicht Datenkorruption).
+                            throw std::runtime_error(
+                                "[ISO8583] TLV-Kind SE" + std::to_string(se_num) +
+                                ": Spec erwartet ein Textfeld (char/numeric), es ist aber "
+                                "ein anderes Komponenten-Typ gesetzt");
+                        tlv_detail::log_warn_se_missing(se_num);
+                        continue;
+                    }
+                    data.resize(tlv_detail::child_required_sz(child->enc, of->value().size()));
+                    tlv_detail::child_to_string(child->enc, of->value(), data, 0, strict_);
+                }
+                else {
+                    const auto se = msg->get< ::TNG_NAMESPACE::BinaryField >(se_key);
+                    if (!se) {
+                        if (msg->has(se_key))
+                            throw std::runtime_error(
+                                "[ISO8583] TLV-Kind SE" + std::to_string(se_num) +
+                                ": Spec erwartet ein Binärfeld, es ist aber "
+                                "ein anderes Komponenten-Typ gesetzt");
+                        tlv_detail::log_warn_se_missing(se_num);
+                        continue;
+                    }
+                    data = se->value();
+                }
 
                 const std::size_t tag_off = out.size();
                 out.resize(out.size() + TagPolicy::required_size(se_num), 0x00);
@@ -218,10 +319,11 @@ namespace TNG_NAMESPACE {
             return out;
         }
 
-        std::optional<codec::Encoder> data_encoding_for(std::size_t se_num) const {
-            auto it = data_enc_map_.find(se_num);
-            if (it != data_enc_map_.end()) return it->second;
-            return std::nullopt;
+        /// @brief Deklariertes Kind für `se_num` (Tag/SE-Nummer) oder nullptr
+        ///        (undeklariert → BinaryField + "SE<n>"-Fallback).
+        [[nodiscard]] const tlv_detail::TlvChildInfo* child_info(std::size_t se_num) const noexcept {
+            const auto it = child_map_.find(se_num);
+            return (it == child_map_.end()) ? nullptr : &it->second;
         }
 
         // Liefert eine LANGLEBIGE (an dieses Parser-Objekt gebundene) Sicht auf
@@ -236,7 +338,7 @@ namespace TNG_NAMESPACE {
         // typischerweise in der Small-String-Optimization und werden nicht
         // sofort überschrieben; empirisch mit einer längeren, aus 'children'
         // deklarierten Beschreibung wie "Application Cryptogram" aufgedeckt).
-        // Deshalb: explizite Beschreibungen leben in description_map_ (schon
+        // Deshalb: explizite Beschreibungen leben in child_map_ (schon
         // bei Konstruktion befüllt, Parser-Lebensdauer), generierte "SE<n>"-
         // Fallbacks werden HIER EINMALIG erzeugt und in einem eigenen,
         // ebenfalls Parser-langlebigen Cache abgelegt.
@@ -248,12 +350,12 @@ namespace TNG_NAMESPACE {
         // wäre ein gleichzeitiges try_emplace auf dem unordered_map ein
         // Daten-Race mit Heap-Korruption (empirisch aufgedeckt: 4 Threads,
         // undeclarierter SE72 -> AV). Der Sperrbereich deckt NUR den
-        // Fallback-Pfad; die Hot-Pfad-Suche in description_map_ bleibt
+        // Fallback-Pfad; die Hot-Pfad-Suche in child_map_ bleibt
         // lock-frei (read-only nach dem Konstruktor).
         nonstd::string_view description_for_wire(std::size_t se_num) const {
-            auto it = description_map_.find(se_num);
-            if (it != description_map_.end())
-                return nonstd::string_view(it->second);
+            if (const tlv_detail::TlvChildInfo* child = child_info(se_num);
+                child && !child->description.empty())
+                return nonstd::string_view(child->description);
 
             const std::lock_guard lock(fallback_cache_mutex_);
             auto [cacheIt, inserted] = fallback_description_cache_.try_emplace(
@@ -263,21 +365,22 @@ namespace TNG_NAMESPACE {
 
         // [ISO8583] 3.4 (PCI): Sensitivität eines SE-Tags — entweder global
         // (sensitive_all_, z. B. BERTLV-Container mit 'sensitive: true') oder
-        // pro Tag aus sensitive_map_ (YAML-Kind-Deklaration). Lock-frei:
-        // beide Maps sind read-only nach dem Konstruktor.
+        // pro Tag aus child_map_ (YAML-Kind-Deklaration, bereits inkl.
+        // Eltern-Erbung: kind.sensitive || feld.sensitive). Lock-frei:
+        // child_map_ ist read-only nach dem Konstruktor.
         bool sensitive_for_wire(std::size_t se_num) const {
             if (sensitive_all_)
                 return true;
-            auto it = sensitive_map_.find(se_num);
-            return it != sensitive_map_.end() && it->second;
+            if (const tlv_detail::TlvChildInfo* child = child_info(se_num))
+                return child->sensitive;
+            return false;
         }
 
     private:
-        DataEncodingMap data_enc_map_;
-        DescriptionMap  description_map_;
-        // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (read-only nach dem
-        // Konstruktor, s. SensitiveMap) + Flag für Container-Ebene (BERTLV).
-        SensitiveMap    sensitive_map_;
+        // FR-1/FR-2 (0.5.0): deklarierte Kind-Elemente (read-only nach dem
+        // Konstruktor) — ersetzt die früheren drei parallelen Maps.
+        tlv_detail::TlvChildMap child_map_;
+        // [ISO8583] 3.4 (PCI): Flag für Container-Ebene (BERTLV 'sensitive: true').
         bool            sensitive_all_ = false;
         // mutable: unparse() ist zwar selbst nicht const, description_for_wire()
         // wird aber bewusst als const-Methode angeboten (liest nur, "erzeugt"

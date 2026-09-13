@@ -27,6 +27,10 @@ namespace TNG_NAMESPACE::tlv_detail {
         TNG_LOG_WARN("[ISOTLVParser] TCC-Feld nicht gesetzt – schreibe Leerzeichen");
     }
 
+    void log_warn_se_missing(std::size_t se_num) {
+        TNG_LOG_WARN("[ISOTLVParser] SE{} nicht gesetzt – wird nicht serialisiert", se_num);
+    }
+
     void log_error_se_overflow(std::size_t se_num, std::size_t se_len,
         std::size_t pos, std::size_t buf_sz)
     {
@@ -91,7 +95,9 @@ namespace TNG_NAMESPACE::tlv_detail {
         std::size_t data_offset, std::size_t data_len,
         std::size_t wire_offset, std::size_t wire_len,
         const nonstd::string_view& description,
-        bool sensitive)
+        bool sensitive,
+        const TlvChildInfo* child,
+        bool strict)
     {
         // [ISO8583] Phase 4 (F5, P3): kein stiller static_cast-Verlust. Ein
         // BER-Tag, das in TNG_KEY_TYPE nicht passt (z.B. 0x9F26 = 40742 >
@@ -105,11 +111,25 @@ namespace TNG_NAMESPACE::tlv_detail {
             log_warn_se_key_too_wide(se_num);
             return; // SE wird bewusst NICHT gespeichert (kein Fehlrouting)
         }
-        auto se = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
-            static_cast<TNG_KEY_TYPE>(se_num));
-        se->value(std::vector<uint8_t>(
-            buf.begin() + static_cast<std::ptrdiff_t>(data_offset),
-            buf.begin() + static_cast<std::ptrdiff_t>(data_offset + data_len)));
+        // FR-1 (0.5.0): deklarierter Text-Kind (char/numeric/nopad_char) →
+        // OpaqueField per Codec (strict: nicht-mappbare Bytes werfen ein
+        // std::runtime_error; nicht-strikt: Legacy-Sentinel-Mapping '.'/'?').
+        // Binäre Kinder und undeklarierte Tags → BinaryField (rohe Bytes, Unchanged).
+        std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > se;
+        if (child && child->text) {
+            auto of = std::make_shared< ::TNG_NAMESPACE::OpaqueField >(
+                static_cast<TNG_KEY_TYPE>(se_num));
+            (void)of->value(child_as_string(child->enc, buf, data_offset, data_len, strict));
+            se = of;
+        }
+        else {
+            auto bf = std::make_shared< ::TNG_NAMESPACE::BinaryField >(
+                static_cast<TNG_KEY_TYPE>(se_num));
+            (void)bf->value(std::vector<uint8_t>(
+                buf.begin() + static_cast<std::ptrdiff_t>(data_offset),
+                buf.begin() + static_cast<std::ptrdiff_t>(data_offset + data_len)));
+            se = bf;
+        }
         // `description` zeigt bereits in einen langlebigen, vom Parser
         // besessenen Speicher (siehe ISOTLVParser::description_for_wire) -
         // keine Kopie/Temporäre hier, sonst dangelnde Sicht (siehe dortiger

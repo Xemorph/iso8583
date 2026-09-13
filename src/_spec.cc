@@ -617,16 +617,14 @@ namespace TNG_NAMESPACE::spec {
 
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
         makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber,
-            const std::unordered_map<std::size_t, std::string>& descriptionMap,
-            const std::unordered_map<std::size_t, bool>& sensitiveMap = {},
+            const tlv_detail::TlvChildMap& childMap,
             bool sensitiveAll = false)
     {
         using namespace ::TNG_NAMESPACE;
 
         // ── BER-TLV: variable Tag-/Length-Länge, kein TCC ─────────────────────
         if (ber)
-            return std::make_shared<BERTLVParser>(BERTLVParser::DataEncodingMap{}, descriptionMap,
-                sensitiveMap, sensitiveAll);
+            return std::make_shared<BERTLVParser>(childMap, sensitiveAll);
 
         // ── Feste Byte-Anzahl (bisheriges Verhalten, jetzt über
         //    FixedNumericTag/FixedNumericLength statt der ursprünglichen
@@ -635,14 +633,7 @@ namespace TNG_NAMESPACE::spec {
         std::make_shared<ISOTLVParser< \
             FixedNumericTag<TB, codec::Encoder::ENC>, \
             FixedNumericLength<LB, codec::Encoder::ENC>, \
-            HAS_TCC, codec::Encoder::ENC>>( \
-                ISOTLVParser< \
-                    FixedNumericTag<TB, codec::Encoder::ENC>, \
-                    FixedNumericLength<LB, codec::Encoder::ENC>, \
-                    HAS_TCC, codec::Encoder::ENC>::DataEncodingMap{}, \
-                descriptionMap, \
-                sensitiveMap, \
-                sensitiveAll)
+            HAS_TCC, codec::Encoder::ENC>>(childMap, sensitiveAll)
 
         // tag_bytes == 2, len_bytes == 2
         if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, true, EBCDIC);
@@ -670,14 +661,7 @@ namespace TNG_NAMESPACE::spec {
         return std::make_shared<ISOTLVParser<
             FixedNumericTag<2, codec::Encoder::EBCDIC>,
             FixedNumericLength<2, codec::Encoder::EBCDIC>,
-            false, codec::Encoder::EBCDIC>>(
-                ISOTLVParser<
-                    FixedNumericTag<2, codec::Encoder::EBCDIC>,
-                    FixedNumericLength<2, codec::Encoder::EBCDIC>,
-                    false, codec::Encoder::EBCDIC>::DataEncodingMap{},
-                descriptionMap,
-                sensitiveMap,
-                sensitiveAll);
+            false, codec::Encoder::EBCDIC>>(childMap, sensitiveAll);
     }
 
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
@@ -713,27 +697,44 @@ namespace TNG_NAMESPACE::spec {
                     return codec::Encoder::EBCDIC;
                     }();
 
-                // Aus 'children' deklarierte Beschreibungen an den Laufzeit-
-                // Parser weiterreichen (siehe description_for() in
-                // ISOTLVParser) - macht 'children: <tag>: {description: ...}'
-                // erstmals tatsächlich wirksam, statt rein dokumentarisch zu
-                // sein. Format/Typisierung pro Tag bleiben bewusst
-                // zurückgestellt (siehe Konversation) - jedes SE/Tag wird
-                // weiterhin als BinaryField dekodiert, nur die Beschreibung
-                // wird aus der Spec übernommen.
-                std::unordered_map<std::size_t, std::string> descriptionMap;
-                // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
-                // 'sensitive: true' oder Erbgang von einem sensitive Container).
-                std::unordered_map<std::size_t, bool> sensitiveMap;
+                // FR-1/FR-2 (0.5.0): aus 'children' deklarierte Kind-Elemente
+                // als einheitliche TlvChildMap an den Laufzeit-Parser
+                // weiterreichen – Typisierung (Text vs. binär) + Encoding +
+                // Beschreibung + PCI-Sensitivität (statt der früheren drei
+                // parallelen Maps). Text-Kind: char/numeric/nopad_char →
+                // OpaqueField (Codec, strict-Propagation); alles andere
+                // (binary/undeklariert) → BinaryField (rohe Bytes).
+                tlv_detail::TlvChildMap childMap;
                 for (const auto& [tag, child] : f.tlv_children) {
-                    if (child.has_explicit_description)
-                        descriptionMap[static_cast<std::size_t>(tag)] = child.description;
-                    if (child.sensitive || f.sensitive)
-                        sensitiveMap[static_cast<std::size_t>(tag)] = true;
+                    tlv_detail::TlvChildInfo info;
+                    const auto cf = child.format; // bereits Uppercase (parseSpecField)
+                    info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR");
+                    if (info.text) {
+                        if (child.encoding == "BCD")
+                            info.enc = codec::Encoder::BCD;
+                        else if (child.encoding == "ASCII")
+                            info.enc = codec::Encoder::ASCII;
+                        else if (child.encoding == "EBCDIC")
+                            info.enc = codec::Encoder::EBCDIC;
+                        else
+                            // Defensive: wird primär von validateSpecYaml abgefangen
+                            // (positioniert). Hier nur als Fail-closed-Doppelcheck.
+                            throw std::runtime_error(
+                                "[SpecDecoder] TLV-Kind " + child.description +
+                                " (Format " + cf + ") benötigt ein Encoding (ascii/ebcdic/bcd), "
+                                "erbt aber '" + child.encoding + "'");
+                    }
+                    else
+                        info.enc = codec::Encoder::BINARY; // rohe Bytes, Encoding ignorieren
+                    info.description = child.has_explicit_description ? child.description : "";
+                    // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
+                    // 'sensitive: true' oder Erbgang von einem sensitive Container).
+                    info.sensitive = child.sensitive || f.sensitive;
+                    childMap[static_cast<std::size_t>(tag)] = std::move(info);
                 }
 
                 nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber,
-                    descriptionMap, sensitiveMap, f.sensitive));
+                    childMap, f.sensitive));
             }
             else {
                 auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);

@@ -199,17 +199,33 @@ TEST_CASE("ISOTLVParser custom - 1 byte ASCII tag no TCC", "[tlv][custom]") {
     CHECK(tlv->parse(msg) == payload);
 }
 
-TEST_CASE("ISOTLVParser - data_encoding_map hint", "[tlv][data_enc]") {
-    // data_encoding_map ist ein Runtime-Hinweis für höhere Schichten
-    ISOTLVParser_MC::DataEncodingMap enc_map;
-    enc_map[72] = codec::Encoder::BCD;   // SE72-Daten sind BCD
-    enc_map[48] = codec::Encoder::EBCDIC;
+TEST_CASE("ISOTLVParser - TlvChildMap: deklarierter Text-Kind wird typisiert dekodiert (FR-1)", "[tlv][typed]") {
+    // FR-1 (0.5.0): einheitliche Kind-Struktur (TlvChildMap) statt der früheren
+    // DataEncodingMap/DescriptionMap/SensitiveMap. Deklariertes Text-Kind
+    // (ASCII) → OpaqueField via Codec, inkl. Beschreibung aus der Deklaration.
+    tlv_detail::TlvChildMap childMap;
+    tlv_detail::TlvChildInfo se72;
+    se72.text = true;
+    se72.enc = codec::Encoder::ASCII;
+    se72.description = "SE72-Text";
+    childMap[72] = se72;
 
-    auto tlv = std::make_shared<ISOTLVParser_MC>(std::move(enc_map));
+    auto tlv = std::make_shared<ISOTLVParser_VI>(std::move(childMap));
 
-    CHECK(tlv->data_encoding_for(72) == std::optional<codec::Encoder>{codec::Encoder::BCD});
-    CHECK(tlv->data_encoding_for(48) == std::optional<codec::Encoder>{codec::Encoder::EBCDIC});
-    CHECK(tlv->data_encoding_for(99) == std::nullopt);
+    // Visa: 2 BCD-Byte TAG (4 BCD-Ziffern), 1 BCD-Byte LEN. TAG 72 = BCD
+    // 0x0072, LEN 2, Daten 'AB' (ASCII).
+    const std::vector<uint8_t> payload = { 0x00, 0x72, 0x02, 'A', 'B' };
+
+    auto msg = std::make_shared< Message >();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se = msg->get< OpaqueField >(72);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == "AB");
+    CHECK(se->description() == "SE72-Text");
+    // Undeklariertes SE bleibt BinaryField (z.B. SE 48 ohne Deklaration).
+    const auto se48 = msg->get< BinaryField >(48);
+    CHECK(se48 == nullptr); // wurde nicht gespeichert (nicht im Payload)
 }
 
 // =============================================================================
