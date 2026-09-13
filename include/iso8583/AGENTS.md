@@ -268,7 +268,7 @@ for (const auto& f : spec->fields())
 |---|---|---|
 | `type` | `std::string` | Basisformat: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"` |
 | `prefix_digits` | `int` | `0`=fix, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
-| `max_length` | `int` | Maximale Nutzdatenlänge in logischen Einheiten (Zeichen, Ziffern oder Bytes) |
+| `max_length` | `int` | Maximale Nutzdatenlänge in logischen Einheiten (Zeichen, Ziffern oder Bytes); bei `REMAINING` das deklarierte Maximum (0.6.0, `length`-Pflicht), bei `NOP`/`UNUSED` 0 |
 
 ### SpecFieldInfo-Mitglieder
 
@@ -358,6 +358,11 @@ ein roher `std::stoi`.
 
 ## YAML-Spezifikationsformat
 
+> **Normative Referenz:** `docs/internals/spec_schema.md` (Sphinx-Doku,
+> Abschnitt *Internals*) — vollständiges Schema (Root-/Feld-Keys,
+> Format×Encoding-Matrix, Direktiven, TLV-Regeln, Fehlersemantik,
+> komplette Beispiele) für Menschen und KI-Generatoren.
+
 ```yaml
 spec:     "My Spec"
 encoding: ebcdic          # global: ascii | bcd | ebcdic | binary
@@ -444,7 +449,8 @@ fields:
       - format: numeric
         length: 1
         description: "POS Terminal Attendance"
-      - format: remaining   # konsumiert alle restlichen Bytes — kein Längenpräfix
+      - format: remaining
+        length: 10            # Pflicht seit 0.6.0 (Maximum, Clamp)
         description: "POS Postal Code"
 ```
 
@@ -483,6 +489,8 @@ fields:
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
 - `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
+  (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
+  `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)
 - `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
   (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**. Seit 0.5.0 (FR-2)
   darf zusätzlich eine optionale `children:`-**Map** (HEX-Tag-Keys) bekannte/
@@ -669,6 +677,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Hex-Zeichenkette an ein nicht-BINARY-Feld | Nur `BinaryField` akzeptiert Hex-Eingabe |
 | Rohe Bytes an `BinaryField` übergeben | Hex-Zeichenkette in Großbuchstaben, z. B. `"DEADBEEF"` |
 | `msg->mti()` vor der Prüfung von `hasMTI()` | Wirft `std::logic_error`, wenn kein MTI gesetzt ist |
+| `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 
 ---
 

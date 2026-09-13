@@ -1,0 +1,411 @@
+# Normative Spec-Schema-Referenz (YAML)
+
+> **Zweck dieses Dokuments:** Diese Seite ist die *normative* Referenz für
+> die YAML-Spezifikationsdateien, die `iso8583::spec::SpecDecoder` lädt.
+> Sie richtet sich an Menschen **und** an KI-Agenten, die Spec-Dateien
+> generieren: Wer alle Regeln hier einhält, erhält eine ladefähige Spec;
+> wer eine der fail-closed-Regeln verletzt, bekommt einen positionierten
+> `SpecValidationError` (nie ein abstrakter Standard-Exception).
+>
+> Vertiefende Hintergrundtexte: [yaml_format.md](yaml_format.md)
+> (Dokumentation aller Direktiven/Features) und [encoding.md](encoding.md)
+> (Encoding-System und EBCDIC-Orakel-Pin).
+
+## 1. Dokumentgerüst (Root)
+
+Eine Spec-Datei ist eine YAML-Dokumentensammlung. Das **letzte** Dokument
+enthält die eigentliche Spec; vorherige Dokumente dürfen
+`!include_files` sein.
+
+```yaml
+!include_files          # optional; MUSS das erste Dokument sein
+- common_definitions.yml
+---                     # Dokumenttrenner ist PFLICHT nach !include_files
+spec: "My Network"      # PFLICHT, String – Spec-Name
+encoding: ascii         # optional: ascii | bcd | ebcdic | binary
+strict: true            # optional, Default true (false = Legacy-Mapping)
+header: 93              # optional, int – N-Byte-Netz-Header vor dem Body
+definitions:            # optional – wiederverwendbare Bausteine (-> !use)
+  pan_field: { type: scalar, format: llchar, length: 19 }
+fields:                 # PFLICHT, nicht-leere Map
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "002": !use pan_field
+```
+
+**Root-Schlüssel:**
+
+| Schlüssel | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `spec` | string | ja | Name der Spec (Introspection: `ISOSpec::name()`) |
+| `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | globales Encoding (Auflösung s. §7) |
+| `strict` | bool | nein | Default `true`; `false` = Legacy-`'.'`/`'?'`-Mapping statt positioned Throw (s. §8) |
+| `header` | int | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`) |
+| `definitions` | map | nein | benannte Feld-Bausteine für `!use` |
+| `fields` | map | ja | **nicht-leere** Map `DE-Schlüssel → Feld-Deklaration` |
+
+**Root-Regeln (fail-closed):**
+
+- `!include_files` (wenn vorhanden) muss das **erste** Dokument sein und
+  wird vom Loader **vor** dem `---`-Trenner erwartet. Fehlt der Trenner:
+  positionierter `SpecValidationError`.
+- `fields` muss eine **nicht-leere Map** sein. Leere Maps, Sequenzen
+  oder nicht-numerische DE-Schlüssel werden verworfen.
+- Jeder DE-Schlüssel ist eine (optional mit führenden Nullen versehene)
+  Zahl: `"000"` = MTI, `"001"` = Primär-Bitmap, `"002".."192"` = Daten-
+  Elemente (DE 65–128 Sekundär-Bitmap, 129–192 Tertiär-Bitmap).
+- Include-Sandbox (Default): `!include_files`-Einträge, die außerhalb
+  des Verzeichnisses der Top-Level-Spec auflösen (`../`, absolute/UNC-
+  Pfade, Symlink-Escape), werden **abgelehnt** (fail-closed).
+
+## 2. Feld-Deklaration
+
+Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
+
+| Schlüssel | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `type` | `scalar` \| `nested` | nein (Default `scalar`) | `nested` = Sub-Nachricht (`Message`), benötigt `children` |
+| `format` | string | ja (außer `nested` ohne `children`… siehe §6) | eine der Formate aus §3 |
+| `length` | int | ja, **außer** `bitmap`/`nop`/`unused`; bei `remaining` **stets** Pflicht (0.6.0) | fixe Länge **oder** Maximum (variablen Formate/`remaining`). **BCD-Felder: `length` = Ziffernzahl** (1 Byte = 2 Ziffern) |
+| `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | feldweises Override über das globale Encoding (§7) |
+| `description` | string | nein | Beschreibung (Introspection + Dump); bei `sensitive`-Feldern die einzige sichtbare Info im Dump |
+| `sensitive` | bool | nein (Default `false`) | PCI-Masking: Wert wird in `dump()`/`operator<<` als `***` gerendert; `value()`/`to_json()` bleiben unmasked. Bei Containern: auf alle Kinder/Tags erbt |
+| `tlv` | map | nein | `tag_bytes`/`len_bytes` (fester TLV) oder `ber: true` (EMV-BER-TLV), nur mit `type: nested` (§6) |
+| `children` | list \| map | ja bei `type: nested` | **Liste** = feste Subfelder (Positionsreihenfolge); **Map** = TLV-Modus (Schlüssel = SE-Nummer bzw. Hex-Tag) |
+
+**Minimales Feld:** `"003": { format: numeric, length: 6 }` — alles
+andere ist optional; `description` wird für nachvollziehbare Specs
+empfohlen.
+
+## 3. Formate und die Format×Encoding-Matrix
+
+Formate (YAML-Schreibweise) und ihre Dispatch-Einträge. Die Matrix
+entspricht exakt der Dispatch-Tabelle in `src/_spec.cc`
+(`parserTable()`); ein **fehrender Eintrag = Ladefehler**
+(`Unbekannte Format/Encoding-Kombination …`), nicht Stille-
+Default-Auswahl.
+
+**Zuordnung der Laufzeit-Typen (Introspection `SpecFieldFormat::type`):**
+
+- Text-Formate (`numeric`/`char`/`nopad_char` + `remaining` mit Text-
+  Encoding) → `OpaqueField` (`std::string`)
+- `binary`-Formate + `remaining` ohne Encoding/`binary` → `BinaryField`
+  (`std::vector<uint8_t>`; set via **großgeschriebene Hex-Zeichenkette**)
+- `bitmap` → `Bitmap` (auto-berechnet, nie manuell setzen)
+- `nop`/`unused` → Platzhalter, verbraucht keine Bytes
+- `type: nested` → `Message`
+
+| Format | `ascii` | `bcd` | `ebcdic` | `binary`/keine |
+|---|---|---|---|---|
+| `numeric` | ✔ (IFA_NUMERIC) | ✔ (IFB_NUMERIC) | ✔ (IFE_NUMERIC) | ✘ |
+| `char` | ✔ | ✘ | ✔ | ✘ |
+| `nopad_char` | ✔ | ✘ | ✔ | ✘ |
+| `l*`-Varianten (`lchar`, `llchar`, `lllchar`; `ascii` zusätzlich `llllchar`) | `lchar`–`llllchar` ✔ | `lchar`–`lllchar` ✔ | `lchar`–`lllchar` ✔ | ✘ (s. Hinweis unten) |
+| `lnum`/`llnum` | ✔ | ✘ | `lnum` ✔ (kein `llnum`) | ✘ |
+| `binary` (fix) | ✘ | ✘ | ✔ (HEX_EBCDIC, s. Hinweis) | ✔ (roh) |
+| `lbinary`/`llbinary`/`lllbinary` | ✔ (Prefix ASCII-Ziffern) | ✔ (Prefix BCD) | ✔ (Prefix EBCDIC) | ✔ (Prefix Big-Endian-Bytes, **nicht** neutral!) |
+| `llllbinary` | ✘ | ✘ | ✔ | ✘ |
+| `bitmap` | encoding-neutral (roh) | — | — | — |
+| `nop` / `unused` | encoding-neutral (roh) | — | — | — |
+| `remaining` | ✔ (0.6.0, OpaqueField) | ✔ (0.6.0, OpaqueField) | ✔ (0.6.0, OpaqueField, Text!) | ✔ (roh, BinaryField) — s. §4 |
+| `bertlv` (`l`/`ll`/`lll`/`llll` + `bertlv`) | encoding-neutral (BER-TLV) | — | — | — |
+
+**Wichtige Nuancen:**
+
+- **`format: binary` unter `ebcdic`** ist **kein** Text: der Parser
+  verwendet `HEX_EBCDIC` (2 EBCDIC-Hex-Zeichen pro Byte →
+  `BinaryField`). Text in einer EBCDIC-Spec ist immer `char`/`numeric`.
+- **`remaining` + `ebcdic`** dagegen **ist** Text (`OpaqueField`):
+  `remaining` folgt der *Daten*-Codec-Tabelle wie `char`/`numeric`
+  (IBM-1047, orakelgepinnt).
+- **`l*binary` ohne/`binary`-Encoding**: Die Längenpräfix-Bytes werden
+  als **Big-Endian-Bytes** gelesen (Encoding des Präfix = `binary`),
+  die Daten bleiben roh. `lbinary` u. a. sind **nicht** encoding-neutral.
+- **BCD-Semantik:** Bei allen BCD-Formaten ist `length` die
+  **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
+  *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als
+  `:`/`;` abgebildet (nicht validiert, auch nicht im strict-Modus —
+  BCD-Daten sollten nur Ziffern enthalten).
+- `type: scalar` + `bertlv`-Format erzeugt zur Laufzeit eine
+  `Message`, deren Kind-Schlüssel die rohen BER-Tag-Werte sind
+  (z. B. `0x9F26` → Key `9F26` bei int32-Keys).
+
+## 4. `remaining` (0.6.0: encoding-aware)
+
+`remaining` liest **alle restlichen Bytes des Eltern-Buffers** — kein
+eigenes Längenpräfix. Seit **0.6.0** ist `remaining` **nicht mehr**
+encoding-neutral:
+
+1. **`length` ist Pflicht.** Fehlt `length`, wirft der Loader einen
+   positionierten `SpecValidationError`
+   (`'format: remaining' benötigt 'length' …`). Ohne Maximum würden
+   sonst 0 Bytes dekodiert (Fail-closed).
+2. `length` ist ein **Maximum (Clamp)**: längerer Payload wird
+   gekürzt; übrige Bytes bleiben unkonsumiert (strict: Lade-/
+   Decode-Fehler „Unverbrauchte Bytes", legacy: Warnung).
+3. **Encoding-Auflösung wie bei allen anderen Formaten**
+   (Feld-`encoding` > globales `encoding` > `""`):
+
+   | aufgelöstes Encoding | Laufzeit-Typ | Verhalten |
+   |---|---|---|
+   | `""` oder `binary` | `BinaryField` | rohe Bytes (wie vor 0.6.0) |
+   | `ascii` | `OpaqueField` | ASCII-Text |
+   | `ebcdic` | `OpaqueField` | IBM-1047-Text (strict: Whitelist-Throw; legacy: `'.'`) |
+   | `bcd` | `OpaqueField` | gepackte Ziffern (`length` = Ziffern!) |
+
+4. **Strict-Propagation:** Das Parser-`strict`-Flag wirkt auch auf
+   `remaining`-Konvertierungen (EBCDIC-Whitelist, s. encoding.md).
+5. `remaining` gehört in der Praxis an die **letzte Position** des
+   Eltern-Buffers (typisch: Schlussfeld eines `type: nested` Containers,
+   z. B. BMP_061-Subfeld 15/POS-Postleitzahl). In **TLV-Kindern** ist
+   `remaining` verboten (Whitelist, §6).
+
+```yaml
+# Beispiel: EBCDIC-Spec mit remaining-Schlussfeld (0.6.0)
+spec: "Rem Example"
+encoding: ebcdic
+fields:
+  "000": { format: numeric,  length: 4 }
+  "001": { format: bitmap,   length: 8 }
+  "061":
+    type: nested
+    format: binary
+    length: 26
+    children:
+      - { format: numeric, length: 1 }
+      - { format: remaining, length: 10, description: "POS Postal Code" }
+```
+
+## 5. Direktiven
+
+| Direktive | Verwendung | Regeln |
+|---|---|---|
+| `!include_files [a.yml, b.yml]` | Root, erstes Dokument | muss von `---` gefolgt werden; Sandbox s. §1 |
+| `!use <name>` | Feldwert oder `definitions`-Referenz | referenziert einen Eintrag aus `definitions:`; Zyklen und unendliche Rekursion werden erkannt und verworfen |
+| `!template P(F, N)` | z. B. `!template LL(CHAR, 19)` | erzeugt ein `llchar`-Format mit Länge 19; zulässige `F`: `CHAR`, `NUMERIC`, `BINARY`, … |
+| `!merge [a, b]` | Feldwert: `{ !merge [ !template LLL(BINARY, 255), description: "ICC Data" ] }` | fusioniert Map-Einträge; Sequenz-Definitionen sind erlaubt (0.2.1-Fix) |
+| `!include` | **deprecated** Alias von `!use` | erzeugt eine Warnung; neu `!use` schreiben |
+
+## 6. Nested, TLV und BERTLV
+
+**Plain nested (Liste = feste Positionsreihenfolge):**
+
+```yaml
+"061":
+  type: nested
+  format: binary          # Container-Format (Daten roh)
+  length: 26
+  children:
+    - { format: numeric, length: 1 }
+    - { format: remaining, length: 10, description: "POS Postal Code" }
+```
+
+**Fixer TLV (MC/Visa-Style), `tag_bytes`/`len_bytes`:**
+
+```yaml
+"048":
+  type: nested
+  format: lllchar
+  length: 999
+  tlv: { tag_bytes: 2, len_bytes: 2 }
+  children:
+    "26": { format: char, length: 10, description: "…" }   # dezimale SE-Nummern
+```
+
+**BER-TLV (EMV), `tlv: { ber: true }`:**
+
+```yaml
+"057":
+  type: nested
+  format: lllbinary
+  length: 999
+  tlv: { ber: true }
+  children:
+    "9F26": { format: binary, length: 8,  description: "Application Cryptogram" }  # Hex-Keys
+    "5A":   { format: binary, length: 10, description: "Application PAN" }
+```
+
+**BERTLV als Scalar-Format** (`056`-Style): `format: lllbertlv`
+**ohne** `type: nested`, **ohne** `tlv:`, **ohne** `children` —
+jede auftretende BER-Tag wird dekodiert (ISO/IEC 8825-1);
+Kind-Schlüssel = rohe Tag-Werte (z. B. `9F26` als int32-Key).
+
+**TLV-Kind-Whitelist (fail-closed beim Laden):**
+
+- Erlaubte Kind-Formate: `binary`, `char`, `numeric`, `nopad_char`.
+  Verboten: L-präfixierte Formate, `bitmap`, `remaining`, `nop`
+  (die Länge liegt im Length-Feld des Frames — Widerspruch).
+- Erlaubte Kind-Encodings: `ascii`, `ebcdic`, `bcd`, `binary`;
+  Text-Formate (`char`/`numeric`/`nopad_char`) nur mit
+  `ascii`/`ebcdic`/`bcd`.
+- `children`-Keys: `ber: true` → **Hex** (`"9F26"`, `"5A"`);
+  fixer TLV → **dezimale** SE-Nummern (`"26"`); ein `"0x1A"`-Präfix
+  erzwingt in beiden Modi Hex.
+- Undeklarierte Tags/SEs werden dekodiert (Fallback-Beschreibung
+  `SE<n>` bzw. generischer Tag-Name), nie verworfen.
+
+## 7. Encoding-Auflösung und -Vererbung
+
+```
+Feld-Encoding  >  globales YAML-Encoding  >  "" (nur encoding-neutrale Formate)
+```
+
+- **Encoding-neutral** (lesen/schreiben immer Rohtext, ignorieren
+  jede Encoding-Einstellung): `BINARY` (fix), `BITMAP`, `NOP`,
+  `UNUSED`, `BERTLV`. **`REMAINING` ist seit 0.6.0 nicht mehr neutral**
+  (s. §4).
+- **Kindervererbung:** encoding-neutrale Felder geben das
+  **globale** Encoding an ihre Kinder weiter; encoding-bewusste
+  Felder ihr eigenes aufgelöstes Encoding. So bleibt eine EBCDIC-Spec
+  mit `binary`-Containern in der Mitte konsistent.
+- Details, EBCDIC-Orakel-Pin und Strict-Regeln: [encoding.md](encoding.md).
+
+## 8. Validierung und Fehlersemantik (fail-closed)
+
+Alle Loader-/Validierungsfehler sind **positionierte**
+`std::runtime_error` (Subtyp `SpecValidationError` mit
+`file:line:col`), nie rohe STL-Exceptions:
+
+| Auslöser | Fehler |
+|---|---|
+| `remaining` ohne `length` | `Feld …: 'format: remaining' benötigt 'length' …` |
+| `fields` leer / keine Map / nicht-numerischer DE-Key | positionierter `SpecValidationError` |
+| Format/Encoding-Kombination ohne Dispatch-Eintrag (§3) | `Unbekannte Format/Encoding-Kombination …` |
+| `!include_files` ohne `---`-Trenner | positionierter `SpecValidationError` |
+| `!include_files` außerhalb der Sandbox-Roots | `[ISO8583] Sandbox: …` (fail-closed) |
+| zirkuläres `!use` / Rekursionstiefe > 200 | `std::runtime_error` (kein Stack-Overflow) |
+| TLV-Kind außerhalb der Whitelist (§6) | `TLV-Kind '…' (Format …) … verworfen` |
+| Datei > `maxSpecBytes` (Default 32 MiB) / > 1024 Includes / oversized Sidecar | positionierter Fehler bzw. Discard+Regenerierung |
+| rapidyaml-Parsefehler | via prozessweit installierten `ryml`-Callbacks in positionierte Exceptions übersetzt (Default wäre `std::abort()`) |
+
+**Strict vs. Legacy (nur Decodierung, nur Daten-Bytes):**
+`strict: true` (Default) wirft bei unmappbaren Bytes positioniert
+(EBCDIC: 85-Byte-IBM-1047-Whitelist; A2E: 84 Zeichen + `'?'`-
+Ausnahme). `strict: false` = Legacy: E2A → `'.'` (`0x2E`),
+A2E → `'?'` (`0x6F`). Längenpräfixe werden immer roh gelesen
+(`constexpr` kann nicht werfen) — korrupte Präfixe fallen an den
+nachgelagerten Checks auf.
+
+## 9. Laufzeitverhalten (für die Interpretation von Specs)
+
+- `unparse()` = **Decode** (Wire → Felder), `parse()` = **Encode**
+  (Felder → Wire). Diese Umkehrung ist bewusst.
+- **Bitmap-Felder werden nie manuell gesetzt** — der Parser
+  berechnet sie (bei `msg->parse(msg)` automatisch via
+  `recalcBitmap_locked()`; die Expert-API `parser->parse(msg)`
+  erwartet eine vorhandene Bitmap).
+- DE-Zugriff per Punkt-Notation (`"48.72.1"`); `BinaryField`-Werte
+  werden als **großgeschriebene Hex-Zeichenketten** gesetzt
+  (`msg->set(52, "0102030405060708")`).
+- `msg->mti()` wirft `std::logic_error`, wenn kein MTI
+  (`hasMTI()` zuerst prüfen); `mti()` setzt ein `OpaqueField`
+  voraus (binary-MTIs: nur `hasMTI()`).
+- `sensitive: true` maskiert **nur** die Dump-/Log-Oberfläche
+  (`dump()`, `operator<<` → `***`); `value()`/`to_json()`
+  sind bewusst unmasked.
+- `.smap`-Sidecar (Fehlerpositionen): Cache, neben der Spec-Datei,
+  SHA-256-quellengeprüft, jederzeit löschbar; bei read-only-
+  Deployment `SpecLoadOptions::allowSmapWrite=false`.
+- Introspection: `ISOSpec::field(de)` liefert
+  `SpecFieldInfo{key, description, format{type, prefix_digits,
+  max_length}, encoding, is_nested, is_bitmap, children}` —
+  bei `remaining` ist `max_length` das deklarierte Maximum
+  (0.6.0; vorher immer 0), bei `nop`/`unused` 0.
+
+## 10. Komplette Beispiele
+
+**Minimal (ASCII):**
+
+```yaml
+spec: "Minimal ASCII"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4, description: "MTI" }
+  "001": { format: bitmap,  length: 8 }
+  "003": { format: numeric, length: 6, description: "Processing Code" }
+  "011": { format: numeric, length: 6, description: "STAN" }
+  "039": { format: numeric, length: 2, description: "Response Code" }
+```
+
+**EBCDIC mit TLV und remaining:**
+
+```yaml
+spec: "EBCDIC Gateway"
+encoding: ebcdic
+strict: true
+header: 93
+definitions:
+  pan: { type: scalar, format: llchar, length: 19, sensitive: true }
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "002": !use pan
+  "003": { format: numeric, length: 6, encoding: bcd }   # Feld-Override
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26": { format: char, length: 10, description: "Auth Code" }
+  "057":
+    type: nested
+    format: lllbinary
+    length: 999
+    tlv: { ber: true }
+    children:
+      "9F26": { format: binary, length: 8, description: "Application Cryptogram" }
+      "5A":   { format: binary, length: 10, description: "Application PAN", sensitive: true }
+  "061":
+    type: nested
+    format: binary
+    length: 26
+    children:
+      - { format: numeric, length: 1 }
+      - { format: remaining, length: 10, description: "POS Postal Code" }
+```
+
+**BCD-spezifisch:**
+
+```yaml
+spec: "BCD Network"
+encoding: bcd
+fields:
+  "000": { format: numeric, length: 4 }                  # 4 Ziffern = 2 Bytes
+  "001": { format: bitmap,  length: 8 }
+  "004": { format: numeric, length: 12, description: "Amount" }   # 12 Ziffern = 6 Bytes
+  "061":
+    type: nested
+    format: binary
+    length: 26
+    children:
+      - { format: remaining, length: 10, encoding: ascii, description: "ASCII im BCD-Container" }
+```
+
+## 11. Häufige Fehler (Checkliste für Generatoren)
+
+1. **`remaining` ohne `length`** → Ladefehler (0.6.0, Fail-closed).
+   Immer `length` (Maximum) mit angeben.
+2. **`remaining`/`char`/`numeric` in TLV-Kindern** → Whitelist-Fehler.
+   TLV-Kinder: nur `binary`/`char`/`numeric`/`nopad_char`.
+3. **`!include_files` ohne `---`** → Ladefehler (0.2.0-Breaking).
+4. **BCD-`length` in Bytes statt Ziffern** → Feld dekodiert die halbe
+   Länge. `length: 12` = 12 Ziffern = 6 Bytes.
+5. **Text als `binary` in EBCDIC-Spec** → `HEX_EBCDIC` (kein Text!).
+   Text in EBCDIC-Specs: `char`/`numeric` (encoding vererbt `ebcdic`).
+6. **`bitmap`/`nop`/`unused` mit `length > 0` bzw. `remaining` als
+   TLV-Kind** → semantischer Widerspruch (Validierung/Warnung).
+7. **Nicht-numerische DE-Keys** (z. B. `pan:` statt `"002":`) →
+   Ladefehler.
+8. **Zirkuläres `!use`** → Ladefehler (Rekursionsschutz).
+9. **`bertlv` kombinieren mit `type: nested`/`tlv:`/`children`** →
+   verboten (BERTLV ist Scalar-only).
+10. **`l*binary` ohne Encoding ≠ roh** → Präfix ist Big-Endian-Byte;
+    für roh *mit* Präfix in ASCII-Specs bewusst `encoding: ascii`
+    setzen (Präfix = ASCII-Ziffern).
+11. **Include-Pfade außerhalb des Spec-Verzeichnisses** →
+    Sandbox-Fehler; `SpecLoadOptions::roots` erweitern (nicht
+    `sandbox=false`, außer bei vollständig vertrauenswürdigen Trees).
+12. **Kommazeichen/Unicode-Dash in YAML-Strings** sind unproblematisch;
+    Strings mit `:` müssen nicht quotiert werden, *schlüsselartige*
+    DE-Keys („000") aber immer.

@@ -1,5 +1,9 @@
 # YAML-Spezifikationsformat
 
+> **Normative Referenz:** [spec_schema.md](spec_schema.md) — vollständiges
+> Schema (Root-/Feld-Keys, Format×Encoding-Matrix, Direktiven, TLV-Regeln,
+> Fehlersemantik, komplette Beispiele) für Menschen und KI-Generatoren.
+
 ## Minimale Spec
 
 ```yaml
@@ -131,11 +135,15 @@ Encoding-Einstellung:
 | `binary` (fixe Länge) | `IF_BINARY` | Rohe Bytes, keine Präfix-Logik |
 | `bitmap` | `IFB_BITMAP` | Primäre oder sekundäre Bitmap |
 | `nop` / `unused` | `IF_NOP` | Skip/Platzhalter, keine Bytes verbraucht |
-| `remaining` | `IF_REMAINING` / `IFE_REMAINING` | Alle restlichen Bytes des Eltern-Buffers |
 
 > **Hinweis:** `LBINARY`, `LLBINARY`, `LLLBINARY` (und `LLLLBINARY`)
 > sind **nicht** encoding-neutral, da ihr Längen-Präfix das
-> Spec-Encoding (EBCDIC/BCD/ASCII) verwendet.
+> Spec-Encoding (EBCDIC/BCD/ASCII) verwendet. Auch `REMAINING` ist
+> seit **0.6.0 nicht** encoding-neutral: es folgt dem aufgelösten
+> Encoding (`""`/`binary` → roh `BinaryField`; `ascii`/`ebcdic`/`bcd`
+> → `OpaqueField`) und verlangt zwingend `length` (Maximum, Clamp).
+> Parser: `IF_REMAINING` (roh) / `IFA_REMAINING` / `IFE_REMAINING` /
+> `IFB_REMAINING`. Details: [spec_schema.md](spec_schema.md) §4.
 
 ### ASCII
 
@@ -232,7 +240,8 @@ Deklarierte Kinder sind per `loadBothFromYaml` über
     - format: numeric
       length: 1
       description: "POS Terminal Attendance"
-    - format: remaining          # optionales Schlussfeld — kein Längenpräfix
+    - format: remaining
+      length: 10            # Pflicht seit 0.6.0 (Maximum, Clamp)
       description: "POS Postal Code"
 ```
 

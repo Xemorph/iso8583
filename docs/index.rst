@@ -27,6 +27,7 @@ Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
 
    internals/yaml_format
    internals/encoding
+   internals/spec_schema
 
 .. toctree::
    :maxdepth: 1
@@ -35,6 +36,7 @@ Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
    plans/security-implementation-plan
    plans/phase0-icu-spike
    plans/tlv-typed-children-plan
+   plans/remaining-encoding-spec-schema
 
 .. toctree::
    :maxdepth: 1

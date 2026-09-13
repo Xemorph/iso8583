@@ -1,5 +1,8 @@
 # Encoding-System
 
+> **Normative Schema-Referenz für Spec-Dateien (inkl. Format×Encoding-Matrix):**
+> [spec_schema.md](spec_schema.md) — für Menschen und KI-Generatoren.
+
 ## Auflösungsreihenfolge
 
 ```
@@ -20,7 +23,12 @@ noch ein encoding-awarees Längenpräfix:
 - `BINARY` (fixe Länge, kein Präfix)
 - `BITMAP`
 - `NOP` / `UNUSED`
-- `REMAINING`
+
+> **Hinweis (0.6.0):** `REMAINING` ist **nicht mehr** encoding-neutral — es
+> folgt dem aufgelösten Feld-/Global-Encoding (`""`/`binary` → roh
+> `BinaryField`; `ascii`/`ebcdic`/`bcd` → `OpaqueField`) und verlangt
+> zwingend `length` (Maximum, Clamp). Details:
+> [spec_schema.md](spec_schema.md) §4.
 
 **Hinweis:** `LBINARY`, `LLBINARY`, `LLLBINARY`, `LLLLBINARY` sind
 **nicht** encoding-neutral, da ihr Längenpräfix das Spec-Encoding
