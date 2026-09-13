@@ -67,6 +67,47 @@
   Mitglied `tlv_children` — das Layout ändert sich; Shared-Library-
   Konsumenten müssen gegen die neue Bibliothek neu kompiliert werden.
 
+### Migration 0.4.0 → 0.5.0 (Konsumenten-Checkliste)
+
+Kurze Checkliste für Bibliotheks-Konsumenten (z. B. Tauri-/GUI-Backends):
+
+1. **Neu kompilieren** gegen die geänderten Public Headers (`SpecFieldInfo`
+   hat das neue Mitglied `tlv_children` — Layout-Change) und gegen die neue
+   Bibliothek (Shared-Library: neu linken, Import-Lib/DLL austauschen).
+2. **Key-Typ prüfen:** wer `...bertlv` mit 2-Byte-EMV-Tags (z. B. `9F26`)
+   nutzt, kompiliert Bibliothek **und** Konsument mit `ISO8583_BERTLV`
+   (CMake-Option bzw. `ISO8583_KEY_TYPE` — ABI-kritisch, beide Seiten
+   identisch); ohne diese Definition sind nur Tags ≤ 32767 darstellbar.
+3. **Typisierte TLV-Kinder:** deklarierte `char`/`numeric`/`nopad_char`-
+   Kinder sind jetzt `OpaqueField` (vorher `BinaryField`) →
+   `get<BinaryField>(tag)`-Aufrufe auf solchen Tags auf
+   `get<OpaqueField>(tag)` umstellen (sonst `nullptr`); wer weiterhin
+   Rohbytes will, deklariert das Kind als `format: binary`.
+4. **BERTLV-Text-Kinder:** bei der `...bertlv`-Kurzform wird an Kinder
+   nichts vererbt — ein `encoding:` (`ascii`/`ebcdic`/`bcd`) ist
+   verpflichtend, sonst verwirft der Loader die Spec (Fail-closed, mit
+   positionierter Fehlermeldung).
+5. **Kind-Whitelist:** erlaubte Kind-Formate `binary`/`char`/`numeric`/
+   `nopad_char`; deklarierte Kind-Encodings `ascii`/`ebcdic`/`bcd`/
+   `binary` (Text-Formate nur `ascii`/`ebcdic`/`bcd`). L-präfixierte
+   Formate, `bitmap`, `remaining`, `nop` werden beim Laden verworfen.
+6. **Introspektion:** `spec->field(de).tlv_children`
+   (`std::map<int, SpecFieldInfo>`) ist für **beide** TLV-Formen über
+   denselben Codepfad befüllt (BERTLV/`ber:true`: Map-Key = voller HEX-
+   Tag-Wert; Fixformat-TLV: Map-Key = dezimale SE-Nummer). Den Map-Key
+   immer als Wahrheit nutzen — `child.key` ist nur die `key_type`-Sicht
+   desselben Werts (in `int16_t`-Builds bei Tags > 32767 eingekürzt).
+   Undeklarierte Tags tauchen dort nicht auf (bleiben dynamisch).
+   `child.encoding` kann bei BERTLV-Kindern `""` sein (binäre Kinder,
+   nichts vererbt) — UI-/Introspektions-Code sollte das tolerieren.
+7. **Strict-Modus:** wird an typisierte Kind-Codecs propagiert —
+   nicht-mappbare EBCDIC-Bytes in deklarierten Text-Kindern werfen jetzt
+   (vorher gab es keine Kind-Typisierung, Bytes kamen roh zurück).
+8. **Unverändert:** `value()`/`to_json()` bleiben unmaskiert,
+   `sensitive:` wirkt nur auf dem dump-/Log-Pfad; undeclared Tags bleiben
+   dynamisch (`BinaryField`, generische `"SE<n>"`-Beschreibung); `length`
+   in `children` ist reine Dokumentation (die Länge liegt im Length-Feld).
+
 ## Unreleased
 
 - **CI: `nightly.yml` trug noch die 0.4.0 entfernte iconv-Konfiguration**
