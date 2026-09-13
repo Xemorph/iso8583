@@ -84,7 +84,11 @@ namespace TNG_NAMESPACE {
             switch (enc) {
                 case codec::Encoder::ASCII:  return codec::as< std::string, codec::Encoder::ASCII >(buf, offset, length, strict);
                 case codec::Encoder::EBCDIC: return codec::as< std::string, codec::Encoder::EBCDIC >(buf, offset, length, strict);
-                case codec::Encoder::BCD:    return codec::as< std::string, codec::Encoder::BCD >(buf, offset, length, strict);
+                case codec::Encoder::BCD:
+                    // BCD: TLV-Länge ist in BYTES, codec::as<...,BCD> zählt
+                    // ZIFFERN (2 pro Byte) -> Factor 2 (gerade Byte-Zahl,
+                    // da BCD immer 2 Ziffern pro Byte packt).
+                    return codec::as< std::string, codec::Encoder::BCD >(buf, offset, length * 2, strict);
                 case codec::Encoder::BINARY: // Fall-through – rohe Bytes
                 default:
                     return std::string(buf.begin() + static_cast<std::ptrdiff_t>(offset),
