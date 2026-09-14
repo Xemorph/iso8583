@@ -46,6 +46,9 @@ namespace TNG_NAMESPACE {
     using IFA_LBINARY    = ISOBinaryFieldParser< codec::Length::L, codec::PrefixEncoder::ASCII, codec::Encoder::BINARY >;
     using IFA_LLBINARY   = ISOBinaryFieldParser< codec::Length::LL, codec::PrefixEncoder::ASCII, codec::Encoder::BINARY >;
     using IFA_LLLBINARY  = ISOBinaryFieldParser< codec::Length::LLL, codec::PrefixEncoder::ASCII, codec::Encoder::BINARY >;
+    // (0.6.0, FR-3) LLLL-Zwilling für die Container-Normalisierung
+    // (llllchar|ascii-Container) — Daten bleiben rohe Bytes (BINARY).
+    using IFA_LLLLBINARY = ISOBinaryFieldParser< codec::Length::LLLL, codec::PrefixEncoder::ASCII, codec::Encoder::BINARY >;
 
     // -- BCD (Binary Coded Decimal) -------------------------------------------
     // Numerisch, gepackt (2 Ziffern pro Byte)

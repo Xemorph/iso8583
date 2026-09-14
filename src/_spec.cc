@@ -693,6 +693,8 @@ namespace TNG_NAMESPACE::spec {
             { "LBINARY|ASCII",     MAKE(IFA_LBINARY)     },
             { "LLBINARY|ASCII",    MAKE(IFA_LLBINARY)    },
             { "LLLBINARY|ASCII",   MAKE(IFA_LLLBINARY)   },
+            // (0.6.0, FR-3) Zwilling für llllchar|ascii-Container-Normalisierung
+            { "LLLLBINARY|ASCII",  MAKE(IFA_LLLLBINARY)  },
             // ── BCD ──────────────────────────────────────────────────────────────
             { "NUMERIC|BCD",       MAKE(IFB_NUMERIC)     },
             { "LCHAR|BCD",         MAKE(IFB_LCHAR)       },
