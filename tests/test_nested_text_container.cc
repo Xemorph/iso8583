@@ -34,6 +34,9 @@
 //   I: Fail-closed-Guard: manuell konstruierte ISONestedFieldParser mit
 //      string-basiertem Basis-Parser (OPAQUE bzw. text-REMAINING) wirft
 //      std::runtime_error statt SEGV; J: binärer Basis-Parser bleibt grün.
+//   K: 1:1-Consumer-Repro (TNG, 2026-09-14): lllbinary + tcc: 1 (YAML-Int)
+//      + EBCDIC-Kind SE71 im DE48-only-Rahmen -> OpaqueField "33V " + TCC
+//      "T" + byte-exakter Round-Trip.
 // =============================================================================
 
 #include <iso8583/iso8583.h>
@@ -645,4 +648,94 @@ TEST_CASE("Guard J - ISONestedFieldParser mit binärem Basis-Parser bleibt grün
     auto comp2 = std::make_shared<Message>();
     comp2->set(0, std::string("ABC"));
     REQUIRE_NOTHROW(nested->parse(comp2) == raw);
+}
+
+// =============================================================================
+// K: 1:1-Consumer-Repro (TNG wire-viewer, Chatroom 2026-09-14): lllbinary +
+//    tcc: 1 (YAML-Int) + EBCDIC-Kind SE71. Spec und Payload wörtlich vom
+//    Konsumenten (nur Felder 000/001/048, DE48 ohne explizites 'type:
+//    nested' — Auto-Erkennung via 'tlv:'/'children:'). SE71 muss als
+//    typisierter Text-Kind (OpaqueField "33V ") dekodiert werden, TCC 'T'
+//    als eigenes Subfeld; die Re-Serialisierung ist byteweise identisch
+//    mit dem empfangenen Frame.
+// =============================================================================
+
+TEST_CASE("FR-3 K - Consumer-Repro: lllbinary + tcc: 1 (YAML-Int) + EBCDIC-Kind SE71 -> OpaqueField",
+    "[fr3nested][tlv][fixed][unparse][roundtrip][ebcdic]")
+{
+    TempYaml yaml(R"YAML(
+spec: "DE48 Fixed-TLV Test"
+encoding: ebcdic
+strict: true
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "048":
+    format: lllbinary
+    encoding: ebcdic
+    length: 999
+    description: "Additional Data"
+    tlv:
+      tag_bytes: 2
+      len_bytes: 2
+      tcc: 1
+    children:
+      "71":
+        format: char
+        encoding: ebcdic
+        length: 4
+        description: "Sub-Element 71"
+)YAML");
+
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // Konsumenten-Payload wörtlich (alle Bytes EBCDIC):
+    //   F0F2F0F0            MTI "0200"
+    //   0000000000010000    Bitmap 8 Byte (DE48 = 0x01, Byte 6)
+    //   F0F0F9              DE48: LLL "009"
+    //   E3                  TCC 'T'
+    //   F7F1                SE-Tag "71"
+    //   F0F4                SE-Länge "04"
+    //   F3F3E540            SE-Wert "33V "
+    std::vector<uint8_t> raw;
+    append(raw, ebcdic_b("0200"));
+    std::vector<uint8_t> bmp(8, 0x00);
+    bmp[5] = 0x01u; // DE48
+    append(raw, bmp);
+    append(raw, ebcdic_b("009"));
+    append(raw, ebcdic_b("T"));
+    append(raw, ebcdic_b("71"));
+    append(raw, ebcdic_b("04"));
+    append(raw, ebcdic_b("33V "));
+    INFO("raw size: " << raw.size());
+    INFO("raw hex:  " << toHex(raw));
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE_NOTHROW(msg->unparse(msg, raw));
+
+    auto de48 = msg->get<Message>(48);
+    REQUIRE(de48 != nullptr);
+
+    auto asOpaque = de48->get<OpaqueField>(71);
+    auto asBinary = de48->get<BinaryField>(71);
+    INFO("SE71 OpaqueField: " << (asOpaque ? asOpaque->value() : "<null>"));
+    INFO("SE71 BinaryField: " << (asBinary ? toHex(asBinary->value()) : "<null>"));
+
+    // Kern-Anspruch des Konsumenten-Repros: SE71 ist typisierter Text-Kind
+    // (nicht rohe BINARY-Bytes), auch im tcc-Zweig des fixen TLV-Parsers.
+    REQUIRE(asOpaque != nullptr);
+    CHECK(asOpaque->value() == "33V ");
+    CHECK(asBinary == nullptr);
+
+    // TCC-Byte 'T' wird als eigenes Subfeld (TCC_KEY = -2) dekodiert.
+    auto tcc = de48->get<OpaqueField>(-2);
+    INFO("TCC: " << (tcc ? tcc->value() : "<null>"));
+    CHECK(tcc != nullptr);
+    CHECK(tcc->value() == "T");
+
+    // Byte-exakter Round-Trip mit dem empfangenen Frame.
+    CHECK(msg->parse(msg) == raw);
 }
