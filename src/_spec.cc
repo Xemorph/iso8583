@@ -797,6 +797,54 @@ namespace TNG_NAMESPACE::spec {
             false, codec::Encoder::EBCDIC>>(childMap, sensitiveAll);
     }
 
+    // =============================================================================
+    // (0.6.0, FR-3) Container-Basis-Parser normalisieren
+    // =============================================================================
+    //
+    // Text-basierte Containerformate (CHAR/NUMERIC/NOPAD_CHAR, mit oder ohne
+    // L-Prefix; REMAINING + Text-Encoding) erzeugen via createScalarParser
+    // einen string-basierten Basis-Parser. In den T=parser-Zweigen von
+    // ISOFieldParser (BinaryField-Scratch bei unparse / BinaryField-Wrapper
+    // bei parse, s. src/_parser.hh) crasht das mit einer
+    // Null-Pointer-Dereferenz: der Zweige castet den BinaryField auf
+    // OpaqueField -> nullptr -> SIGSEGV. Latent seit 0.3.0 (Thread-
+    // Sicherheits-Scratch-Pattern); betraf u. a. die AGENTS.md-Beispiele
+    // (DE48 lllchar + tlv).
+    //
+    // Die Wire-Präfix-Semantik des binären Zwillings ist identisch (gleicher
+    // L-Zähler + Prefix-Encoder), und Container-Nutzdaten sind immer rohe
+    // Bytes, die an die Kinder weitergereicht werden (jedes Kind löst sein
+    // eigenes Encoding auf) -> die Normalisierung ist wire-neutral:
+    //   L* + Text           -> L*BINARY  (Prefix-Encoding bleibt erhalten)
+    //   FIX + Text          -> "BINARY|" (IF_BINARY, Roh-Bytes; bewusst NICHT
+    //                              "BINARY|EBCDIC" — das wäre IFE_BINARY mit
+    //                              HEX_EBCDIC-Data-Encoder)
+    //   REMAINING + Text    -> "REMAINING|" (IF_REMAINING, Roh-Bytes)
+    //
+    // Wichtig: nur der lokale Parser-Bau wird normalisiert (Kopie); das
+    // SpecField selbst bleibt unverändert, damit die Introspektion
+    // (ISOSpec::field) das deklarierte Format meldet. Skalare (nicht
+    // nested) Textfelder bleiben string-basiert (Verhalten unverändert).
+    static SpecField containerBaseField(const SpecField& f) {
+        SpecField cf = f;
+        std::size_t ls = 0;
+        while (ls < cf.format.size() && cf.format[ls] == 'L')
+            ++ls;
+        const std::string rest = cf.format.substr(ls);
+        if (rest == "CHAR" || rest == "NUMERIC" || rest == "NOPAD_CHAR") {
+            if (ls == 0) {
+                cf.format = "BINARY";
+                cf.encoding = "";
+            }
+            else
+                cf.format = cf.format.substr(0, ls) + "BINARY";
+        }
+        else if (cf.format == "REMAINING" &&
+                 (cf.encoding == "ASCII" || cf.encoding == "EBCDIC" || cf.encoding == "BCD"))
+            cf.encoding = "";
+        return cf;
+    }
+
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
         buildFieldParser(const SpecField& f)
     {
@@ -812,7 +860,11 @@ namespace TNG_NAMESPACE::spec {
         }
 
         case SpecFieldType::NESTED: {
-            auto base = createScalarParser(f);
+            // FR-3 (0.6.0): Container-Basis-Parser auf den binären Zwilling
+            // normalisieren (wire-neutral, s. containerBaseField) — sonst
+            // SIGSEGV bei text-basierten Formaten (BinaryField-Scratch/-
+            // Wrapper vs. string-basierter Basis-Parser).
+            auto base = createScalarParser(containerBaseField(f));
             // Container selbst: sensitive Container markieren das komplette
             // Subfeld-Baum (alle Kinder werden entsprechend gesetzt, s. u.).
             if (f.sensitive)
@@ -871,6 +923,11 @@ namespace TNG_NAMESPACE::spec {
             }
             else {
                 auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
+                // FR-3 (0.6.0): Container-Modus – der Sub-Payload hat
+                // kein MTI/Bitmap (Slot 0 = erstes Kind-Feld). Verhindert
+                // die Doppel-Serialisierung eines einzelnen Kind-Felds
+                // durch die Slot-0/MTI-Semantik von ISOBaseParser.
+                sub->container(true);
                 for (const auto& child : f.children) {
                     auto childP = createScalarParser(child);
                     // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang

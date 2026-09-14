@@ -39,6 +39,14 @@ namespace TNG_NAMESPACE {
         TNG_KEY_TYPE bmp_3rd_ = std::numeric_limits<TNG_KEY_TYPE>::min();
         // Header size if applicable;
         std::size_t hdr_sz_ = 0u;
+        // [ISO8583] FR-3 (0.6.0): Container-Modus (Spec: type: nested,
+        // text-basiertes Format, kein TLV): der Sub-Payload enthält
+        // weder MTI noch Bitmap – Slot 0 ist das erste Kind-Feld.
+        // Ohne dieses Flag würde die Slot-0/MTI-Semantik von
+        // ISOBaseParser bei genau einem Kind-Feld das Kind im
+        // Encode-Pfad doppelt serialisieren (MTI-Block UND Daten-Loop;
+        // verkerrtes Längen-Prefix).
+        mutable bool container_ = false;
     public:
         // Smart Pointer conceppt
         using ISOBaseParserSmartPtr = std::shared_ptr<ISOBaseParser>;
@@ -61,6 +69,12 @@ namespace TNG_NAMESPACE {
             hdr_sz_ = hdrSz;
         }
 
+        // [ISO8583] FR-3 (0.6.0): Container-Modus setzen/abfragen
+        // (s. container_). const-Setter wie strict(bool) – das Flag
+        // betrifft ausschließlich dieses Parser-Objekt (Container-Sub-Parser).
+        void container(bool v) const noexcept { container_ = v; }
+        bool container() const noexcept { return container_; }
+
         // [ISO8583] Strikter Modus (Default: true, s. ISOParserPtrBase::strict_).
         // Setzt den eigenen Modus UND propagiert ihn rekursiv auf alle
         // Feld-Parserv (inklusive der Inner-Parserv von NESTED-Feldern),
@@ -79,10 +93,13 @@ namespace TNG_NAMESPACE {
         // Checks if the bitmap has to be emitted
         // \return true if bitmap has to be emitted otherwise false
         bool emit_bitmap() const noexcept override {
+            // FR-3 (0.6.0): Container-Sub-Parser kennen keine Bitmap.
             return (
+                !container_ && (
                 field_parser(1) ? 
                     field_parser(1)->type() == TNG_NAMESPACE::ISOFieldParserType::BITMAP :
                         false
+                )
             );
         }
 
@@ -111,6 +128,10 @@ namespace TNG_NAMESPACE {
         // Usually 2 for normal fields, 1 for bitmap-less or ANSI X9.2
         // \return key of first valid data element
         short first_field() const {
+            // FR-3 (0.6.0): Container-Modus – Slot 0 ist das erste
+            // Kind-Feld (kein MTI/Bitmap-Vorfeld).
+            if (container_)
+                return 0;
             if ((field_parser(0)->type() != TNG_NAMESPACE::ISOFieldParserType::NESTED) && l_.size() > 1)
                 return field_parser(1)->type() == TNG_NAMESPACE::ISOFieldParserType::BITMAP ? 2 : 1;
             return 0;
@@ -147,6 +168,52 @@ namespace TNG_NAMESPACE {
             (void)l_.push_back(std::move(parser));
         }
     };
+
+    // [ISO8583] FR-3 (0.6.0): Fail-closed-Guard für den Container-Basis-
+    // Parser (n_). Beide T=parser-Zweige von ISOFieldParser (parse: 
+    // BinaryField-Wrapper, unparse: BinaryField-Scratch) setzen einen
+    // binär-basierten Basis-Parser voraus. Ein nicht binär-basierter
+    // Basis-Parser (z. B. string-basiertes lllchar) würde dort einen
+    // Null-Pointer-Dereference auslösen (dynamic_pointer_cast<OpaqueField>
+    // auf den BinaryField -> nullptr -> SIGSEGV).
+    //
+    // Die Spec-Ladung normalisiert Text-Container automatisch auf den
+    // binären Zwilling (src/_spec.cc: containerBaseField) — dieser Guard
+    // fängt daher nur manuell konstruierte ISONestedFieldParser-Instanzen
+    // ab (Fail-closed statt SEGV).
+    //
+    // type() ist bei REMAINING nicht zwischen binär/string unterscheidbar
+    // (l_ = UNKNOWN/CONSUME) -> zusätzlich create_component-Probe, aber
+    // NUR bei type()==REMAINING (create_component eines UNUSED-Parsers
+    // würde selbst werfen; OPAQUE/BINARY/... werden bereits über type()
+    // entschieden).
+    static void checkContainerBase(
+        const ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr& base,
+        TNG_KEY_TYPE de)
+    {
+        using PT = ::TNG_NAMESPACE::ISOFieldParserType;
+        if (base == nullptr)
+            throw std::runtime_error(
+                "[ISO8583] Fail-closed (DE " + std::to_string(de) +
+                "): Nested-Parser ohne Container-Basis-Parser "
+                "(incomplett initialisiert).");
+        if (base->type() != PT::BINARY && base->type() != PT::REMAINING)
+            throw std::runtime_error(
+                "[ISO8583] Fail-closed (DE " + std::to_string(de) +
+                "): Container-Basis-Parser ist nicht binär-basiert. "
+                "Text-basierte Containerformate (z. B. lllchar) werden beim "
+                "Spec-Load automatisch auf den binären Zwilling normalisiert "
+                "- dieser Fehler betrifft nur manuell konstruierte "
+                "ISONestedFieldParser-Instanzen.");
+        if (base->type() == PT::REMAINING &&
+            std::dynamic_pointer_cast<::TNG_NAMESPACE::BinaryField>(
+                base->create_component(0)) == nullptr)
+            throw std::runtime_error(
+                "[ISO8583] Fail-closed (DE " + std::to_string(de) +
+                "): 'remaining'-Container-Basis ist text-basiert "
+                "(binär-basierter Basis-Parser erforderlich; der Spec-Load "
+                "normalisiert automatisch).");
+    }
 
     template < typename T, codec::Length l_, codec::PrefixEncoder pe_, codec::Encoder e_, codec::Padder p_ >
     class TNG_EXPORT ISOFieldParser
@@ -253,6 +320,10 @@ namespace TNG_NAMESPACE {
                 return std::vector<uint8_t>{};
             }
             else if constexpr (std::is_base_of_v< ISOBaseParser, T >) {
+                // FR-3 (0.6.0): Fail-closed-Guard — ein nicht binär-
+                // basierter Container-Basis-Parser crasht sonst unten
+                // (BinaryField-Wrapper vs. string-basierter Basis-Parser).
+                checkContainerBase(n_, c->key());
                 // NESTED: c_->parse() serialisiert die Kind-Felder in rohe Bytes.
                 // n_->parse() verpackt diese Bytes dann mit dem korrekten Längen-
                 // Prefix (identisch zu unparse(), nur in umgekehrter Richtung).
@@ -363,6 +434,10 @@ namespace TNG_NAMESPACE {
                 );
             }
             if constexpr (std::is_base_of_v<ISOBaseParser, T>) {
+                // FR-3 (0.6.0): Fail-closed-Guard — ein nicht binär-
+                // basierter Container-Basis-Parser crasht sonst unten
+                // (BinaryField-Scratch vs. string-basierter Basis-Parser).
+                checkContainerBase(n_, c->key());
                 // [ISO8583] 3.3 (Thread-Sicherheit): PRO AUFRUF lokaler
                 // Scratch-Buffer statt des Parser-Mitglieds b_. Der Parser
                 // ist nach dem Load unveränderlich und wird über mehrere

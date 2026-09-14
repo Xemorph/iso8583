@@ -97,7 +97,11 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 
     // ── 2. MTI ───────────────────────────────────────────────────────────────
     {
-        auto p = l_.at(::TNG_NAMESPACE::ISOMessage::MTI_KEY);
+        // FR-3 (0.6.0): Container-Sub-Parser kennen kein MTI – Slot 0
+        // ist das erste Kind-Feld. Ohne Guard würde bei genau einem
+        // Kind der MTI-Block UND der Daten-Loop dasselbe Feld
+        // serialisieren (Doppel-Serialisierung, verkerrtes Längen-Prefix).
+        auto p = container_ ? nullptr : l_.at(::TNG_NAMESPACE::ISOMessage::MTI_KEY);
         if (p &&
             p->type() != ISOFieldParserType::BITMAP &&
             p->type() != ISOFieldParserType::UNUSED)
@@ -126,9 +130,15 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
             // beim Dekodieren (siehe unparse(); erhält dabei auch Bits für
             // undeklarierte/private Felder) oder frisch via
             // ISOMessage::recalcBitmap() beim Aufbau einer neuen Nachricht.
+            // Ein direkter Parser-Aufruf (parser->parse(msg)) an einer
+            // nie dekodierten/ausgebauten Nachricht überspringt diese
+            // Materialisierung - fail-closed statt
+            // std::bad_optional_access an ferner Stelle (FR-3, 0.6.0).
             // Hier wird sie nur noch encodiert - kein erneutes Bit-Setzen.
             auto bmp_comp = m->tryGet< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
-            auto encoded = p->parse(bmp_comp.value());
+            if (!bmp_comp)
+                throw std::runtime_error("[ISO8583] Parser: Bitmap-Komponente fehlt (direkter Parser-Aufruf) - ISOMessage::parse() verwenden oder die Nachricht dekodieren");
+            auto encoded = p->parse(*bmp_comp);
             out.insert(out.end(), encoded.begin(), encoded.end());
             TNG_LOG_TRACE("[ISOBaseParser::parse] Bitmap: {} bytes", encoded.size());
         }
@@ -237,7 +247,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     }
 
     // -- MTI ------------------------------------------------------------------
-    std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase> p = l_.at(::TNG_NAMESPACE::Message::MTI_KEY);
+    // FR-3 (0.6.0): Container-Modus – kein MTI, Slot 0 = erstes Kind-Feld.
+    std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase> p =
+        container_ ? nullptr : l_.at(::TNG_NAMESPACE::Message::MTI_KEY);
     if (p && (
         p->type() != ::TNG_NAMESPACE::ISOFieldParserType::BITMAP &&
         p->type() != ::TNG_NAMESPACE::ISOFieldParserType::UNUSED))
