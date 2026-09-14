@@ -58,6 +58,15 @@
   Roundtrip, Strict/Legacy, Fail-closed ohne `length`, Clamp):
   `tests/test_remaining_field.cc` (+6 TEST_CASEs).
 
+### [#](Fixed) SIGSEGV in text-basierten Nested-Containern (0.6.0-Kandidat)
+
+- `type: nested` + text-basiertes Containerformat (`char`/`numeric`/`nopad_char`, L-Prefix `llchar`/`lllchar`/`llllchar` (ascii) sowie `remaining` + Text-Encoding) crashte in `unparse()`/`parse()` mit SIGSEGV: der Container-Basis-Parser (string-basiert) empfing den `BinaryField`-Scratch/-Wrapper des Nested-Zweigs (seit 0.3.0 Thread-Sicherheits-Pattern) → Null-Pointer-Dereferenz. Die AGENTS.md-Beispiele (DE48 `lllchar`+`tlv`) waren betroffen; v0.5.0 ebenso.
+- Fix: Der Loader normalisiert den Container-Basis-Parser auf den binären Zwilling (wire-neutral: gleicher L-Zähler + Prefix-Encoding, Container-Daten bleiben Roh-Bytes für die Kinder; Introspektion meldet weiterhin das deklarierte Format). Neue Tabelle-Lücke geschlossen: `llllbinary|ascii` (`IFA_LLLLBINARY`).
+- Fail-closed-Guard: manuell konstruierte `ISONestedFieldParser`-Instanzen mit nicht-binärer Container-Basis werfen jetzt ein positioniertes `std::runtime_error` statt SEGV.
+- FR-3: Typisierte TLV-Kinder im fixen `tag_bytes`/`len_bytes`-Modus funktionieren damit auch in text-basierten Containern (in binären, z. B. `lllbinary`, bereits seit 0.5.0).
+- Härtung (in der Implementierung neu gefunden): Container-Sub-Parser kennen kein MTI (Slot 0 = erstes Kind-Feld) — vorher serialisierten Encode- und Decode-Pfad bei genau einem Kind denselben Datenbereich doppelt (MTI-Block + Daten-Loop), was das Längen-Prefix verkrümmte; der Encode-Pfad wirft bei fehlender Bitmap-Komponente (direkter Parser-Aufruf an einer nie dekodierten Nachricht) jetzt ein positioniertes `std::runtime_error` statt `std::bad_optional_access` an ferner Stelle.
+- Regressionstests: `tests/test_nested_text_container.cc` (11 TEST_CASEs, Tag [fr3nested]; Deckung: llchar/lllchar/llllchar|ascii, fixer + BERTLV-artiger TLV in text-basierten Containern, Encoding-Vererbung, Single-/Multi-Kind, Encode-first und Decode-first).
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):
