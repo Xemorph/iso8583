@@ -28,6 +28,9 @@ add_executable(libiso8583_tests
     test_spec_cache.cc
     test_threading.cc
     test_pci_logging.cc
+    # (0.6.0, FR-3) Dauerhafter Regressionstest für text-basierte
+    # Nested-Container (frühere FR-3-Probe test_tlv_fixed_typed_probe.cc)
+    test_nested_text_container.cc
     _crt_diag.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
