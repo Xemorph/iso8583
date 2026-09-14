@@ -426,7 +426,7 @@ fields:
     # "SE<n>"-Beschreibung zurück (BinaryField, dynamisch).
   "048":                  # Mastercard-artiges fixes TLV — SE-Keys DEZIMAL
     type: nested
-    format: lllchar
+    format: lllchar          # 0.6.0: intern binär normalisiert (wire-neutral)
     length: 999
     description: "Additional Data"
     tlv:
@@ -487,7 +487,7 @@ fields:
 
 **Format/Encoding-Kombinationen:**
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
-- `llchar`, `lllchar`, `llbinary`, `lllbinary`, `llllbinary`
+- `llchar`, `lllchar`, `llllchar` (nur ascii), `llbinary`, `lllbinary`, `llllbinary`
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
   `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)
@@ -539,6 +539,17 @@ Key eine SE-Nummer oder ein BER-Tag:
   generische `"SE<n>"`-Beschreibung zurück (Rohbytes, `BinaryField`) —
   unabhängig davon, ob das Containerfeld ein `tlv:`-Block oder die
   `...bertlv`-Kurzform ist.
+
+**Text-basierte Nested-Container (0.6.0):** `type: nested` funktioniert mit
+allen Containerformaten, auch mit text-basierten (`lllchar`, `llchar`,
+`llllchar` (nur ascii)). Seit 0.6.0 normalisiert der Loader den
+Container-**Basis-Parser** auf den binären Zwilling — wire-neutral:
+gleicher L-Zähler + Prefix-Encoding, die Container-Daten erreichen die
+Kinder als Roh-Bytes (jedes Kind löst sein eigenes Encoding auf). Vor
+0.6.0 crashten solche Container (`SIGSEGV`) in `unparse()`/`parse()`. Introspektion
+(`ISOSpec::field`) meldet das deklarierte Format. Normative Regeln:
+`docs/internals/spec_schema.md` (Abschnitt
+„Container-Basis-Parser-Normalisierung (0.6.0)").
 
 **Encodings:** `ascii`, `bcd`, `ebcdic`, `binary`
 

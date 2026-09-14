@@ -251,6 +251,14 @@ Verschachtelte Felder werden über Punkt-Notation adressiert:
 msg->set("61.1", "0");   // Unterfeld 1 von DE61
 ```
 
+**Text-basierte Container (0.6.0):** Auch `type: nested`-Container mit
+text-basierten Formaten (`lllchar`, `llchar`, `llllchar` (nur ascii), …)
+laden und decodieren korrekt — der Loader normalisiert den Container-
+Basis-Parser wire-neutral auf den binären Zwilling (Introspektion meldet
+das deklarierte Format; vor 0.6.0: `SIGSEGV`). Normative Regeln:
+`docs/internals/spec_schema.md` (Abschnitt
+„Container-Basis-Parser-Normalisierung (0.6.0)").
+
 ## Template-Kurzschreibweise
 
 ```yaml

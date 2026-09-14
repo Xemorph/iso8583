@@ -230,6 +230,32 @@ fields:
 jede auftretende BER-Tag wird dekodiert (ISO/IEC 8825-1);
 Kind-Schlüssel = rohe Tag-Werte (z. B. `9F26` als int32-Key).
 
+**Container-Basis-Parser-Normalisierung (0.6.0, normativ):**
+
+`type: nested`-Container sind mit **allen** Containerformaten nutzbar —
+auch mit text-basierten (`char`/`numeric`/`nopad_char`, L-Präfix
+`llchar`/`lllchar`/`llllchar` (ascii) sowie `remaining` + Text-Encoding).
+Beim Parser-Bau normalisiert der Loader den Container-**Basis-Parser** auf
+den binären Zwilling (wire-neutral: gleicher L-Zähler + Präfix-Encoding wie
+deklariert; die Container-Daten bleiben Roh-Bytes und jedes Kind löst sein
+eigenes Encoding auf):
+
+1. `L* + CHAR/NUMERIC/NOPAD_CHAR` → `L*BINARY` (L-Zähler + Präfix-Encoding
+   erhalten, z. B. `llllchar|ascii` → `llllbinary|ascii`, neu in 0.6.0).
+2. `FIX + CHAR/NUMERIC/NOPAD_CHAR` → `BINARY|` (Roh-Bytes; Encoding
+   explizit geleert — `BINARY|EBCDIC` würde die `HEX_EBCDIC`-
+   Sondersemantik der skalaren EBCDIC-`binary`-Formate auslösen).
+3. `REMAINING + Text-Encoding` → `REMAINING|` (Roh-Bytes).
+
+Skalare Textfelder (nicht `nested`) bleiben string-basiert (Verhalten
+unverändert). Die Introspektion (`ISOSpec::field`) meldet das
+**deklerierte** Format (`format.type`, `prefix_digits` unverändert).
+Vor 0.6.0 crashten solche Container mit `SIGSEGV` in `unparse()`/`parse()`
+(string-basierter Basis-Parser empfing den `BinaryField`-Scratch des
+Nested-Zweigs); manuell konstruierte nicht-binäre Container-Basen
+(`ISONestedFieldParser`) werfen jetzt ein positioniertes
+`std::runtime_error` (Fail-closed) statt SEGV.
+
 **TLV-Kind-Whitelist (fail-closed beim Laden):**
 
 - Erlaubte Kind-Formate: `binary`, `char`, `numeric`, `nopad_char`.
