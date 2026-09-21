@@ -2,6 +2,10 @@
 // test_pos_data_code.cc - Tests für pos::POSDataCode
 // =============================================================================
 
+#include <cstdint>
+#include <sstream>
+#include <vector>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -25,6 +29,49 @@ TEST_CASE("POSDataCode - combining flags via '|' (core bug of the previous versi
     CHECK(pdc.hasReadingMethod(ReadingMethod::TRACK2_PRESENT));
     CHECK(pdc.hasReadingMethod(ReadingMethod::ICC | ReadingMethod::TRACK2_PRESENT));
     CHECK_FALSE(pdc.hasReadingMethod(ReadingMethod::MAGNETIC_STRIPE));
+}
+
+TEST_CASE("POSDataCode - full set of flag operators (|, &, ^, ~, |=, &=, ^=)", "[pos]") {
+    const auto r = ReadingMethod::CONTACTLESS | ReadingMethod::ICC;
+
+    // & : Durchschnitt (nicht gesetzter Flag -> Wert 0)
+    CHECK((r & ReadingMethod::ICC) == ReadingMethod::ICC);
+    CHECK(static_cast<unsigned int>(r & ReadingMethod::MAGNETIC_STRIPE) == 0u);
+
+    // ^ : symmetrische Differenz entfernt/ergänzt einen einzelnen Flag
+    auto x = r ^ ReadingMethod::CONTACTLESS;
+    CHECK(static_cast<unsigned int>(x) == static_cast<unsigned int>(ReadingMethod::ICC));
+
+    // ^= : toggeln (an -> aus -> an); x ist ein ReadingMethod-Wert, daher
+    // direkt per Bit-Check (has* existiert nur auf POSDataCode).
+    x ^= ReadingMethod::TRACK1_PRESENT;
+    CHECK((x & ReadingMethod::TRACK1_PRESENT) == ReadingMethod::TRACK1_PRESENT);
+    x ^= ReadingMethod::TRACK1_PRESENT;
+    CHECK(static_cast<unsigned int>(x & ReadingMethod::TRACK1_PRESENT) == 0u);
+    CHECK(static_cast<unsigned int>(x) == static_cast<unsigned int>(ReadingMethod::ICC));
+
+    // &= : Flag-Maske verkleinern
+    auto y = ReadingMethod::ICC | ReadingMethod::FALLBACK;
+    y &= ReadingMethod::ICC;
+    CHECK(static_cast<unsigned int>(y) == static_cast<unsigned int>(ReadingMethod::ICC));
+
+    // |= : Flag ergänzen
+    auto z = VerificationMethod::NONE;
+    z |= VerificationMethod::MANUAL_SIGNATURE;
+    CHECK(static_cast<unsigned int>(z) ==
+          static_cast<unsigned int>(VerificationMethod::NONE | VerificationMethod::MANUAL_SIGNATURE));
+
+    // ~ : Bit-Negation; UNKNOWN (Bit 0) ist das einzige Bit, das ~UNKNOWN löscht
+    CHECK(static_cast<unsigned int>(~ReadingMethod::UNKNOWN & ReadingMethod::ICC) ==
+          static_cast<unsigned int>(ReadingMethod::ICC));
+
+    // has* mit Kombinationen und mit dem UNKNOWN-Pseudoflag:
+    // ein Objekt ohne gesetzte Bits meldet keins der Flags - auch nicht UNKNOWN.
+    const POSDataCode empty(std::vector<uint8_t>(POSDataCode::LENGTH, 0x00));
+    CHECK_FALSE(empty.hasReadingMethod(ReadingMethod::UNKNOWN));
+    CHECK_FALSE(empty.hasReadingMethod(ReadingMethod::ICC));
+    // Leere Flag-Maske (Wert 0): vacuously true - es fehlt kein gesetztes Bit.
+    CHECK(empty.hasReadingMethod(static_cast<ReadingMethod>(0u)));
 }
 
 TEST_CASE("POSDataCode - pack()/construction-from-bytes is an exact roundtrip", "[pos]") {
@@ -75,19 +122,70 @@ TEST_CASE("POSDataCode - isEMV/isCardNotPresent/isSwiped convenience methods", "
     CHECK(recurring.isRecurring());
 }
 
-TEST_CASE("POSDataCode - describe()/operator<< return readable text", "[pos]") {
-    POSDataCode pdc(ReadingMethod::ICC, VerificationMethod::ONLINE_PIN,
-        POSEnvironment::ATTENDED, SecurityCharacteristic::END_TO_END_ENCRYPTION);
+TEST_CASE("POSDataCode - describe()/operator<< return readable, deterministic text", "[pos]") {
+    POSDataCode pdc(
+        ReadingMethod::ICC | ReadingMethod::TRACK2_PRESENT,
+        VerificationMethod::ONLINE_PIN,
+        POSEnvironment::ATTENDED,
+        SecurityCharacteristic::END_TO_END_ENCRYPTION);
 
-    const auto desc = pdc.describe();
-    CHECK_THAT(desc, ContainsSubstring("ICC"));
-    CHECK_THAT(desc, ContainsSubstring("Online PIN"));
-    CHECK_THAT(desc, ContainsSubstring("Attended"));
-    CHECK_THAT(desc, ContainsSubstring("End-to-end encryption"));
+    // Exakte Zeichenfolge: jede Kategorie immer gelabelt, Flags in
+    // deterministischer (steigender) Bit-Reihenfolge.
+    CHECK(pdc.describe() ==
+          "Reading: ICC, Track 2 present; Verification: Online PIN; "
+          "Environment: Attended; Security: End-to-end encryption");
+
+    CHECK_THAT(pdc.describe(), ContainsSubstring("ICC"));
+    CHECK_THAT(pdc.describe(), ContainsSubstring("Online PIN"));
+    CHECK_THAT(pdc.describe(), ContainsSubstring("Attended"));
+    CHECK_THAT(pdc.describe(), ContainsSubstring("End-to-end encryption"));
 
     std::ostringstream oss;
     oss << pdc;
-    CHECK(oss.str() == desc);
+    CHECK(oss.str() == pdc.describe());
+
+    // Leere Kategorien liefern "<label>: none" ...
+    const POSDataCode empty(std::vector<uint8_t>(POSDataCode::LENGTH, 0x00));
+    CHECK(empty.describe() ==
+          "Reading: none; Verification: none; Environment: none; Security: none");
+
+    // ... und standardkonstruierte Objekte melden UNKNOWN in allen Kategorien.
+    const POSDataCode allUnknown;
+    CHECK(allUnknown.describe() ==
+          "Reading: Unknown; Verification: Unknown; Environment: Unknown; Security: Unknown");
+
+    // Deterministische Reihenfolge unabhängig von der Set-Reihenfolge:
+    const POSDataCode shuffled(
+        ReadingMethod::ICC | ReadingMethod::CONTACTLESS,
+        VerificationMethod::UNKNOWN,
+        POSEnvironment::UNKNOWN,
+        SecurityCharacteristic::UNKNOWN);
+    CHECK(shuffled.describe() ==
+          "Reading: Contactless, ICC; Verification: Unknown; Environment: Unknown; Security: Unknown");
+}
+
+TEST_CASE("POSDataCode - renamed SecurityCharacteristic::PRIVATE_ALG_ENCRYPTION (vormals PRIVAT_ALG_*)", "[pos]") {
+    const POSDataCode pdc(ReadingMethod::UNKNOWN, VerificationMethod::UNKNOWN, POSEnvironment::UNKNOWN,
+        SecurityCharacteristic::PRIVATE_ALG_ENCRYPTION);
+
+    CHECK(pdc.hasSecurityCharacteristic(SecurityCharacteristic::PRIVATE_ALG_ENCRYPTION));
+    CHECK_THAT(pdc.describe(), ContainsSubstring("Private-alg encryption"));
+
+    // Bit-Position (1 << 7) bleibt unverändert -> Round-Trip bleibt kompatibel.
+    const auto raw = pdc.pack();
+    const POSDataCode decoded(raw);
+    CHECK(decoded.hasSecurityCharacteristic(SecurityCharacteristic::PRIVATE_ALG_ENCRYPTION));
+}
+
+TEST_CASE("POSDataCode - default arguments on the flag constructor", "[pos]") {
+    const POSDataCode zeroArgs; // alle vier Kategorien = UNKNOWN
+    CHECK(zeroArgs.hasReadingMethod(ReadingMethod::UNKNOWN));
+    CHECK(zeroArgs.hasSecurityCharacteristic(SecurityCharacteristic::UNKNOWN));
+
+    const POSDataCode onlyReading(ReadingMethod::ICC);
+    CHECK(onlyReading.hasReadingMethod(ReadingMethod::ICC));
+    CHECK_FALSE(onlyReading.hasVerificationMethod(VerificationMethod::ONLINE_PIN));
+    CHECK(onlyReading.hasVerificationMethod(VerificationMethod::UNKNOWN));
 }
 
 TEST_CASE("POSDataCode - integration with a real ISOMessage (BinaryField)", "[pos][integration]") {

@@ -67,6 +67,47 @@
 - Härtung (in der Implementierung neu gefunden): Container-Sub-Parser kennen kein MTI (Slot 0 = erstes Kind-Feld) — vorher serialisierten Encode- und Decode-Pfad bei genau einem Kind denselben Datenbereich doppelt (MTI-Block + Daten-Loop), was das Längen-Prefix verkrümmte; der Encode-Pfad wirft bei fehlender Bitmap-Komponente (direkter Parser-Aufruf an einer nie dekodierten Nachricht) jetzt ein positioniertes `std::runtime_error` statt `std::bad_optional_access` an ferner Stelle.
 - Regressionstests: `tests/test_nested_text_container.cc` (11 TEST_CASEs, Tag [fr3nested]; Deckung: llchar/lllchar/llllchar|ascii, fixer + BERTLV-artiger TLV in text-basierten Containern, Encoding-Vererbung, Single-/Multi-Kind, Encode-first und Decode-first).
 
+### ⚠️ Breaking: `pos::POSDataCode` — `OFFSET`-Pseudowerte entfernt, Typos-Korrektur (0.6.0-Kandidat)
+
+- `POSDataCode` ist seit 0.2.0 veröffentliche API; die vier Flag-Enums
+  (`ReadingMethod`, `VerificationMethod`, `POSEnvironment`,
+  `SecurityCharacteristic`) verlieren die `OFFSET`-Pseudo-Enum-Member:
+  Die Byte-Offsets (0/4/8/12) sind jetzt privates Implementationsdetail
+  (`offsetOf()`). Nur Compile-Time — das Draht-Layout (4 × 4-Byte
+  Little-Endian-Wörter, 16 Bytes) bleibt unverändert.
+- `SecurityCharacteristic::PRIVAT_ALG_ENCRYPTION` →
+  `PRIVATE_ALG_ENCRYPTION` (Typos). Bit-Position `1 << 7` unverändert →
+  gepackte Bytes bleiben byte-kompatibel.
+- Migration: Code, der `*::OFFSET` oder die alte Typos-Schreibweise
+  referenziert, muss neu kompiliert werden; Laufzeit- und
+  Draht-Verhalten ändert sich nicht.
+
+### `[+](Added)` `pos::POSDataCode`: vollständiger Flag-Operatorsatz, Konstruktoren-Defaults
+
+- Vollständiger Satz an Flag-Operatoren: `^` (symmetrische
+  Differenz), `~` (Bit-Negation), `&=`, `^=` — ergänzend zu `|`, `&`,
+  `|=` der Vorgängerversion; auf allen vier Enums, `constexpr`/`noexcept`.
+- Der Vier-Argumente-Konstruktor hat Defaults (`= UNKNOWN`):
+  `POSDataCode(read)`, `POSDataCode(read, verify)` usw. sind möglich.
+- `has*(f)` ist jetzt explizit dokumentiert: true, wenn **alle** Bits
+  von `f` gesetzt sind (leere Maske `f == 0` → vacuously true).
+- Header dokumentiert das Draht-Layout und die Little-Endian-Konvention
+  (ISO-8583-Elemente sind üblicherweise Big-Endian — die Konvention
+  darf nicht ungeprüft auf andere DEs übertragen werden).
+
+### `[~](Changed)` `pos::POSDataCode`: deterministische, vollständige `describe()`-Ausgabe
+
+- Lookup-Tabellen `std::unordered_map` → `std::map`: `describe()` /
+  `operator<<` listen die gesetzten Flags jetzt in deterministischer
+  (steigender) Bit-Reihenfolge — die Ausgabe ist test- und
+  vergleichbar.
+- `describe()` labelt jetzt **immer** alle vier Kategorien
+  (`"Reading:"`, `"Verification:"`, `"Environment:"`, `"Security:"`);
+  eine leere Kategorie (keine gesetzten Bits) liefert `"<label>: none"`.
+- Tests: `tests/test_pos_data_code.cc` neu geschrieben (9 TEST_CASEs,
+  Tags `[pos]`, `[error]`, `[integration]` — inkl. Integration mit
+  echtem `ISOMessage`/`BinaryField` über die übliche Feld-API).
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):

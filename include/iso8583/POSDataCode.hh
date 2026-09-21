@@ -4,389 +4,497 @@
 // POSDataCode.hh - lesbare POS-Fähigkeiten statt roher Bytes/Zahlen
 // =============================================================================
 //
-// Viele Kartennetzwerke (z.B. Mastercards "POS Data Code") packen mehrere
-// unabhängige Eigenschaften eines Kartenterminals - wie die Karte gelesen
-// wurde, wie der Karteninhaber verifiziert wurde, in welcher Umgebung die
-// Transaktion stattfand, welche Sicherheitsmerkmale gelten - in ein
-// kompaktes Byte-Feld. POSDataCode dekodiert das in benannte, typsichere
-// Flags, statt dass Aufrufer einzelne Bits/Zahlen selbst nachschlagen und
-// maskieren müssen.
+// pos::POSDataCode gibt einem ISO-8583-Data-Code, der als rohe Bytes
+// übertragen wird (z. B. DE 61 / POS-Data-Code), eine lesbare Interpretation —
+// ohne ein neues ISOComponent- oder Feldtyp-Subsystem zu sein. Er liest dieselben
+// rohen Bytes, die BinaryField & Co. hergeben, interpretiert sie als vier
+// 32-Bit-Flag-Wörter und kann das Ergebnis wieder packen.
 //
-// -----------------------------------------------------------------------------
-// Verwendung
-// -----------------------------------------------------------------------------
+// Verwendung (lesen, z. B. DE 61):
 //
-//   // Aus einem normalen Feld dekodieren (z.B. ein Binärfeld DE61):
-//   auto se = msg->get<BinaryField>(61);
-//   pos::POSDataCode pdc(se->value());
+//     auto se   = msg->get<BinaryField>(61);
+//     pos::POSDataCode pdc(se->value());
+//     if (pdc.hasReadingMethod(pos::ReadingMethod::ICC)) { /* EMV */ }
+//     log() << pdc;   // "Reading: ICC; Verification: Online PIN; ..."
 //
-//   if (pdc.isEMV())            { ... }
-//   if (pdc.isCardNotPresent()) { ... }
-//   if (pdc.hasVerificationMethod(pos::VerificationMethod::ONLINE_PIN)) { ... }
+// Verwendung (schreiben):
 //
-//   // Neu aufbauen und wieder in ein Feld zurückschreiben - Flags werden
-//   // mit '|' kombiniert, ganz normale, typsichere Enum-Werte:
-//   pos::POSDataCode built(
-//       pos::ReadingMethod::ICC | pos::ReadingMethod::TRACK2_PRESENT,
-//       pos::VerificationMethod::ONLINE_PIN,
-//       pos::POSEnvironment::ATTENDED,
-//       pos::SecurityCharacteristic::END_TO_END_ENCRYPTION);
-//   msg->set(std::make_shared<BinaryField>(61, built.pack()));
+//     pos::POSDataCode built(pos::ReadingMethod::ICC | pos::ReadingMethod::TRACK2_PRESENT,
+//                            pos::VerificationMethod::ONLINE_PIN,
+//                            pos::POSEnvironment::ATTENDED,
+//                            pos::SecurityCharacteristic::END_TO_END_ENCRYPTION);
+//     msg->set(std::make_shared<BinaryField>(61, built.pack()));
 //
-// POSDataCode ist bewusst KEIN eigener ISOComponent-/Feldtyp (das würde
-// Änderungen am generischen ISOComponent<>-Kern sowie am YAML-Spec-Loader
-// erfordern) - sondern ein eigenständiger Interpreter für Rohbytes, die ganz
-// normal über die bestehende Feld-API gelesen/geschrieben werden. Das deckt
-// das eigentliche Ziel ("User kennen nur die Funktion, nicht die Werte")
-// bereits vollständig ab, ohne den Kern der Bibliothek anzufassen.
+// Draht-Layout (fix, 16 Byte):
 //
-// -----------------------------------------------------------------------------
-// Warum die Vorgängerversion (_pos.bak/_pos.h.bak) nie nutzbar war
-// -----------------------------------------------------------------------------
-//   1. `enum class` unterstützt kein `|` ohne überladene Operatoren - jede
-//      Flag-Kombination hätte manuelle `static_cast<unsigned int>(...)` an
-//      jeder Aufrufstelle gebraucht (siehe operator| unten - jetzt ergänzt).
-//   2. Datei war nie in CMakeLists.txt eingebunden UND die .cc-Datei
-//      includete eine andere Datei ("_pos.hh") als tatsächlich existierte
-//      ("_pos.h.bak").
-//   3. Zwei der vier Lookup-Tabellen (VerificationMethod, POSEnvironment)
-//      waren leer.
+//     Offset    Größe   Inhalt
+//     [0..3]     4B     ReadingMethod          (little-endian u32)
+//     [4..7]     4B     VerificationMethod     (little-endian u32)
+//     [8..11]    4B     POSEnvironment         (little-endian u32)
+//     [12..15]   4B     SecurityCharacteristic (little-endian u32)
+//
+// Die Byte-Reihenfolge INNERHALB eines 32-Bit-Worts ist LITTLE-ENDIAN. Das ist
+// eine lokale Konvention dieses Data-Code-Layouts — ISO-8583-Elemente sind
+// üblicherweise BIG-endian; die Konvention darf daher nicht ungeprüft auf
+// andere DEs übertragen werden.
+//
+// Warum diese Datei und nicht der Vorgänger (siehe _pos.bak / _pos.h.bak)?
+//   1. Die Flag-Enums des Vorgängers hatten keine operator|, sodass Flags
+//      wie ReadingMethod::ICC | ReadingMethod::TRACK2_PRESENT nicht
+//      kombinierbar waren. Hier bekommen die Enums den vollen Satz an
+//      Flag-Operatoren (siehe TNG_POS_DEFINE_FLAG_OPS unten).
+//   2. Der Vorgänger war nie in der CMakeLists.txt und sein .cc
+//      #include-ten den falschen Header-Namen. Diese Datei ist
+//      header-only umgesetzt — kein .cc, keine CMake-Änderung.
+//   3. Zwei der vier Lookup-Tabellen des Vorgängers waren leer, deshalb
+//      lieferte describe()/operator<< für die Kategorien gar nichts. Hier
+//      sind alle vier Tabellen vollständig (die Texte sind aus den Namen
+//      abgeleitet und bei Bedarf den exakten Netzwerk-Termini anzupassen).
 // =============================================================================
 
-// [stdc++]
 #include <cstdint>
+#include <map>
 #include <ostream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
+#include <type_traits>
 #include <vector>
-// [iso8583]
+
 #include <iso8583/config.h>
 
-namespace TNG_NAMESPACE {
-    namespace pos {
+namespace TNG_NAMESPACE
+{
 
-        /// @brief Wie die Karteninformationen gelesen wurden.
-        enum class ReadingMethod : unsigned int {
-            UNKNOWN = 1,
-            CONTACTLESS = 1 << 1,
-            PHYSICAL = 1 << 2,
-            BARCODE = 1 << 3,
-            MAGNETIC_STRIPE = 1 << 4,
-            ICC = 1 << 5,
-            DATA_ON_FILE = 1 << 6,
-            ICC_FAILED = 1 << 11,
-            MAGNETIC_STRIPE_FAILED = 1 << 12,
-            FALLBACK = 1 << 13,
-            TRACK1_PRESENT = 1 << 27,
-            TRACK2_PRESENT = 1 << 28,
-            /// Byte-Offset dieser Kategorie innerhalb von POSDataCode::pack() -
-            /// keine echte Flag, siehe POSDataCode::LENGTH/pack()/unpack().
-            OFFSET = 0
-        };
+namespace pos
+{
 
-        /// @brief Wie der Karteninhaber verifiziert wurde.
-        enum class VerificationMethod : unsigned int {
-            UNKNOWN = 1,
-            NONE = 1 << 1,
-            MANUAL_SIGNATURE = 1 << 2,
-            ONLINE_PIN = 1 << 3,
-            OFFLINE_PIN_IN_CLEAR = 1 << 4,
-            OFFLINE_PIN_ENCRYPTED = 1 << 5,
-            OFFLINE_DIGITIZED_SIGNATURE_ANALYSIS = 1 << 6,
-            OFFLINE_BIOMETRICS = 1 << 7,
-            OFFLINE_MANUAL_VERIFICATION = 1 << 8,
-            OFFLINE_BIOGRAPHICS = 1 << 9,
-            ACCOUNT_BASED_DIGITAL_SIGNATURE = 1 << 10,
-            PUBLIC_KEY_BASED_DIGITAL_SIGNATURE = 1 << 11,
-            OFFSET = 4
-        };
+// ---------------------------------------------------------------------------
+// Flag-Enums (je eine pro Kategorie)
+//
+// Jedes Enum ist eine scoped Bitmaske über einem 32-Bit-Wort. UNKNOWN ist
+// kein "echtes" Flag, sondern ein Pseudowert für "nichts Weiteres angegeben".
+// Die Bit-Positionen 16..31 sind aktuell nicht vergeben; das lässt
+// Erweiterungs-Spielraum, ohne das Layout zu ändern.
+// ---------------------------------------------------------------------------
 
-        /// @brief In welcher Umgebung die Transaktion stattfand.
-        enum class POSEnvironment : unsigned int {
-            UNKNOWN = 1,
-            ATTENDED = 1 << 1,
-            UNATTENDED = 1 << 2,
-            MOTO = 1 << 3,
-            E_COMMERCE = 1 << 4,
-            M_COMMERCE = 1 << 5,
-            RECURRING = 1 << 6,
-            STORED_DETAILS = 1 << 7,
-            CAT = 1 << 8,
-            ATM_ON_BANK = 1 << 9,
-            ATM_OFF_BANK = 1 << 10,
-            DEFERRED_TRANSACTION = 1 << 11,
-            INSTALLMENT_TRANSACTION = 1 << 12,
-            OFFSET = 8
-        };
+/// Lesen: Wie wurde die Zahlungsquelle eingelesen?
+enum class ReadingMethod : unsigned int
+{
+    UNKNOWN = 1,
+    CONTACTLESS = 1 << 1,
+    PHYSICAL = 1 << 2,
+    BARCODE = 1 << 3,
+    MAGNETIC_STRIPE = 1 << 4,
+    ICC = 1 << 5,
+    DATA_ON_FILE = 1 << 6,
+    ICC_FAILED = 1 << 11,
+    MAGNETIC_STRIPE_FAILED = 1 << 12,
+    FALLBACK = 1 << 13,
+    TRACK1_PRESENT = 1 << 27,
+    TRACK2_PRESENT = 1 << 28
+};
 
-        /// @brief Welche Sicherheitsmerkmale für die Übertragung gelten.
-        enum class SecurityCharacteristic : unsigned int {
-            UNKNOWN = 1,
-            PRIVATE_NETWORK = 1 << 1,
-            OPEN_NETWORK = 1 << 2,
-            CHANNEL_MACING = 1 << 3,
-            PASS_THROUGH_MACING = 1 << 4,
-            CHANNEL_ENCRYPTION = 1 << 5,
-            END_TO_END_ENCRYPTION = 1 << 6,
-            PRIVAT_ALG_ENCRYPTION = 1 << 7,
-            PKI_ENCRYPTION = 1 << 8,
-            PRIVATE_ALG_MACING = 1 << 9,
-            STD_ALG_MACING = 1 << 10,
-            CARDHOLDER_MANAGED_END_TO_END_ENCRYPTION = 1 << 11,
-            CARDHOLDER_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 12,
-            MERCHANT_MANAGED_END_TO_END_ENCRYPTION = 1 << 13,
-            MERCHANT_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 14,
-            ACQUIRER_MANAGED_END_TO_END_ENCRYPTION = 1 << 15,
-            ACQUIRER_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 16,
-            OFFSET = 12
-        };
+/// Verifikation: Wie wurde der Karteninhaber verifiziert?
+enum class VerificationMethod : unsigned int
+{
+    UNKNOWN = 1,
+    NONE = 1 << 1,
+    MANUAL_SIGNATURE = 1 << 2,
+    ONLINE_PIN = 1 << 3,
+    OFFLINE_PIN_IN_CLEAR = 1 << 4,
+    OFFLINE_PIN_ENCRYPTED = 1 << 5,
+    OFFLINE_DIGITIZED_SIGNATURE_ANALYSIS = 1 << 6,
+    OFFLINE_BIOMETRICS = 1 << 7,
+    OFFLINE_MANUAL_VERIFICATION = 1 << 8,
+    OFFLINE_BIOGRAPHICS = 1 << 9,
+    ACCOUNT_BASED_DIGITAL_SIGNATURE = 1 << 10,
+    PUBLIC_KEY_BASED_DIGITAL_SIGNATURE = 1 << 11
+};
 
-        // ── Bitweise Operatoren ──────────────────────────────────────────────
-        // Das eigentliche Werkzeug, das in der Vorgängerversion fehlte: ohne
-        // diese Überladungen kompiliert `ReadingMethod::ICC | ReadingMethod::
-        // CONTACTLESS` bei einem `enum class` nicht. Mit ihnen funktioniert
-        // das Kombinieren mehrerer Flags genauso natürlich wie bei einem
-        // klassischen (unscoped) Flags-Enum, aber weiterhin typsicher -
-        // ReadingMethod und VerificationMethod lassen sich z.B. nicht
-        // versehentlich vermischen.
-#define TNG_POS_DEFINE_FLAG_OPS(EnumType) \
-        constexpr EnumType operator|(EnumType a, EnumType b) noexcept { \
-            return static_cast<EnumType>(static_cast<unsigned int>(a) | static_cast<unsigned int>(b)); \
-        } \
-        constexpr EnumType operator&(EnumType a, EnumType b) noexcept { \
-            return static_cast<EnumType>(static_cast<unsigned int>(a) & static_cast<unsigned int>(b)); \
-        } \
-        constexpr EnumType& operator|=(EnumType& a, EnumType b) noexcept { \
-            a = a | b; \
-            return a; \
-        }
+/// Umgebung: Wo/wie wird die Transaktion ausgeführt?
+enum class POSEnvironment : unsigned int
+{
+    UNKNOWN = 1,
+    ATTENDED = 1 << 1,
+    UNATTENDED = 1 << 2,
+    MOTO = 1 << 3,
+    E_COMMERCE = 1 << 4,
+    M_COMMERCE = 1 << 5,
+    RECURRING = 1 << 6,
+    STORED_DETAILS = 1 << 7,
+    CAT = 1 << 8,
+    ATM_ON_BANK = 1 << 9,
+    ATM_OFF_BANK = 1 << 10,
+    DEFERRED_TRANSACTION = 1 << 11,
+    INSTALLMENT_TRANSACTION = 1 << 12
+};
 
-        TNG_POS_DEFINE_FLAG_OPS(ReadingMethod)
-        TNG_POS_DEFINE_FLAG_OPS(VerificationMethod)
-        TNG_POS_DEFINE_FLAG_OPS(POSEnvironment)
-        TNG_POS_DEFINE_FLAG_OPS(SecurityCharacteristic)
+/// Sicherheit: Wie ist der Kanal geschützt?
+enum class SecurityCharacteristic : unsigned int
+{
+    UNKNOWN = 1,
+    PRIVATE_NETWORK = 1 << 1,
+    OPEN_NETWORK = 1 << 2,
+    CHANNEL_MACING = 1 << 3,
+    PASS_THROUGH_MACING = 1 << 4,
+    CHANNEL_ENCRYPTION = 1 << 5,
+    END_TO_END_ENCRYPTION = 1 << 6,
+    PRIVATE_ALG_ENCRYPTION = 1 << 7, // vormals: PRIVAT_ALG_ENCRYPTION (Typo)
+    PKI_ENCRYPTION = 1 << 8,
+    PRIVATE_ALG_MACING = 1 << 9,
+    STD_ALG_MACING = 1 << 10,
+    CARDHOLDER_MANAGED_END_TO_END_ENCRYPTION = 1 << 11,
+    CARDHOLDER_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 12,
+    MERCHANT_MANAGED_END_TO_END_ENCRYPTION = 1 << 13,
+    MERCHANT_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 14,
+    ACQUIRER_MANAGED_END_TO_END_ENCRYPTION = 1 << 15,
+    ACQUIRER_MANAGED_POINT_TO_POINT_ENCRYPTION = 1 << 16
+};
+
+// ---------------------------------------------------------------------------
+// Flag-Operatoren
+//
+// Die Enums sind scoped (enum class) und können daher nicht implizit zu int
+// gewandelt werden — operator|, &, ^, ~ sowie die Compound-Zuweisungen
+// müssen hier für jedes Flag-Enum definiert werden. (Der Vorgänger hatte
+// genau das nicht, deshalb war das Kombinieren von Flags unmöglich.)
+// ---------------------------------------------------------------------------
+
+#define TNG_POS_DEFINE_FLAG_OPS(EnumType)                                                                              \
+    constexpr EnumType operator|(EnumType a, EnumType b) noexcept                                                      \
+    {                                                                                                                  \
+        return static_cast<EnumType>(static_cast<unsigned int>(a) | static_cast<unsigned int>(b));                     \
+    }                                                                                                                  \
+    constexpr EnumType operator&(EnumType a, EnumType b) noexcept                                                      \
+    {                                                                                                                  \
+        return static_cast<EnumType>(static_cast<unsigned int>(a) & static_cast<unsigned int>(b));                     \
+    }                                                                                                                  \
+    constexpr EnumType operator^(EnumType a, EnumType b) noexcept                                                      \
+    {                                                                                                                  \
+        return static_cast<EnumType>(static_cast<unsigned int>(a) ^ static_cast<unsigned int>(b));                     \
+    }                                                                                                                  \
+    constexpr EnumType operator~(EnumType a) noexcept                                                                  \
+    {                                                                                                                  \
+        return static_cast<EnumType>(~static_cast<unsigned int>(a));                                                   \
+    }                                                                                                                  \
+    constexpr EnumType& operator|=(EnumType& a, EnumType b) noexcept                                                   \
+    {                                                                                                                  \
+        a = a | b;                                                                                                     \
+        return a;                                                                                                      \
+    }                                                                                                                  \
+    constexpr EnumType& operator&=(EnumType& a, EnumType b) noexcept                                                   \
+    {                                                                                                                  \
+        a = a & b;                                                                                                     \
+        return a;                                                                                                      \
+    }                                                                                                                  \
+    constexpr EnumType& operator^=(EnumType& a, EnumType b) noexcept                                                   \
+    {                                                                                                                  \
+        a = a ^ b;                                                                                                     \
+        return a;                                                                                                      \
+    }
+
+TNG_POS_DEFINE_FLAG_OPS(ReadingMethod)
+TNG_POS_DEFINE_FLAG_OPS(VerificationMethod)
+TNG_POS_DEFINE_FLAG_OPS(POSEnvironment)
+TNG_POS_DEFINE_FLAG_OPS(SecurityCharacteristic)
+
 #undef TNG_POS_DEFINE_FLAG_OPS
 
-        // ── Lesbare Bezeichnungen ────────────────────────────────────────────
-        // Für describe()/operator<< unten sowie für eigene Diagnose-/Log-
-        // Ausgaben der Aufrufer. Hinweis: Die Beschreibungstexte für
-        // VerificationMethod/POSEnvironment sind aus den Bezeichnernamen
-        // abgeleitet (die Vorgänger-Tabellen waren leer) - bei Bedarf an die
-        // exakte Terminologie eures Kartennetzwerks anpassen.
-        inline const std::unordered_map<ReadingMethod, const char*> LookupReadingMethods = {
-            { ReadingMethod::UNKNOWN, "Unknown" },
-            { ReadingMethod::CONTACTLESS, "Info not taken from card" },
-            { ReadingMethod::PHYSICAL, "Physical entry" },
-            { ReadingMethod::BARCODE, "Bar code" },
-            { ReadingMethod::MAGNETIC_STRIPE, "Magnetic Stripe" },
-            { ReadingMethod::ICC, "ICC" },
-            { ReadingMethod::DATA_ON_FILE, "Data on file" },
-            { ReadingMethod::ICC_FAILED, "ICC read but failed" },
-            { ReadingMethod::MAGNETIC_STRIPE_FAILED, "Magnetic Stripe read but failed" },
-            { ReadingMethod::FALLBACK, "Fallback" },
-            { ReadingMethod::TRACK1_PRESENT, "Track1 data present" },
-            { ReadingMethod::TRACK2_PRESENT, "Track2 data present" },
-        };
+// ---------------------------------------------------------------------------
+// Lookup-Tabellen: Enumerator -> lesbarer Text (für describe()/operator<<)
+//
+// std::map statt std::unordered_map: Die Iterations-Reihenfolge ist dadurch
+// deterministisch (steigende Bit-Position), das macht die Ausgabe von
+// describe() test- und vergleichbar.
+// ---------------------------------------------------------------------------
 
-        inline const std::unordered_map<VerificationMethod, const char*> LookupVerificationMethods = {
-            { VerificationMethod::UNKNOWN, "Unknown" },
-            { VerificationMethod::NONE, "No verification performed" },
-            { VerificationMethod::MANUAL_SIGNATURE, "Manual signature" },
-            { VerificationMethod::ONLINE_PIN, "Online PIN" },
-            { VerificationMethod::OFFLINE_PIN_IN_CLEAR, "Offline PIN (cleartext)" },
-            { VerificationMethod::OFFLINE_PIN_ENCRYPTED, "Offline PIN (encrypted)" },
-            { VerificationMethod::OFFLINE_DIGITIZED_SIGNATURE_ANALYSIS, "Offline digitized signature analysis" },
-            { VerificationMethod::OFFLINE_BIOMETRICS, "Offline biometrics" },
-            { VerificationMethod::OFFLINE_MANUAL_VERIFICATION, "Offline manual verification" },
-            { VerificationMethod::OFFLINE_BIOGRAPHICS, "Offline biographics" },
-            { VerificationMethod::ACCOUNT_BASED_DIGITAL_SIGNATURE, "Account-based digital signature" },
-            { VerificationMethod::PUBLIC_KEY_BASED_DIGITAL_SIGNATURE, "Public-key-based digital signature" },
-        };
+inline const std::map<ReadingMethod, const char*> LookupReadingMethods = {
+    {ReadingMethod::UNKNOWN, "Unknown"},
+    {ReadingMethod::CONTACTLESS, "Contactless"},
+    {ReadingMethod::PHYSICAL, "Physical"},
+    {ReadingMethod::BARCODE, "Barcode"},
+    {ReadingMethod::MAGNETIC_STRIPE, "Magnetic Stripe"},
+    {ReadingMethod::ICC, "ICC"},
+    {ReadingMethod::DATA_ON_FILE, "Data on File"},
+    {ReadingMethod::ICC_FAILED, "ICC Failed"},
+    {ReadingMethod::MAGNETIC_STRIPE_FAILED, "Magnetic Stripe Failed"},
+    {ReadingMethod::FALLBACK, "Fallback"},
+    {ReadingMethod::TRACK1_PRESENT, "Track 1 present"},
+    {ReadingMethod::TRACK2_PRESENT, "Track 2 present"}};
 
-        inline const std::unordered_map<POSEnvironment, const char*> LookupPOSEnvironments = {
-            { POSEnvironment::UNKNOWN, "Unknown" },
-            { POSEnvironment::ATTENDED, "Attended terminal" },
-            { POSEnvironment::UNATTENDED, "Unattended terminal" },
-            { POSEnvironment::MOTO, "Mail order / telephone order" },
-            { POSEnvironment::E_COMMERCE, "E-Commerce" },
-            { POSEnvironment::M_COMMERCE, "M-Commerce" },
-            { POSEnvironment::RECURRING, "Recurring transaction" },
-            { POSEnvironment::STORED_DETAILS, "Stored card details used" },
-            { POSEnvironment::CAT, "Cardholder-activated terminal" },
-            { POSEnvironment::ATM_ON_BANK, "ATM, on card issuer's network" },
-            { POSEnvironment::ATM_OFF_BANK, "ATM, off card issuer's network" },
-            { POSEnvironment::DEFERRED_TRANSACTION, "Deferred transaction" },
-            { POSEnvironment::INSTALLMENT_TRANSACTION, "Installment transaction" },
-        };
+inline const std::map<VerificationMethod, const char*> LookupVerificationMethods = {
+    {VerificationMethod::UNKNOWN, "Unknown"},
+    {VerificationMethod::NONE, "None"},
+    {VerificationMethod::MANUAL_SIGNATURE, "Manual Signature"},
+    {VerificationMethod::ONLINE_PIN, "Online PIN"},
+    {VerificationMethod::OFFLINE_PIN_IN_CLEAR, "Offline PIN in Clear"},
+    {VerificationMethod::OFFLINE_PIN_ENCRYPTED, "Offline PIN encrypted"},
+    {VerificationMethod::OFFLINE_DIGITIZED_SIGNATURE_ANALYSIS, "Offline digitized signature analysis"},
+    {VerificationMethod::OFFLINE_BIOMETRICS, "Offline biometrics"},
+    {VerificationMethod::OFFLINE_MANUAL_VERIFICATION, "Offline manual verification"},
+    {VerificationMethod::OFFLINE_BIOGRAPHICS, "Offline biographics"},
+    {VerificationMethod::ACCOUNT_BASED_DIGITAL_SIGNATURE, "Account-based digital signature"},
+    {VerificationMethod::PUBLIC_KEY_BASED_DIGITAL_SIGNATURE, "Public-key-based digital signature"}};
 
-        inline const std::unordered_map<SecurityCharacteristic, const char*> LookupSecurityCharacteristics = {
-            { SecurityCharacteristic::UNKNOWN, "Unknown" },
-            { SecurityCharacteristic::PRIVATE_NETWORK, "Private network" },
-            { SecurityCharacteristic::OPEN_NETWORK, "Open network (Internet)" },
-            { SecurityCharacteristic::CHANNEL_MACING, "Channel MACing" },
-            { SecurityCharacteristic::PASS_THROUGH_MACING, "Pass through MACing" },
-            { SecurityCharacteristic::CHANNEL_ENCRYPTION, "Channel encryption" },
-            { SecurityCharacteristic::END_TO_END_ENCRYPTION, "End-to-end encryption" },
-            { SecurityCharacteristic::PRIVAT_ALG_ENCRYPTION, "Private algorithm encryption" },
-            { SecurityCharacteristic::PKI_ENCRYPTION, "PKI encryption" },
-            { SecurityCharacteristic::PRIVATE_ALG_MACING, "Private algorithm MACing" },
-            { SecurityCharacteristic::STD_ALG_MACING, "Standard algorithm MACing" },
-            { SecurityCharacteristic::CARDHOLDER_MANAGED_END_TO_END_ENCRYPTION, "Cardholder managed end-to-end encryption" },
-            { SecurityCharacteristic::CARDHOLDER_MANAGED_POINT_TO_POINT_ENCRYPTION, "Cardholder managed point-to-point encryption" },
-            { SecurityCharacteristic::MERCHANT_MANAGED_END_TO_END_ENCRYPTION, "Merchant managed end-to-end encryption" },
-            { SecurityCharacteristic::MERCHANT_MANAGED_POINT_TO_POINT_ENCRYPTION, "Merchant managed point-to-point encryption" },
-            { SecurityCharacteristic::ACQUIRER_MANAGED_END_TO_END_ENCRYPTION, "Acquirer managed end-to-end encryption" },
-            { SecurityCharacteristic::ACQUIRER_MANAGED_POINT_TO_POINT_ENCRYPTION, "Acquirer managed point-to-point encryption" },
-        };
+inline const std::map<POSEnvironment, const char*> LookupPOSEnvironments = {
+    {POSEnvironment::UNKNOWN, "Unknown"},
+    {POSEnvironment::ATTENDED, "Attended"},
+    {POSEnvironment::UNATTENDED, "Unattended"},
+    {POSEnvironment::MOTO, "MOTO"},
+    {POSEnvironment::E_COMMERCE, "E-commerce"},
+    {POSEnvironment::M_COMMERCE, "M-commerce"},
+    {POSEnvironment::RECURRING, "Recurring"},
+    {POSEnvironment::STORED_DETAILS, "Stored details"},
+    {POSEnvironment::CAT, "Cardholder-activated transaction (CAT)"},
+    {POSEnvironment::ATM_ON_BANK, "ATM (on-bank)"},
+    {POSEnvironment::ATM_OFF_BANK, "ATM (off-bank)"},
+    {POSEnvironment::DEFERRED_TRANSACTION, "Deferred transaction"},
+    {POSEnvironment::INSTALLMENT_TRANSACTION, "Installment transaction"}};
 
-        /// @brief Dekodiert/baut ein kompaktes POS-Fähigkeiten-Byte-Feld
-        /// (4 Kategorien × 4 Bytes, little-endian = 16 Bytes gesamt).
-        class POSDataCode {
-        public:
-            /// Größe des Byte-Feldes (4 Kategorien × 4 Bytes).
-            static constexpr std::size_t LENGTH = 16;
+inline const std::map<SecurityCharacteristic, const char*> LookupSecurityCharacteristics = {
+    {SecurityCharacteristic::UNKNOWN, "Unknown"},
+    {SecurityCharacteristic::PRIVATE_NETWORK, "Private network"},
+    {SecurityCharacteristic::OPEN_NETWORK, "Open network"},
+    {SecurityCharacteristic::CHANNEL_MACING, "Channel Macing"},
+    {SecurityCharacteristic::PASS_THROUGH_MACING, "Pass-through Macing"},
+    {SecurityCharacteristic::CHANNEL_ENCRYPTION, "Channel encryption"},
+    {SecurityCharacteristic::END_TO_END_ENCRYPTION, "End-to-end encryption"},
+    {SecurityCharacteristic::PRIVATE_ALG_ENCRYPTION, "Private-alg encryption"},
+    {SecurityCharacteristic::PKI_ENCRYPTION, "PKI encryption"},
+    {SecurityCharacteristic::PRIVATE_ALG_MACING, "Private-alg Macing"},
+    {SecurityCharacteristic::STD_ALG_MACING, "Standard-alg Macing"},
+    {SecurityCharacteristic::CARDHOLDER_MANAGED_END_TO_END_ENCRYPTION, "Cardholder-managed E2E encryption"},
+    {SecurityCharacteristic::CARDHOLDER_MANAGED_POINT_TO_POINT_ENCRYPTION, "Cardholder-managed P2P encryption"},
+    {SecurityCharacteristic::MERCHANT_MANAGED_END_TO_END_ENCRYPTION, "Merchant-managed E2E encryption"},
+    {SecurityCharacteristic::MERCHANT_MANAGED_POINT_TO_POINT_ENCRYPTION, "Merchant-managed P2P encryption"},
+    {SecurityCharacteristic::ACQUIRER_MANAGED_END_TO_END_ENCRYPTION, "Acquirer-managed E2E encryption"},
+    {SecurityCharacteristic::ACQUIRER_MANAGED_POINT_TO_POINT_ENCRYPTION, "Acquirer-managed P2P encryption"}};
 
-            /// @brief Baut einen POSDataCode aus benannten Flags auf.
-            /// Mehrere Flags derselben Kategorie werden mit `|` kombiniert,
-            /// z.B. `ReadingMethod::ICC | ReadingMethod::TRACK2_PRESENT`.
-            POSDataCode(
-                ReadingMethod read,
-                VerificationMethod verify,
-                POSEnvironment env,
-                SecurityCharacteristic sec) noexcept
-            {
-                b_.assign(LENGTH, 0x00);
-                packU32LE(offsetOf(ReadingMethod::OFFSET), static_cast<unsigned int>(read));
-                packU32LE(offsetOf(VerificationMethod::OFFSET), static_cast<unsigned int>(verify));
-                packU32LE(offsetOf(POSEnvironment::OFFSET), static_cast<unsigned int>(env));
-                packU32LE(offsetOf(SecurityCharacteristic::OFFSET), static_cast<unsigned int>(sec));
-            }
+// ---------------------------------------------------------------------------
+// pos::POSDataCode
+// ---------------------------------------------------------------------------
 
-            /// @brief Dekodiert einen POSDataCode aus Rohbytes, z.B.
-            /// `msg->get<BinaryField>(61)->value()`.
-            /// @throws std::invalid_argument wenn `raw` nicht genau `LENGTH`
-            ///         Bytes hat (kein stillschweigendes Auffüllen/Kürzen -
-            ///         ein zu kurzer/langer Puffer deutet meist auf ein
-            ///         falsches Feld oder einen Framing-Fehler hin).
-            explicit POSDataCode(const std::vector<uint8_t>& raw) {
-                if (raw.size() != LENGTH)
-                    throw std::invalid_argument(
-                        "POSDataCode: erwarte genau " + std::to_string(LENGTH) +
-                        " Bytes, erhalten " + std::to_string(raw.size()));
-                b_ = raw;
-            }
+class POSDataCode
+{
+public:
+    /// Gesamtgröße des gepackten Data-Codes in Bytes (4 Kategorien × 4 Bytes).
+    static constexpr std::size_t LENGTH = 16;
 
-            /// @brief Rohbytes für's Zurückschreiben in ein Feld, z.B.
-            /// `msg->set(std::make_shared<BinaryField>(61, pdc.pack()));`.
-            const std::vector<uint8_t>& pack() const noexcept { return b_; }
+    /// Baut aus vier Flag-Kombinationen den 16-Byte-Data-Code.
+    POSDataCode(ReadingMethod reading = ReadingMethod::UNKNOWN,
+                VerificationMethod verification = VerificationMethod::UNKNOWN,
+                POSEnvironment environment = POSEnvironment::UNKNOWN,
+                SecurityCharacteristic security = SecurityCharacteristic::UNKNOWN)
+    {
+        b_.assign(LENGTH, 0);
+        packU32LE(offsetOf<ReadingMethod>(), static_cast<unsigned int>(reading));
+        packU32LE(offsetOf<VerificationMethod>(), static_cast<unsigned int>(verification));
+        packU32LE(offsetOf<POSEnvironment>(), static_cast<unsigned int>(environment));
+        packU32LE(offsetOf<SecurityCharacteristic>(), static_cast<unsigned int>(security));
+    }
 
-            // ── Kategorie-Abfrage (einzeln oder kombiniert via `|`) ─────────────
-
-            ReadingMethod readingMethod() const noexcept {
-                return static_cast<ReadingMethod>(unpackU32LE(offsetOf(ReadingMethod::OFFSET)));
-            }
-            VerificationMethod verificationMethod() const noexcept {
-                return static_cast<VerificationMethod>(unpackU32LE(offsetOf(VerificationMethod::OFFSET)));
-            }
-            POSEnvironment posEnvironment() const noexcept {
-                return static_cast<POSEnvironment>(unpackU32LE(offsetOf(POSEnvironment::OFFSET)));
-            }
-            SecurityCharacteristic securityCharacteristic() const noexcept {
-                return static_cast<SecurityCharacteristic>(unpackU32LE(offsetOf(SecurityCharacteristic::OFFSET)));
-            }
-
-            /// @brief `true` wenn ALLE angefragten Reading-Method-Flags gesetzt sind.
-            bool hasReadingMethod(ReadingMethod read) const noexcept {
-                return (readingMethod() & read) == read;
-            }
-            /// @brief `true` wenn ALLE angefragten Verification-Method-Flags gesetzt sind.
-            bool hasVerificationMethod(VerificationMethod verify) const noexcept {
-                return (verificationMethod() & verify) == verify;
-            }
-            /// @brief `true` wenn ALLE angefragten POS-Environment-Flags gesetzt sind.
-            bool hasPOSEnvironment(POSEnvironment env) const noexcept {
-                return (posEnvironment() & env) == env;
-            }
-            /// @brief `true` wenn ALLE angefragten Security-Characteristic-Flags gesetzt sind.
-            bool hasSecurityCharacteristic(SecurityCharacteristic sec) const noexcept {
-                return (securityCharacteristic() & sec) == sec;
-            }
-
-            // ── Bequeme, häufig gebrauchte Zusammenfassungen ────────────────────
-
-            bool isEMV() const noexcept {
-                return hasReadingMethod(ReadingMethod::ICC) || hasReadingMethod(ReadingMethod::CONTACTLESS);
-            }
-            bool isManualEntry() const noexcept {
-                return hasReadingMethod(ReadingMethod::PHYSICAL);
-            }
-            bool isSwiped() const noexcept {
-                return hasReadingMethod(ReadingMethod::MAGNETIC_STRIPE);
-            }
-            bool isRecurring() const noexcept {
-                return hasPOSEnvironment(POSEnvironment::RECURRING);
-            }
-            bool isECommerce() const noexcept {
-                return hasPOSEnvironment(POSEnvironment::E_COMMERCE);
-            }
-            bool isCardNotPresent() const noexcept {
-                return isECommerce() || hasPOSEnvironment(POSEnvironment::MOTO) || isRecurring();
-            }
-
-            /// @brief Lesbare Zusammenfassung aller gesetzten Flags (über die
-            /// Lookup-Tabellen oben) - z.B. für Logging/Debug-Ausgaben.
-            std::string describe() const {
-                std::string out;
-                appendMatches(out, "Reading: ", readingMethod(), LookupReadingMethods);
-                appendMatches(out, "Verification: ", verificationMethod(), LookupVerificationMethods);
-                appendMatches(out, "Environment: ", posEnvironment(), LookupPOSEnvironments);
-                appendMatches(out, "Security: ", securityCharacteristic(), LookupSecurityCharacteristics);
-                return out;
-            }
-
-        private:
-            std::vector<uint8_t> b_;
-
-            void packU32LE(std::size_t offset, unsigned int v) noexcept {
-                b_[offset + 0] = static_cast<uint8_t>(v);
-                b_[offset + 1] = static_cast<uint8_t>(v >> 8);
-                b_[offset + 2] = static_cast<uint8_t>(v >> 16);
-                b_[offset + 3] = static_cast<uint8_t>(v >> 24);
-            }
-            unsigned int unpackU32LE(std::size_t offset) const noexcept {
-                return static_cast<unsigned int>(b_[offset + 0]) |
-                    (static_cast<unsigned int>(b_[offset + 1]) << 8) |
-                    (static_cast<unsigned int>(b_[offset + 2]) << 16) |
-                    (static_cast<unsigned int>(b_[offset + 3]) << 24);
-            }
-
-            template <typename EnumType>
-            static std::size_t offsetOf(EnumType offsetMarker) noexcept {
-                return static_cast<std::size_t>(offsetMarker);
-            }
-
-            template <typename EnumType>
-            static void appendMatches(
-                std::string& out, const char* label, EnumType value,
-                const std::unordered_map<EnumType, const char*>& lookup)
-            {
-                bool first = true;
-                for (const auto& [flag, text] : lookup) {
-                    if ((value & flag) != flag)
-                        continue;
-                    if (first) { out += label; first = false; }
-                    else out += ", ";
-                    out += text;
-                }
-                if (!first) out += "; ";
-            }
-        };
-
-        /// @brief Schreibt POSDataCode::describe() in `os`.
-        inline std::ostream& operator<<(std::ostream& os, const POSDataCode& pdc) {
-            return os << pdc.describe();
+    /// Baut einen Data-Code aus rohen Bytes. Erwartet exakt LENGTH Bytes.
+    explicit POSDataCode(const std::vector<uint8_t>& raw)
+    {
+        if (raw.size() != LENGTH) {
+            throw std::invalid_argument("POSDataCode requires exactly " + std::to_string(LENGTH) +
+                                        " raw bytes, got " + std::to_string(raw.size()));
         }
+        b_ = raw;
+    }
 
-    } // namespace pos
+    /// Rückgabe der gepackten 16 Bytes (z. B. für BinaryField).
+    const std::vector<uint8_t>& pack() const noexcept
+    {
+        return b_;
+    }
+
+    // ---- einzelne Kategorien als ganzer Wert -----------------------------
+
+    ReadingMethod readingMethod() const
+    {
+        return static_cast<ReadingMethod>(unpackU32LE(offsetOf<ReadingMethod>()));
+    }
+    VerificationMethod verificationMethod() const
+    {
+        return static_cast<VerificationMethod>(unpackU32LE(offsetOf<VerificationMethod>()));
+    }
+    POSEnvironment posEnvironment() const
+    {
+        return static_cast<POSEnvironment>(unpackU32LE(offsetOf<POSEnvironment>()));
+    }
+    SecurityCharacteristic securityCharacteristic() const
+    {
+        return static_cast<SecurityCharacteristic>(unpackU32LE(offsetOf<SecurityCharacteristic>()));
+    }
+
+    // ---- Flag-Prüfung (true, wenn ALLE Bits von f gesetzt sind) ----------
+
+    bool hasReadingMethod(ReadingMethod f) const
+    {
+        const auto value = static_cast<unsigned int>(readingMethod());
+        return (value & static_cast<unsigned int>(f)) == static_cast<unsigned int>(f);
+    }
+    bool hasVerificationMethod(VerificationMethod f) const
+    {
+        const auto value = static_cast<unsigned int>(verificationMethod());
+        return (value & static_cast<unsigned int>(f)) == static_cast<unsigned int>(f);
+    }
+    bool hasPOSEnvironment(POSEnvironment f) const
+    {
+        const auto value = static_cast<unsigned int>(posEnvironment());
+        return (value & static_cast<unsigned int>(f)) == static_cast<unsigned int>(f);
+    }
+    bool hasSecurityCharacteristic(SecurityCharacteristic f) const
+    {
+        const auto value = static_cast<unsigned int>(securityCharacteristic());
+        return (value & static_cast<unsigned int>(f)) == static_cast<unsigned int>(f);
+    }
+
+    // ---- Komfort-Methoden ------------------------------------------------
+
+    /// EMV / Chip: ICC-Lese (oder Contactless-Chip).
+    bool isEMV() const
+    {
+        return hasReadingMethod(ReadingMethod::ICC) || hasReadingMethod(ReadingMethod::CONTACTLESS);
+    }
+    /// Kartennummer manuell eingegeben.
+    bool isManualEntry() const
+    {
+        return hasReadingMethod(ReadingMethod::PHYSICAL);
+    }
+    /// Magnetbahn gelesen.
+    bool isSwiped() const
+    {
+        return hasReadingMethod(ReadingMethod::MAGNETIC_STRIPE);
+    }
+    bool isRecurring() const
+    {
+        return hasPOSEnvironment(POSEnvironment::RECURRING);
+    }
+    bool isECommerce() const
+    {
+        return hasPOSEnvironment(POSEnvironment::E_COMMERCE);
+    }
+    /// Karte an der Transaktion nicht physisch anwesend.
+    bool isCardNotPresent() const
+    {
+        return isECommerce() || hasPOSEnvironment(POSEnvironment::MOTO) || isRecurring();
+    }
+
+    // ---- Ausgabe ---------------------------------------------------------
+
+    /// Lesbare Zusammenfassung aller gesetzten Flags, z. B.
+    /// "Reading: ICC, Track 2 present; Verification: Online PIN; Environment:
+    /// Attended; Security: End-to-end encryption". Kategorien ohne gesetzte
+    /// Bits liefern "<label>: none".
+    std::string describe() const
+    {
+        const std::vector<std::string> parts = {
+            matchesText(readingMethod(), LookupReadingMethods, "Reading"),
+            matchesText(verificationMethod(), LookupVerificationMethods, "Verification"),
+            matchesText(posEnvironment(), LookupPOSEnvironments, "Environment"),
+            matchesText(securityCharacteristic(), LookupSecurityCharacteristics, "Security")};
+        std::string out;
+        for (std::size_t i = 0; i < parts.size(); ++i)
+        {
+            if (i) out += "; ";
+            out += parts[i];
+        }
+        return out;
+    }
+
+private:
+    /// Interner Speicher des Data-Codes (exakt LENGTH Bytes; nach der
+    /// Konstruierung keine Re-Allokation — pack() liefert einen stabilen
+    /// Verweis und ist allokationsfrei).
+    std::vector<uint8_t> b_;
+
+    // ---- little-endian 32-Bit-Wörter packen/lesen -------------------------
+
+    void packU32LE(std::size_t offset, unsigned int value) noexcept
+    {
+        b_[offset + 0] = static_cast<uint8_t>((value >> 0) & 0xFF);
+        b_[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        b_[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+        b_[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+    }
+
+    unsigned int unpackU32LE(std::size_t offset) const noexcept
+    {
+        return (static_cast<unsigned int>(b_[offset + 0])) |
+               (static_cast<unsigned int>(b_[offset + 1]) << 8) |
+               (static_cast<unsigned int>(b_[offset + 2]) << 16) |
+               (static_cast<unsigned int>(b_[offset + 3]) << 24);
+    }
+
+    /// Byte-Offset einer Kategorie — Implementationsdetail. (Die Pseudo-
+    /// Enumerator <Name>::OFFSET des Vorgängers ist entfernt: Offset 0/4/8/12
+    /// ist kein Flag und sollte nicht in der Flag-Semantik auftauchen. Das
+    /// Draht-Layout bleibt unverändert.)
+    template <typename EnumType>
+    static std::size_t offsetOf() noexcept
+    {
+        if constexpr (std::is_same_v<EnumType, ReadingMethod>)
+        {
+            return 0;
+        }
+        else if constexpr (std::is_same_v<EnumType, VerificationMethod>)
+        {
+            return 4;
+        }
+        else if constexpr (std::is_same_v<EnumType, POSEnvironment>)
+        {
+            return 8;
+        }
+        else
+        {
+            return 12; // SecurityCharacteristic
+        }
+    }
+
+    /// Liefert den Lookup-Text für alle in value gesetzten Flags (steigende
+    /// Bit-Reihenfolge, durch ", " getrennt). Keine gesetzten Flags ->
+    /// "<label>: none".
+    template <typename EnumType>
+    static std::string matchesText(EnumType value,
+                                   const std::map<EnumType, const char*>& table,
+                                   const char* label)
+    {
+        const auto bitsInValue = static_cast<unsigned int>(value);
+        std::string text;
+        for (const auto& entry : table)
+        {
+            const auto bits = static_cast<unsigned int>(entry.first);
+            if (bits == 0u || (bitsInValue & bits) != bits)
+            {
+                continue;
+            }
+            if (!text.empty())
+            {
+                text += ", ";
+            }
+            text += entry.second;
+        }
+        std::string result = std::string(label) + ": ";
+        if (text.empty())
+        {
+            result += "none";
+        }
+        else
+        {
+            result += text;
+        }
+        return result;
+    }
+};
+
+inline std::ostream& operator<<(std::ostream& os, const POSDataCode& pdc)
+{
+    os << pdc.describe();
+    return os;
+}
+
+} // namespace pos
+
 } // namespace TNG_NAMESPACE
