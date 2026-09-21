@@ -241,12 +241,99 @@ namespace TNG_NAMESPACE::spec {
         }
     }
 
+    // (0.6.0, FE-1) Validierung für Field-only-Dokumente: ein einzelner
+    // 'field:'-Block (eine einzelne Felddefinition, DE-Key synthetisch '0')
+    // statt der Message-'fields:'-Map. Läuft wie validateSpecYaml auf dem
+    // BEREITS PREPROZESSIERTEN YAML. Die sonstigen Root-Keys (spec/encoding/
+    // strict/definitions/Direktiven) sind identisch erlaubt; 'fields:' und
+    // 'header:' werden abgelehnt (explizite Dokument-Form; 'header:' ist für
+    // ein isoliertes Feld widersprüchlich – Entscheidung c). Die Feld-Level-
+    // Checks (validateFieldKeys, 'remaining' → 'length' Fail-closed) laufen
+    // auf dem Block und seinen Kindern.
+    static void validateFieldSpecYaml(ryml::ConstNodeRef root,
+        const SourceMap* smap = nullptr) {
+        if (!hasKey(root, "field"))
+            throw std::runtime_error("Fehlender Abschnitt 'field' in YAML.");  // keine Position verfügbar
+
+        // (Analog zur E3-Regel für 'fields' in validateSpecYaml): 'field'
+        // muss eine nicht-leere Map sein, sonst baut der Field-only-Loader
+        // einen Parser ohne Kind bzw. entkommen rohe Exceptions aus
+        // parseSpecField.
+        if (!root["field"].is_map() || !root["field"].has_children())
+            throw SpecValidationError(
+                "Abschnitt 'field' muss eine nicht-leere Map sein "
+                "(eine einzelne Felddefinition, z.B. 'format: lllbinary')",
+                root["field"].id(), smap);
+
+        if (hasKey(root, "fields"))
+            throw SpecValidationError(
+                "Konflikt: field-only-Dokumente dürfen keine fields:-Map "
+                "enthalten (fields: gehört in Message-Specs, field: hier)",
+                root["fields"].id(), smap);
+
+        // (Entscheidung c): 'header:' (MTI/Bitmap-Größe) ist für ein
+        // isoliertes Feld widersprüchlich – Field-only-Parsen hat keinen
+        // Header. Fail-closed statt stiller Ignorierung.
+        if (hasKey(root, "header"))
+            throw SpecValidationError(
+                "Konflikt: header: ist in Field-only-Dokumenten unzulässig "
+                "(ein isoliertes Feld hat keinen MTI/Bitmap-Header)",
+                root["header"].id(), smap);
+
+        const ryml::ConstNodeRef block = root["field"];
+
+        // (4) Feld-Level-Key-Whitelist auf dem Block (gleiche Regeln wie
+        // Message-Specs; der DE-Key ist hier synthetisch '0').
+        validateFieldKeys(block, "0", smap);
+
+        // (5) Fail-closed: 'remaining' ohne 'length' dekodiert andernfalls
+        // still 0 Bytes (gleiche Regel wie in validateSpecYaml) – auf dem
+        // Block und dessen Kindern (nested-Sequenz oder TLV-Map).
+        auto checkRemaining =
+            [&](ryml::ConstNodeRef f, const std::string& label) {
+                if (!hasKey(f, "format")) return;
+                const auto fmt = toLower(getStr(f, "format"));
+                if (fmt == "remaining" && !hasKey(f, "length"))
+                    throw SpecValidationError(
+                        label + ": 'format: remaining' benötigt 'length' "
+                        "(Maximum der verbleibenden Bytes) – ohne 'length' "
+                        "würden 0 Bytes dekodiert",
+                        f.id(), smap);
+            };
+        checkRemaining(block, "Feld");
+        if (hasKey(block, "children")) {
+            int idx = 0;
+            for (ryml::ConstNodeRef c : block["children"].children())
+                checkRemaining(c, "Kind " + std::to_string(idx++));
+        }
+    }
+
+    // (0.6.0, FE-1) Testnaht (Deklaration: _spec.hh, nur für Tests, keine
+    // Produktions-API): Preprocessor + SourceMap + Field-only-Validierung
+    // für die Datei unter `path` – dieselbe Pipeline wie loadAndParse,
+    // ohne Parser-Bau (die Field-only-Loader-Eintritte loadField* existieren
+    // erst ab WP3).
+    void validateFieldSpecYamlFile(const std::string& path) {
+        SpecLoadOptions opts;
+        opts.trackSourceMap = true; // SourceMap unbedingt aufbauen (Positionen)
+        const auto pr = SpecPreProcessor::preprocessWithSourceMap(path, opts);
+        validateFieldSpecYaml(pr.tree.crootref(), &pr.source_map);
+    }
+
     static void validateSpecYaml(ryml::ConstNodeRef root, const SourceMap* smap = nullptr) {
         // Läuft auf dem BEREITS PREPROCESSIERTEN YAML – !template, !merge, !use
         // wurden bereits expandiert.
 
         if (!hasKey(root, "fields"))
             throw std::runtime_error("Fehlender Abschnitt 'fields' in YAML.");  // keine Position verfügbar
+
+        // (0.6.0, FE-1): 'field:' ist nur in Field-only-Dokumenten erlaubt –
+        // in einer Message-Spec widersprüchlich, Fail-closed.
+        if (hasKey(root, "field"))
+            throw SpecValidationError(
+                "Konflikt: Message-Specs verwenden fields:, field: ist nur "
+                "in Field-only-Dokumenten erlaubt",
+                root["field"].id(), smap);
 
         // [ISO8583] E3 (Sicherheits-Audit): Leeres 'fields' verwerfen -
         // sonst baut buildParser() aus einem leeren Feld-Map einen Parser
@@ -845,6 +932,125 @@ namespace TNG_NAMESPACE::spec {
         return cf;
     }
 
+    // =============================================================================
+    // (0.6.0, FE-1) Field-only-Block-Parser-Aufbau
+    // =============================================================================
+    //
+    // Aus buildFieldParser extrahierte Helper: sie liefern den PAYLOAD-Parser
+    // eines Felds, also genau das, was ein Container-Parser seinem Kind
+    // weiterreicht. Der Message-Pfad (buildFieldParser) ruft dieselben
+    // Helper – Verhalten byte-identisch, Regression über die unveränderten
+    // Message-/TLV-/E2E-Tests.
+    //
+    // buildFieldBlockParser (FE-1): für ein einzelnes Field-only-Feld der
+    // Block-Parser OHNE den äußeren Längenpräfix-Frame des DEs selbst:
+    //   tlv/bertlv  → buildTlvFieldParser  (TLV-Frames = Payload)
+    //   nested      → buildNestedSubParser (Sequenz-Kinder)
+    //   skalar      → createScalarParser   (einzelnes Kind-Parser)
+    // Der Top-Parser ist eine ISOBaseParser mit container(true), die diesen
+    // Block-Parser als (einziges) Kind hält → unparse/parse überspringen
+    // MTI + Bitmap (src/_parser.cc) und der Datenloop decodiert ab Slot 0.
+    // checkContainerBase-Guard gilt automatisch (gleicher Pfad).
+
+    // TLV/BERTLV-Sub-Parser (FR-1/FR-2-Logik unverändert): TlvChildMap-Aufbau
+    // aus 'children' (Typisierung Text vs. binär + Encoding + Beschreibung +
+    // PCI-Sensitivität), Encoding-Auflösung des Containers und
+    // Mastercard-Default-Fallback in makeTlvParser.
+    static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        buildTlvFieldParser(const SpecField& f)
+    {
+        const auto& opts = *f.tlv;
+        const auto enc = [&] {
+            if (opts.encoding == "BCD")   return codec::Encoder::BCD;
+            if (opts.encoding == "ASCII")  return codec::Encoder::ASCII;
+            return codec::Encoder::EBCDIC;
+            }();
+
+        tlv_detail::TlvChildMap childMap;
+        for (const auto& [tag, child] : f.tlv_children) {
+            tlv_detail::TlvChildInfo info;
+            const auto cf = child.format; // bereits Uppercase (parseSpecField)
+            info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR");
+            if (info.text) {
+                if (child.encoding == "BCD")
+                    info.enc = codec::Encoder::BCD;
+                else if (child.encoding == "ASCII")
+                    info.enc = codec::Encoder::ASCII;
+                else if (child.encoding == "EBCDIC")
+                    info.enc = codec::Encoder::EBCDIC;
+                else
+                    // Defensive: wird primär von validateSpecYaml abgefangen
+                    // (positioniert). Hier nur als Fail-closed-Doppelcheck.
+                    throw std::runtime_error(
+                        "[SpecDecoder] TLV-Kind " + child.description +
+                        " (Format " + cf + ") benötigt ein Encoding (ascii/ebcdic/bcd), "
+                        "erbt aber '" + child.encoding + "'");
+            }
+            else
+                info.enc = codec::Encoder::BINARY; // rohe Bytes, Encoding ignorieren
+            info.description = child.has_explicit_description ? child.description : "";
+            // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
+            // 'sensitive: true' oder Erbgang von einem sensitive Container).
+            info.sensitive = child.sensitive || f.sensitive;
+            childMap[static_cast<std::size_t>(tag)] = std::move(info);
+        }
+
+        return makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber,
+            childMap, f.sensitive);
+    }
+
+    // Sequenz-Sub-Parser für nested Container (ohne TLV): ISOBaseParser im
+    // Container-Modus (kein MTI/Bitmap, Slot 0 = erstes Kind), je ein
+    // Skalaren-Parser pro deklariertem Kind. Der Container-Basis-Parser
+    // selbst (Längenpräfix-Frame) gehört NICHT dazu – s. buildFieldBlockParser.
+    static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        buildNestedSubParser(const SpecField& f)
+    {
+        auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
+        // FR-3 (0.6.0): Container-Modus – der Sub-Payload hat
+        // kein MTI/Bitmap (Slot 0 = erstes Kind-Feld). Verhindert
+        // die Doppel-Serialisierung eines einzelnen Kind-Felds
+        // durch die Slot-0/MTI-Semantik von ISOBaseParser.
+        sub->container(true);
+        for (const auto& child : f.children) {
+            auto childP = createScalarParser(child);
+            // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang
+            // von einem sensitive Container.
+            if (child.sensitive || f.sensitive)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
+                    fp->sensitive(true);
+            sub->add(childP);
+        }
+        return sub;
+    }
+
+    // (0.6.0, FE-1) Block-Parser eines einzelnen Field-only-Felds (s.
+    // Section-Header oben). `defaultEncoding` ist hier nur Signaturstabilität:
+    // die per-Feld-Encoding-Auflösung erfolgt bereits in parseSpecField.
+    static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        buildFieldBlockParser(const SpecField& f, const std::string& /*defaultEncoding*/)
+    {
+        if (f.type == SpecFieldType::NESTED) {
+            if (f.tlv)
+                return buildTlvFieldParser(f);
+            return buildNestedSubParser(f);
+        }
+        // Skalar: als einziges Kind (Slot 0) in einen Container-Top-Parser
+        // (ISOBaseParser, container=true) gewickelt – damit liefert
+        // buildFieldBlockParser für alle drei Formen den fertigen
+        // Top-Parser. Im Container-Modus entfallen MTI/Bitmap und der
+        // Daten-Loop startet bei Slot 0 (_parser.cc); der Skalaren-Parser
+        // konsumiert dort Präfix + Payload (komplettes Frame-Including).
+        auto top = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
+        top->container(true);
+        auto p = createScalarParser(f);
+        if (f.sensitive)
+            if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
+                fp->sensitive(true);
+        top->add(p);
+        return top;
+    }
+
     static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
         buildFieldParser(const SpecField& f)
     {
@@ -874,71 +1080,16 @@ namespace TNG_NAMESPACE::spec {
                 ::TNG_NAMESPACE::ISONestedFieldParser<::TNG_NAMESPACE::ISOBaseParser>>(
                     base, f.description);
 
-            if (f.tlv) {
-                const auto& opts = *f.tlv;
-                const auto enc = [&] {
-                    if (opts.encoding == "BCD")   return codec::Encoder::BCD;
-                    if (opts.encoding == "ASCII")  return codec::Encoder::ASCII;
-                    return codec::Encoder::EBCDIC;
-                    }();
-
-                // FR-1/FR-2 (0.5.0): aus 'children' deklarierte Kind-Elemente
-                // als einheitliche TlvChildMap an den Laufzeit-Parser
-                // weiterreichen – Typisierung (Text vs. binär) + Encoding +
-                // Beschreibung + PCI-Sensitivität (statt der früheren drei
-                // parallelen Maps). Text-Kind: char/numeric/nopad_char →
-                // OpaqueField (Codec, strict-Propagation); alles andere
-                // (binary/undeklariert) → BinaryField (rohe Bytes).
-                tlv_detail::TlvChildMap childMap;
-                for (const auto& [tag, child] : f.tlv_children) {
-                    tlv_detail::TlvChildInfo info;
-                    const auto cf = child.format; // bereits Uppercase (parseSpecField)
-                    info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR");
-                    if (info.text) {
-                        if (child.encoding == "BCD")
-                            info.enc = codec::Encoder::BCD;
-                        else if (child.encoding == "ASCII")
-                            info.enc = codec::Encoder::ASCII;
-                        else if (child.encoding == "EBCDIC")
-                            info.enc = codec::Encoder::EBCDIC;
-                        else
-                            // Defensive: wird primär von validateSpecYaml abgefangen
-                            // (positioniert). Hier nur als Fail-closed-Doppelcheck.
-                            throw std::runtime_error(
-                                "[SpecDecoder] TLV-Kind " + child.description +
-                                " (Format " + cf + ") benötigt ein Encoding (ascii/ebcdic/bcd), "
-                                "erbt aber '" + child.encoding + "'");
-                    }
-                    else
-                        info.enc = codec::Encoder::BINARY; // rohe Bytes, Encoding ignorieren
-                    info.description = child.has_explicit_description ? child.description : "";
-                    // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
-                    // 'sensitive: true' oder Erbgang von einem sensitive Container).
-                    info.sensitive = child.sensitive || f.sensitive;
-                    childMap[static_cast<std::size_t>(tag)] = std::move(info);
-                }
-
-                nested->subParser(makeTlvParser(opts.tag_bytes, opts.len_bytes, opts.tcc, enc, opts.ber,
-                    childMap, f.sensitive));
-            }
-            else {
-                auto sub = std::make_shared<::TNG_NAMESPACE::ISOBaseParser>(f.description);
-                // FR-3 (0.6.0): Container-Modus – der Sub-Payload hat
-                // kein MTI/Bitmap (Slot 0 = erstes Kind-Feld). Verhindert
-                // die Doppel-Serialisierung eines einzelnen Kind-Felds
-                // durch die Slot-0/MTI-Semantik von ISOBaseParser.
-                sub->container(true);
-                for (const auto& child : f.children) {
-                    auto childP = createScalarParser(child);
-                    // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang
-                    // von einem sensitive Container.
-                    if (child.sensitive || f.sensitive)
-                        if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
-                            fp->sensitive(true);
-                    sub->add(childP);
-                }
-                nested->subParser(sub);
-            }
+            if (f.tlv)
+                // (0.6.0, FE-1) Extrahiert: buildTlvFieldParser (identische
+                // Logik wie zuvor - TlvChildMap-Aufbau, Encoding-Auflösung,
+                // Mastercard-Default-Fallback in makeTlvParser).
+                nested->subParser(buildTlvFieldParser(f));
+            else
+                // (0.6.0, FE-1) Extrahiert: buildNestedSubParser (identische
+                // Logik wie zuvor - ISOBaseParser im Container-Modus, je ein
+                // Skalar-Parser pro deklariertem Kind).
+                nested->subParser(buildNestedSubParser(f));
             return nested;
         }
 
@@ -1048,6 +1199,29 @@ namespace TNG_NAMESPACE::spec {
         return result;
     }
 
+    /// (0.6.0, FE-1) Field-only-Load: dieselbe Pipeline wie loadAndParse,
+    /// aber validateFieldSpecYaml (exakt ein field:-Block; fields: und
+    /// header: werden fail-closed abgewiesen). Das eine Feld wird als
+    /// Key 0 geparst (bewusst der MTI-Key, s. spec_schema.md).
+    /// hdr_sz/headerKey behalten ihre Default-Werte (header: wird vom
+    /// Validator ohnehin abgewiesen).
+    static LoadedSpec loadFieldAndParse(const std::string& path, const SpecLoadOptions& opts) {
+        const auto pr = SpecPreProcessor::preprocessWithSourceMap(path, opts);
+        const ryml::ConstNodeRef yaml = pr.tree.crootref();
+        validateFieldSpecYaml(yaml, &pr.source_map);
+
+        LoadedSpec result;
+        result.desc = getStr(yaml, "spec", "<unnamed>");
+        result.strict = getBool(yaml, "strict", true);
+        result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
+        // Exakt ein Feld: Key 0 (s. Funktionsdokumentation).
+        result.fields[0] = parseSpecField(
+            yaml["field"], result.defaultEncoding, "0", &pr.source_map);
+        result.sourceFiles = std::move(pr.sourceFiles);
+        result.contentHash = pr.source_map.hash();
+        return result;
+    }
+
     /// Baut den ISOBaseParser aus einem LoadedSpec auf (geteilt von load* Funktionen).
     static std::shared_ptr<::TNG_NAMESPACE::ISOBaseParser>
         buildParser(const LoadedSpec& loaded)
@@ -1122,6 +1296,20 @@ namespace TNG_NAMESPACE::spec {
         return cache;
     }
 
+    // (0.6.0, FE-1) Die Field-only-Pfade haben eine eigene Cache-Instanz
+    // (gleiche Shape + TOCTOU-Protokoll wie specCache, eigenes
+    // Mutex/Map/LRU-Budget): Eine Datei darf nicht gleichzeitig als
+    // Message-Spec und Field-only-Spec ohne Invalidation geladen werden
+    // (Dual-Cache, s. spec_schema.md "Field-only-Specs").
+    static std::shared_mutex& fieldSpecCacheMutex() {
+        static std::shared_mutex m;
+        return m;
+    }
+    static std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>>& fieldSpecCache() {
+        static std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>> cache;
+        return cache;
+    }
+
     // Monotoner Zähler für die LRU-Reihung - ein relaxed atomic store unter
     // der shared lock ist race-frei (und erlaubt Hits ohne Exklusivlock);
     // für die Eviktionsentscheidung genügt die grobe Nutzungsreihenfolge.
@@ -1175,17 +1363,22 @@ namespace TNG_NAMESPACE::spec {
     /// Cache-Lookup gemäß Validierungspolicy. Liefert den Treffer-Eintrag
     /// (oder null). `needSpec`: für loadBothFromYamlCached zählt ein
     /// nur-parser-Eintrag als Verfehlung.
+    /// (0.6.0, FE-1) `mtx`/`cacheMap` wahlen die Cache-Instanz: der
+    /// Message-Pfad (specCache) und der Field-only-Pfad (fieldSpecCache)
+    /// teilen dieselbe verifizierte TOCTOU-Logik.
     static std::shared_ptr<SpecCacheEntry> lookupCacheHit(
-        const std::string& absPath, CacheValidation validation, bool needSpec)
+        const std::string& absPath, CacheValidation validation, bool needSpec,
+        std::shared_mutex& mtx,
+        std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>>& cacheMap)
     {
         if (validation == CacheValidation::TrustUntilInvalidated) {
             // Kein last_write_time()-Aufruf (Systemaufruf, ~0.9 us gemessen) -
             // ein Cache-Treffer ist hier nur noch Map-Lookup + shared_ptr-Kopie
             // (~25 ns). Erkennt Dateiänderungen NICHT automatisch - siehe
             // Doku bei CacheValidation/invalidateCache().
-            std::shared_lock lock(specCacheMutex());
-            auto it = specCache().find(absPath);
-            if (it != specCache().end() && (!needSpec || it->second->spec)) {
+            std::shared_lock lock(mtx);
+            auto it = cacheMap.find(absPath);
+            if (it != cacheMap.end() && (!needSpec || it->second->spec)) {
                 touchLru(*it->second);
                 TNG_LOG_DEBUG("[SpecDecoder] loadCached '{}' – Cache-Treffer (ungeprüft)", absPath);
                 return it->second;
@@ -1206,9 +1399,9 @@ namespace TNG_NAMESPACE::spec {
         bool                            reverify = false;
 
         {
-            std::shared_lock lock(specCacheMutex());
-            auto it = specCache().find(absPath);
-            if (it == specCache().end())
+            std::shared_lock lock(mtx);
+            auto it = cacheMap.find(absPath);
+            if (it == cacheMap.end())
                 return nullptr;
             auto& entry = *it->second;
             if (entry.mtime == mtime) {
@@ -1245,9 +1438,9 @@ namespace TNG_NAMESPACE::spec {
         // ERSETZT wurde (in dem Fall ist der NEUE Eintrag aktuell).
         std::shared_ptr<SpecCacheEntry> out;
         {
-            std::unique_lock ulock(specCacheMutex());
-            auto cur = specCache().find(absPath);
-            if (cur == specCache().end())
+            std::unique_lock ulock(mtx);
+            auto cur = cacheMap.find(absPath);
+            if (cur == cacheMap.end())
                 return nullptr;   // zwischenzeitlich eviziert -> Reload
             if (cur->second == hit) {
                 cur->second->mtime = verifyMtime;
@@ -1293,6 +1486,28 @@ namespace TNG_NAMESPACE::spec {
         return b;
     }
 
+    // (0.6.0, FE-1) Field-only-Bundle: gleiche Shape wie loadBundle, aber
+    // der Parser kommt aus buildFieldBlockParser (das eine Feld als
+    // Container-Top-Parser bzw. TLV/NESTED direkt) und die ISOSpec hat
+    // exakt ein SpecFieldInfo (Key 0, ohne Header).
+    static LoadedBundle loadFieldBundle(const std::string& path,
+        const SpecLoadOptions& opts, bool wantSpec)
+    {
+        LoadedBundle b;
+        b.loaded = loadFieldAndParse(path, opts);
+        const auto& f = b.loaded.fields.at(0);
+        b.parser = buildFieldBlockParser(f, b.loaded.defaultEncoding);
+        b.mtime  = tryGetMTime(std::filesystem::absolute(path).string());
+        if (wantSpec) {
+            std::vector<SpecFieldInfo> infos;
+            infos.emplace_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(0), f));
+            b.spec = std::make_shared<ISOSpec>(
+                b.loaded.desc, b.loaded.defaultEncoding,
+                std::move(infos), std::nullopt);
+        }
+        return b;
+    }
+
     /// [E2] Publish-then-Verify: Den neuen Eintrag NUR unter exakt jenem
     /// gehashten Snapshot veröffentlichen, aus dem der Parser gebaut wurde.
     /// `consistent` = Ergebnis der Nach-Hashung (die Dateimenge ist zum
@@ -1300,11 +1515,14 @@ namespace TNG_NAMESPACE::spec {
     /// Inconsistenz wird NICHT gepublished - der nächste Aufruf lädt die neue
     /// Version; der aktuelle Caller erhält den (konsistenten) Snapshot, den
     /// er geladen hat.
+    /// (0.6.0, FE-1) `mtx`/`cacheMap` wahlen die Cache-Instanz (wie oben).
     static void publishCacheEntry(const std::string& absPath,
-        const LoadedBundle& b, bool consistent)
+        const LoadedBundle& b, bool consistent,
+        std::shared_mutex& mtx,
+        std::unordered_map<std::string, std::shared_ptr<SpecCacheEntry>>& cacheMap)
     {
-        std::unique_lock lock(specCacheMutex());
-        auto& cache = specCache();
+        std::unique_lock lock(mtx);
+        auto& cache = cacheMap;
         auto it = cache.find(absPath);
         if (it != cache.end() && it->second->contentHash == b.loaded.contentHash) {
             // Paralleles Load derselben Inhaltsversion: bereits publizierten
@@ -1341,13 +1559,19 @@ namespace TNG_NAMESPACE::spec {
     static std::pair<::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
                      ISOSpec::SmartPtr>
         loadCachedBundle(const std::string& path, const SpecLoadOptions& opts,
-                         CacheValidation validation, bool wantSpec)
+                         CacheValidation validation, bool wantSpec,
+                         bool fieldOnly)
     {
         const auto absPath = std::filesystem::absolute(path).string();
+        // (0.6.0, FE-1) Cache-Selektor: Message-Pfad und Field-only-Pfad
+        // teilen dieselbe verifizierte TOCTOU-Logik, nur die
+        // Cache-Instanz unterscheidet sich (specCache vs. fieldSpecCache).
+        auto& cacheMtx = fieldOnly ? fieldSpecCacheMutex() : specCacheMutex();
+        auto& cacheMap = fieldOnly ? fieldSpecCache() : specCache();
 
         // 1) Cache-Lookup gemäß Policy (ggf. inkl. Hash-Re-Verifikation bei
         //    CheckEveryCall).
-        if (auto hit = lookupCacheHit(absPath, validation, wantSpec))
+        if (auto hit = lookupCacheHit(absPath, validation, wantSpec, cacheMtx, cacheMap))
             return { hit->parser, hit->spec };
 
         // 2) Verfehlung: komplettes Load + Build (der Read selbst ist die
@@ -1355,7 +1579,9 @@ namespace TNG_NAMESPACE::spec {
         //    Read buildbar).
         LoadedBundle b;
         try {
-            b = loadBundle(path, opts, wantSpec);
+            b = fieldOnly
+                ? loadFieldBundle(path, opts, wantSpec)
+                : loadBundle(path, opts, wantSpec);
         }
         catch (const std::exception& e) {
             TNG_LOG_ERROR("[SpecDecoder] loadCached('{}') fehlgeschlagen: {}", path, e.what());
@@ -1369,14 +1595,14 @@ namespace TNG_NAMESPACE::spec {
 
         // 4) Veröffentlichen (ggf. De-Duplizierung) - oder verwerfen bei
         //    Inconsistenz.
-        publishCacheEntry(absPath, b, consistent);
+        publishCacheEntry(absPath, b, consistent, cacheMtx, cacheMap);
 
         // 5) Hat ein paralleler Caller die selbe Version bereits publiziert,
         //    dessen Eintrag wiederverwenden (stabiles shared_ptr).
         {
-            std::shared_lock lock(specCacheMutex());
-            auto it = specCache().find(absPath);
-            if (it != specCache().end()
+            std::shared_lock lock(cacheMtx);
+            auto it = cacheMap.find(absPath);
+            if (it != cacheMap.end()
                 && it->second->contentHash == b.loaded.contentHash
                 && (!wantSpec || it->second->spec))
                 return { it->second->parser, it->second->spec };
@@ -1438,7 +1664,8 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadFromYamlCached(const std::string& path,
             const SpecLoadOptions& opts, CacheValidation validation)
     {
-        return loadCachedBundle(path, opts, validation, /*wantSpec=*/false).first;
+        return loadCachedBundle(path, opts, validation,
+            /*wantSpec=*/false, /*fieldOnly=*/false).first;
     }
 
     std::pair<
@@ -1483,7 +1710,8 @@ namespace TNG_NAMESPACE::spec {
         SpecDecoder::loadBothFromYamlCached(const std::string& path,
             const SpecLoadOptions& opts, CacheValidation validation)
     {
-        return loadCachedBundle(path, opts, validation, /*wantSpec=*/true);
+        return loadCachedBundle(path, opts, validation,
+            /*wantSpec=*/true, /*fieldOnly=*/false);
     }
 
     void SpecDecoder::invalidateCache(const std::string& path) {
@@ -1497,4 +1725,83 @@ namespace TNG_NAMESPACE::spec {
         specCache().clear();
     }
 
+
+    // =============================================================================
+    // (0.6.0, FE-1) Field-only-Specs: öffentliche loadField*-Eintritte
+    // =============================================================================
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFieldFromYaml(const std::filesystem::path& path)
+    {
+        return loadFieldFromYaml(path, SpecLoadOptions{});
+    }
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFieldFromYaml(const std::filesystem::path& path,
+            const SpecLoadOptions& opts)
+    {
+        try {
+            const auto b = loadFieldBundle(path.string(), opts, /*wantSpec=*/false);
+            TNG_LOG_INFO("[SpecDecoder] loadFieldFromYaml '{}' - {}", path.string(), b.loaded.desc);
+            return b.parser;
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadFieldFromYaml '{}' fehlgeschlagen: {}", path.string(), e.what());
+            throw;
+        }
+    }
+
+    ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        SpecDecoder::loadFieldFromYamlCached(const std::filesystem::path& path,
+            const SpecLoadOptions& opts, CacheValidation validation)
+    {
+        return loadCachedBundle(path.string(), opts, validation,
+            /*wantSpec=*/false, /*fieldOnly=*/true).first;
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadFieldBothFromYaml(const std::filesystem::path& path)
+    {
+        return loadFieldBothFromYaml(path, SpecLoadOptions{});
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadFieldBothFromYaml(const std::filesystem::path& path,
+            const SpecLoadOptions& opts)
+    {
+        try {
+            const auto b = loadFieldBundle(path.string(), opts, /*wantSpec=*/true);
+            TNG_LOG_INFO("[SpecDecoder] loadFieldBothFromYaml '{}' - {}", path.string(), b.loaded.desc);
+            return { b.parser, b.spec };
+        }
+        catch (const std::exception& e) {
+            TNG_LOG_ERROR("[SpecDecoder] loadFieldBothFromYaml '{}' fehlgeschlagen: {}", path.string(), e.what());
+            throw;
+        }
+    }
+
+    std::pair<
+        ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+        ISOSpec::SmartPtr>
+        SpecDecoder::loadFieldBothFromYamlCached(const std::filesystem::path& path,
+            const SpecLoadOptions& opts, CacheValidation validation)
+    {
+        return loadCachedBundle(path.string(), opts, validation,
+            /*wantSpec=*/true, /*fieldOnly=*/true);
+    }
+
+    void SpecDecoder::invalidateFieldCache(const std::filesystem::path& path) {
+        const auto absPath = std::filesystem::absolute(path).string();
+        std::unique_lock lock(fieldSpecCacheMutex());
+        fieldSpecCache().erase(absPath);
+    }
+
+    void SpecDecoder::clearFieldCache() {
+        std::unique_lock lock(fieldSpecCacheMutex());
+        fieldSpecCache().clear();
+    }
 } // namespace TNG_NAMESPACE::spec

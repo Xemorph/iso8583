@@ -32,6 +32,8 @@ add_executable(libiso8583_tests
     # Nested-Container (frühere FR-3-Probe test_tlv_fixed_typed_probe.cc)
     test_nested_text_container.cc
     _crt_diag.cc
+    # (0.6.0, FE-1) Field-only-Specs (Validierung WP1, decodeField WP4)
+    test_field_only_spec.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über

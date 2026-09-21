@@ -29,6 +29,7 @@
 #include "detail/_interfaces.hh"
 
 #include <cstddef>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
@@ -487,6 +488,84 @@ namespace TNG_NAMESPACE {
                 loadBothFromYamlCached(const std::string& path, const SpecLoadOptions& opts,
                     CacheValidation validation = CacheValidation::CheckEveryCall);
 
+            // ── (0.6.0, FE-1) Field-only-Specs: loadField*-Eintritte ────────
+
+            /// @brief Loads a **field-only spec** (a document with exactly one
+            /// top-level `field:` block, e.g. a single data element like
+            /// DE55/ICC) and returns a ready-to-use parser for the **payload**
+            /// of that one data element - no bitmap, no MTI, no message
+            /// header.
+            ///
+            /// The parser operates on exactly the bytes a `BinaryField` holds
+            /// for this element (see `spec_schema.md`, "Field-only-Specs").
+            /// Decode with `SpecDecoder::decodeField(parser, field)` (0.6.0)
+            /// or `msg->parser(parser); msg->unparse(msg, field.value());`.
+            ///
+            /// @param path            Path to the field-only YAML spec file.
+            /// @return Opaque smart pointer to the configured parser.
+            /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFieldFromYaml(const std::filesystem::path& path);
+
+            /// @brief Like @ref loadFieldFromYaml, but with explicit load
+            /// options (see @ref SpecLoadOptions).
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFieldFromYaml(const std::filesystem::path& path, const SpecLoadOptions& opts);
+
+            /// @brief Like @ref loadFieldFromYaml, but caches the resulting
+            /// parser in-process, keyed by absolute path.
+            ///
+            /// Field-only specs have their **own** cache (separate from the
+            /// message-spec caches, same shape and validation contract - see
+            /// @ref loadFromYamlCached): a file must not be loaded as both a
+            /// message spec and a field-only spec without invalidation.
+            ///
+            /// @param path            Path to the field-only YAML spec file.
+            /// @param opts            See @ref SpecLoadOptions.
+            /// @param validation      See @ref CacheValidation. Default
+            ///        `CheckEveryCall` preserves prior behaviour exactly.
+            /// @return Opaque smart pointer to the configured parser (shared
+            ///         across all callers that hit the cache for this path).
+            /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
+            static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+                loadFieldFromYamlCached(const std::filesystem::path& path,
+                    const SpecLoadOptions& opts = {},
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
+
+            /// @brief Loads both a parser and an introspectable spec object
+            /// from a field-only spec (see @ref loadFieldFromYaml).
+            ///
+            /// The `ISOSpec` exposes exactly one `SpecFieldInfo` (key `0`,
+            /// deliberately the MTI key - never mix field-only and message
+            /// parsers on the same message) and `hasHeader() == false`.
+            ///
+            /// @param path            Path to the field-only YAML spec file.
+            /// @return Pair of `{parser, spec}`.
+            /// @throws std::runtime_error on invalid YAML or unknown format/encoding.
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadFieldBothFromYaml(const std::filesystem::path& path);
+
+            /// @brief Like @ref loadFieldBothFromYaml, but with explicit load
+            /// options (see @ref SpecLoadOptions).
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadFieldBothFromYaml(const std::filesystem::path& path, const SpecLoadOptions& opts);
+
+            /// @brief Like @ref loadFieldBothFromYaml, but caches the result
+            /// in-process - see @ref loadFieldFromYamlCached for the caching/
+            /// validation contract (kept in a separate cache from
+            /// `loadBothFromYamlCached`, so mixing both call styles for the
+            /// same path is safe but not deduplicated against each other).
+            static std::pair<
+                ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr,
+                ISOSpec::SmartPtr>
+                loadFieldBothFromYamlCached(const std::filesystem::path& path,
+                    const SpecLoadOptions& opts = {},
+                    CacheValidation validation = CacheValidation::CheckEveryCall);
+
             /// @brief Removes `path` from both in-process caches (@ref
             /// loadFromYamlCached and `loadBothFromYamlCached`), if present.
             ///
@@ -500,6 +579,18 @@ namespace TNG_NAMESPACE {
 
             /// @brief Clears both in-process caches entirely.
             static void clearCache();
+
+            /// @brief Removes `path` from the in-process field-only cache
+            /// (@ref loadFieldFromYamlCached), if present.
+            ///
+            /// Same contract as @ref invalidateCache (which manages the
+            /// message-spec caches): required with
+            /// `CacheValidation::TrustUntilInvalidated` once the underlying
+            /// file changed; a no-op if `path` isn't currently cached.
+            static void invalidateFieldCache(const std::filesystem::path& path);
+
+            /// @brief Clears the in-process field-only cache entirely.
+            static void clearFieldCache();
         };
 
     } // namespace spec
