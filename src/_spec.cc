@@ -1794,6 +1794,22 @@ namespace TNG_NAMESPACE::spec {
             /*wantSpec=*/true, /*fieldOnly=*/true);
     }
 
+    // (0.6.0, FE-1) Decode-Komfort-API: der Field-only-Parser laeuft auf
+    // exakt den Bytes, die ein BinaryField haelt (z. B. aus einer
+    // Message-Decode entnommen); das Ergebnis ist eine synthetisch
+    // leere ISOMessage (kein MTI/Bitmap), die der Parser direkt befuellt.
+    ::TNG_NAMESPACE::ISOMessage::ISOMessageSmartPtr
+        SpecDecoder::decodeField(const ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr& p,
+            const ::TNG_NAMESPACE::BinaryField& field)
+    {
+        if (!p)
+            throw std::runtime_error("SpecDecoder::decodeField: parser ist nullptr");
+        auto msg = std::make_shared<::TNG_NAMESPACE::ISOMessage>();
+        msg->parser(p);
+        msg->unparse(msg, field.value());
+        return msg;
+    }
+
     void SpecDecoder::invalidateFieldCache(const std::filesystem::path& path) {
         const auto absPath = std::filesystem::absolute(path).string();
         std::unique_lock lock(fieldSpecCacheMutex());

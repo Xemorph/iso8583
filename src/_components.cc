@@ -614,7 +614,16 @@ void TNG_NAMESPACE::ISOMessage::recalcBitmap_locked() {
     if (!recalc_) return;
 
     const int mf = std::min(static_cast<int>(hf_), 192);
-    const std::size_t bmap_size = static_cast<std::size_t>((mf + 62) >> 6 << 6);
+    // FE-1: "+63" statt "+62" (Aufrunden statt Abrunden auf ein Vielfaches
+    // von 64). Mit Abrunden wird bmap_size < mf, wenn mf == 1, 65 oder 129
+    // ist - bmap.set(key) mit key <= mf laeuft dann out-of-range
+    // (dynamic_bitset-Assertion). Field-only-Nachrichten (decodeField)
+    // erzeugen genau solche kleine hf_-Werte, z. B. ein Nested-Container mit
+    // Kind-Keys {0, 1} (hf_ = 1). "+63" garantiert bmap_size >= mf und ist
+    // fuer alle übrigen mf-Werte bit-identisch zum alten Verhalten
+    // (nur die drei zuvor crashenden Werte ändern sich), die Wire-Ausgabe
+    // bleibt unverändert.
+    const std::size_t bmap_size = static_cast<std::size_t>((mf + 63) >> 6 << 6);
 
     dynamic_bitset<> bmap(bmap_size + 1); // +1: dynamic_bitset nutzt Index 0 nicht
 

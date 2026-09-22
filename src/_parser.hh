@@ -477,6 +477,16 @@ namespace TNG_NAMESPACE {
                     const std::size_t child_base_offset = o + actual_prefix;
                     c_->unparse(c, payload, child_base_offset);
                 }
+                // FE-1 (0.6.0): Container-Sub-Parser an die Kind-Nachricht anhängen,
+                // damit ein aus der Voll-Nachricht dekodiertes DE sich selbst
+                // re-serialisieren kann (de55->parse(de55) -> Kind-Frames ohne
+                // äußeren Prefix = Field-only-Wire-Vertrag). Ohne den Parser hätte
+                // die Kind-Nachricht p_ == nullptr und ISOMessage::parse() würde
+                // leer zurückgeben - der Dot-Pfad (set_recursive_locked,
+                // _components.cc) hängt denselben Sub-Parser bereits an.
+                if (c->is_composite())
+                    if (auto childMsg = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(c))
+                        childMsg->parser(c_);
                 return consumed_outer;
             }
             if constexpr (!std::is_same_v< T, dynamic_bitset<> >) {

@@ -27,6 +27,7 @@
 
 #include "config.h"
 #include "detail/_interfaces.hh"
+#include "ISOMessage.hh"
 
 #include <cstddef>
 #include <filesystem>
@@ -591,6 +592,33 @@ namespace TNG_NAMESPACE {
 
             /// @brief Clears the in-process field-only cache entirely.
             static void clearFieldCache();
+
+            /// @brief Decodes a single element payload with a **field-only**
+            /// parser into a new, synthetically empty `ISOMessage`
+            /// (see @ref loadFieldFromYaml).
+            ///
+            /// Convenience wrapper around the two-step pattern
+            /// `msg->parser(parser); msg->unparse(msg, field.value());` -
+            /// `field.value()` is the raw element payload exactly as a
+            /// `BinaryField` holds it (e.g. taken from
+            /// `msg->get<BinaryField>(55)` of a full-message decode; it
+            /// carries the TLV/length prefix but not the DE's own slot
+            /// position in a bitmap). The returned message has no MTI or
+            /// bitmap: the payload is parsed directly, so for a TLV/NESTED
+            /// element the children are addressable at key `0` and for a
+            /// scalar element the payload itself is the message's single
+            /// component.
+            ///
+            /// @param p      Parser returned by one of the `loadField*`
+            ///              entries (0.6.0).
+            /// @param field  `BinaryField` whose `value()` holds the payload
+            ///              (e.g. `*msg->get<BinaryField>(55)`).
+            /// @return A new message decoded from the payload.
+            /// @throws std::runtime_error if the payload violates the format
+            ///         (strict mode) or `p` is null.
+            static ::TNG_NAMESPACE::ISOMessage::ISOMessageSmartPtr
+                decodeField(const ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr& p,
+                    const ::TNG_NAMESPACE::BinaryField& field);
         };
 
     } // namespace spec
