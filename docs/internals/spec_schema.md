@@ -408,7 +408,167 @@ fields:
       - { format: remaining, length: 10, encoding: ascii, description: "ASCII im BCD-Container" }
 ```
 
-## 11. Häufige Fehler (Checkliste für Generatoren)
+## 11. Field-only-Specs (0.6.0)
+
+Seit 0.6.0 gibt es neben der Message-Form (§1) eine zweite Dokument-Form:
+eine **Field-only-Spec** definiert die Semantik eines *einzelnen* Feldes —
+typischer Use-Case: DE55 ICC Data (Mastercard fixer TLV bzw. EMV BER-TLV) —
+und liefert einen Parser, der exakt auf dem **Payload dieses einen
+Feldes** läuft. Es gibt keinen MTI, keine Bitmap und keinen Header
+(`ISOSpec::hasHeader() == false`, `ISOMessage::hasMTI() == false`); das
+eine Feld wird unter dem synthetischen **Key `0`** geparst
+(s. o., „Synthetische Key-`0`-Semantik").
+
+**Dokument-Form:**
+
+```yaml
+spec: "DE55 ICC (Mastercard SE)"   # optional, Default "<unnamed>"
+encoding: ebcdic                    # optional, §7
+strict: true                        # optional, §8
+field:                              # PFLICHT: eine nicht-leere Map (EIN Feld)
+  format: lllbinary
+  length: 255
+  tlv: { tag_bytes: 2, len_bytes: 2 }
+  children:
+    "64": { format: char, length: 4, description: "Application PAN" }
+    "71": { format: char, length: 3, description: "Terminal Capabilities" }
+```
+
+**Root-Schlüssel (Field-only-Dokument):**
+
+| Schlüssel | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `spec` | string | nein | Name der Spec (Default `<unnamed>`; Introspection `ISOSpec::name()`) |
+| `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | globales Encoding (Auflösung s. §7) |
+| `strict` | bool | nein | Default `true` (§8) |
+| `definitions` | map | nein | wie §1 — mit allen Direktiven (`!include_files`, `!use`, `!template`, `!merge`) |
+| `field` | map | ja | **nicht-leere** Map: die *einzige* Feld-Deklaration des Dokuments (Grammatik wie `fields:`-Einträge, §2) |
+| `fields` | — | — | **verboten** → Fail-closed-Fehler |
+| `header` | — | — | **verboten** → Fail-closed-Fehler (s. o., „Warum `header:` abgelehnt wird") |
+
+**Root-Regeln (fail-closed, positionierte `SpecValidationError`s):**
+
+| Auslöser | Fehlermeldung |
+|---|---|
+| `field` fehlt (leeres Dokument) | `Fehlender Abschnitt 'field' in YAML.` |
+| `field` ist keine nicht-leere Map | `Abschnitt 'field' muss eine nicht-leere Map sein (eine einzelne Felddefinition, z. B. 'format: lllbinary')` |
+| `fields:` in Field-only-Dokument | `Konflikt: field-only-Dokumente dürfen keine fields:-Map enthalten (fields: gehört in Message-Specs, field: hier)` |
+| `header:` in Field-only-Dokument | `Konflikt: header: ist in Field-only-Dokumenten unzulässig (ein isoliertes Feld hat keinen MTI/Bitmap-Header)` |
+| `field:` in Message-Dokument | `Konflikt: Message-Specs verwenden fields:, field: ist nur in Field-only-Dokumenten erlaubt` |
+
+**Feld-Regeln:** Die `field:`-Deklaration folgt exakt der Grammatik der
+`fields:`-Einträge (§2): Key-Whitelist `type`/`format`/`encoding`/`length`/
+`description`/`children`/`tlv`/`sensitive` (`validateFieldKeys`, DE-Key
+synthetisch `0`), Formate und Encoding-Matrix (§3), `remaining` benötigt
+`length` (§4), TLV-Kind-Whitelist und
+Container-Basis-Parser-Normalisierung (§6). Die `header`-Defaults bleiben
+in Kraft, haben aber ohne `header:`-Block keine Wirkung — ein
+Field-only-Dokument trägt per Definition keinen Header.
+
+**Beispiele** (aus der Regressionstestsuite):
+
+```yaml
+# Mastercard-SE: fixer TLV (EBCDIC), SE64/SE71 deklariert,
+# nicht deklarierte Tags (z. B. SE72) → OpaqueField.
+spec: "DE55 ICC (Mastercard SE)"
+encoding: ebcdic
+field:
+  format: lllbinary
+  length: 255
+  tlv: { tag_bytes: 2, len_bytes: 2 }
+  children:
+    "64": { format: char, length: 4, description: "Application PAN" }
+    "71": { format: char, length: 3, description: "Terminal Capabilities" }
+```
+
+```yaml
+# EMV: BER-TLV (ASCII), Hex-Tags als Map-Keys,
+# nicht deklarierte Tags (z. B. 0x8A) → OpaqueField "SE138".
+spec: "DE55 ICC (EMV)"
+encoding: ascii
+field:
+  format: lllbertlv
+  length: 999
+  description: "ICC Data"
+  children:
+    "5A": { format: char, length: 4, encoding: ascii, description: "Application PAN" }
+    "95": { format: binary, length: 2, description: "PIN Block" }
+```
+
+**Wire-Vertrag:** Der Field-only-Parser arbeitet auf **exakt den Bytes,
+die ein `BinaryField` für das Element hält** (z. B. aus
+`msg->get<BinaryField>(55)` eines Voll-Nachrichten-Decode):
+
+- **TLV/BERTLV**: die Kinderframes **ohne das eigene LLL-Präfix** des DEs
+  (das Präfix wurde beim Voll-Decode konsumiert); jedes Frame trägt
+  selbstverständlich sein eigenes Tag/Length-Präfix.
+- **Nested (Sequenz)**: die Kinderframes **ohne das äußere Präfix**
+  (z. B. `llllchar`).
+- **Skalar**: die eigenen Wire-Bytes des Elements (Präfix + Payload).
+
+Roundtrip-Garantie: `parse(decodeField(parser, payload))` reproduziert die
+übergebenen Bytes **byte-identisch**; die Source-`BinaryField` bleibt
+unangetastet.
+
+**Anwendungsmuster:**
+
+```cpp
+// 1. Convenience (empfohlen):
+const auto parser = spec::SpecDecoder::loadFieldFromYaml("de55_emv.yml");
+const auto de55 = fullMsg->get<BinaryField>(55);   // aus Voll-Nachrichten-Decode
+const auto m = spec::SpecDecoder::decodeField(parser, *de55);
+const auto pan = m->get<OpaqueField>(0x5A);        // TLV-Kinder: Tag/SE-Key
+// (NESTED-Sequenz-Kinder: Positions-Key 0, 1, …)
+
+// 2. Äquivalenter manueller Pattern (identisches Ergebnis):
+auto m2 = std::make_shared<ISOMessage>();          // synthetisch leer
+m2->parser(parser);
+m2->unparse(m2, de55->value());                    // unparse() = Decode (§9)
+
+// 3. Introspektion:
+const auto [p, spec] =
+    spec::SpecDecoder::loadFieldBothFromYaml("de55_emv.yml");
+// spec->fields() → genau ein SpecFieldInfo (key 0); hasHeader() == false
+```
+
+**Synthetische Key-`0`-Semantik:** Bewusst wird das eine Feld unter Key
+`0` — dem MTI-Key — geparst, damit die gesamte bestehende
+Parser-/Message-Maschinerie (Feld-Slot-Adressierung, `get<T>(key)`,
+Introspektion) unverändert funktioniert. Konsequenzen:
+
+- In einer Field-only-Message ist Key `0` **kein MTI**:
+  `ISOMessage::mti()` wirft (`hasMTI() == false`); der Wert bei Key `0`
+  ist das isolierte Feld selbst.
+- **Nie** einen Field-only-Parser und einen Message-Parser an *derselben*
+  `ISOMessage` mischen (eine Message trägt genau einen Parser) und nie
+  dieselbe Spec-Datei in beiden Formen interpretieren — die Dokument-
+  Form ist Fail-closed getrennt (s. o., „Root-Regeln").
+
+**Getrennter Loader-Cache:** Field-only-Specs haben ihren **eigenen**
+In-Process-Cache, getrennt vom Message-Spec-Cache (gleiche Mechanik:
+absoluter Pfad als Key, LRU ≤ 64, Publish-then-Verify mit SHA-256
+Content-Snapshots — s. `loadFromYamlCached` in `ISOSpec.hh`):
+
+- `invalidateFieldCache(path)` / `clearFieldCache()` verwalten **nur**
+  den Field-only-Cache.
+- `invalidateCache(path)` / `clearCache()` verwalten **nur** die
+  Message-Spec-Caches.
+- Wer **dieselbe Datei in beiden Formen** lädt (`loadFromYamlCached` und
+  `loadFieldFromYamlCached`), muss bei jeder Änderung **beide** Caches
+  invalidieren (bei `TrustUntilInvalidated`; bei Default-`CheckEveryCall`
+  erkennen beide Caches Änderungen automatisch).
+
+**Warum `header:` abgelehnt wird (bewusste Schärfe):** Ein isoliertes
+Feld hat per Definition weder MTI noch Bitmap — ein N-Byte-
+Netzwerk-Header vor dem Payload widerspricht der Form. Der Loader wirft
+daher, statt die Angabe still zu ignorieren (Fail-closed;
+Entscheidung c im FE-1-Plan). **Erweiterungspunkt:** Sollte je ein
+Use-Case auftauchen, der vor einem Feld-Payload einen festen
+Präfix-Frame erwartet (z. B. ein Sub-Transport-Rahmen), wäre `header:`
+das naheliegende Wort dafür — heute ist es bewusst gesperrt, um den
+Wire-Vertrag (s. o.) eindeutig zu halten.
+
+## 12. Häufige Fehler (Checkliste für Generatoren)
 
 1. **`remaining` ohne `length`** → Ladefehler (0.6.0, Fail-closed).
    Immer `length` (Maximum) mit angeben.

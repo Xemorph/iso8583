@@ -27,7 +27,8 @@ fields:
 
 ## Root-Keys
 
-Keys auf der Top-Level-Ebene der Spec (neben `definitions:` und `fields:`):
+Keys auf der Top-Level-Ebene der Spec (neben `definitions:` und `fields:`;
+in Field-only-Specs wird `fields:` durch `field:` ersetzt, 0.6.0):
 
 | Key | Typ | Default | Wirkung |
 |---|---|---|---|
@@ -35,6 +36,7 @@ Keys auf der Top-Level-Ebene der Spec (neben `definitions:` und `fields:`):
 | `encoding` | String | `""` | Globales Encoding: `ascii` \| `bcd` \| `ebcdic` \| `binary`; kann pro Feld überschrieben werden |
 | `strict` | Bool | `true` | Strikte Dekodierung: Bytes außerhalb der Encoding-Whitelist (z. B. EBCDIC-Steuer-/Binär-Bytes) werden mit positioniertem Fehler abgelehnt; `false` = Legacy-Mapping (`.`-bzw. `?`-Füllzeichen) |
 | `header` | Integer | – (Key fehlt) | Fester Netzwerk-Header von N Bytes **vor** dem ISO-8583-Nachrichtenbody auf der Wire (z. B. proprietärer Frame-Header). Key fehlt → kein Header. Introspektion: `ISOSpec::hasHeader()` (Key definiert?) und `ISOSpec::headerSize()` (Byte-Anzahl, 0 wenn Key fehlt). Hinweis: Der Parser behandelt die Größe `0` wie "kein Header" (keine Wire-Bytes). |
+| `field` | Map | – (Key fehlt) | **Field-only-Form (0.6.0):** die einzige Feld-Deklaration des Dokuments (nicht-leere Map, Grammatik wie `fields:`-Einträge) — exklusiv mit `fields:`; in Field-only-Dokumenten sind `fields:` und `header:` verboten (Fail-closed). |
 
 Beispiel:
 
@@ -50,6 +52,22 @@ fields:
     format: numeric
     length: 4
 ```
+
+## Field-only-Specs (0.6.0)
+
+Neben Message-Specs gibt es eine zweite Dokument-Form: eine **Field-only**-
+Spec enthält genau einen `field:`-Block (eine einzelne Feld-Deklaration mit
+derselben Grammatik wie die `fields:`-Einträge) statt einer `fields:`-Map
+und liefert einen Parser, der auf dem **Payload dieses einen Feldes**
+läuft — ohne MTI, ohne Bitmap, ohne Header. Typischer Use-Case: DE55 ICC
+Data (Mastercard SE oder EMV-BER-TLV). In Field-only-Dokumenten werden
+`fields:` und `header:` abgelehnt (Fail-closed); das Feld wird unter dem
+synthetischen Key `0` geparst (`ISOSpec::hasHeader() == false`,
+`ISOMessage::mti()` wirft). Öffentliche Einträge:
+`SpecDecoder::loadField*FromYaml(...)` / `SpecDecoder::decodeField(...)`,
+mit eigenem Loader-Cache (`invalidateFieldCache` / `clearFieldCache`).
+Vollständige Form, beide Beispiele und Wire-Vertrag:
+[spec_schema.md](spec_schema.md) §11 „Field-only-Specs (0.6.0)".
 
 ## Definitionen und Wiederverwendung
 

@@ -21,7 +21,11 @@
 ///
 /// Derive from @ref iso8583::ISOParserPtrBase and implement the three pure virtual
 /// methods.  The parser can then be attached to an @ref `iso8583::Message` just like one
-/// returned by @ref iso8583::spec::SpecDecoder::loadFromYaml.
+/// returned by @ref iso8583::spec::SpecDecoder::loadFromYaml.  Field-only parsers
+/// obtained from `iso8583::spec::SpecDecoder::loadFieldFromYaml` (0.6.0) attach
+/// identically — to a synthetically empty `iso8583::Message` whose single field at
+/// the synthetic key `0` carries the decoded payload (see spec_schema.md, section
+/// "Field-only-Specs (0.6.0)").
 ///
 /// @code
 ///   #include <iso8583/ISOParser.hh>

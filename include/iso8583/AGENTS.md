@@ -312,7 +312,22 @@ Spec während der Prozesslebensdauer mehr als einmal geladen wird.
   Cache-Treffer (~25 ns), erkennt Dateiänderungen aber **nicht** — selbst mit
   `SpecDecoder::invalidateCache(path)` invalidate, wenn die Datei sich geändert
   hat (z. B. über einen eigenen File-Watcher).
-- `SpecDecoder::clearCache()` leert beide Caches vollständig.
+- `SpecDecoder::clearCache()` leert die Message-Spec-Caches vollständig.
+- **Field-only-Specs (0.6.0):** zweite Dokument-Form — genau ein `field:`-Block
+  (einzelnes Feld, Grammatik wie `fields:`-Einträge) statt `fields:`;
+  `fields:` und `header:` werden in Field-only-Dokumenten fail-closed
+  abgelehnt, das Feld wird unter dem synthetischen Key `0` geparst (kein MTI,
+  kein Header). Öffentliche Einträge: `loadField*FromYaml(...)` /
+  `loadFieldBothFromYaml{,Cached}` und `SpecDecoder::decodeField(parser,
+  *binaryField)` — die Parser laufen auf exakt den Bytes, die eine
+  `BinaryField` nach einem Voll-Nachrichten-Decode hält (Roundtrip
+  byte-identisch; typischer Use-Case: DE55 ICC Data). Field-only-Specs nutzen
+  einen **eigenen Cache** mit identischer Mechanik: `invalidateFieldCache(path)`
+  / `clearFieldCache()` verwalten nur den Field-only-Cache; wer dieselbe Datei
+  in beiden Formen lädt, muss bei `TrustUntilInvalidated` **beide** Caches
+  invalidieren (bei Default-`CheckEveryCall` erkennen beide automatisch
+  Änderungen). Vollständige Form, Beispiele und Wire-Vertrag:
+  `docs/internals/spec_schema.md` §11.
 
 ```cpp
 // Startup: Parser + Spec geladen und prozessweit wiederverwendet
@@ -360,8 +375,8 @@ ein roher `std::stoi`.
 
 > **Normative Referenz:** `docs/internals/spec_schema.md` (Sphinx-Doku,
 > Abschnitt *Internals*) — vollständiges Schema (Root-/Feld-Keys,
-> Format×Encoding-Matrix, Direktiven, TLV-Regeln, Fehlersemantik,
-> komplette Beispiele) für Menschen und KI-Generatoren.
+> Format×Encoding-Matrix, Direktiven, TLV-Regeln, Field-only-Specs,
+> Fehlersemantik, komplette Beispiele) für Menschen und KI-Generatoren.
 
 ```yaml
 spec:     "My Spec"
