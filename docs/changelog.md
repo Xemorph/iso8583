@@ -108,6 +108,30 @@
   Tags `[pos]`, `[error]`, `[integration]` — inkl. Integration mit
   echtem `ISOMessage`/`BinaryField` über die übliche Feld-API).
 
+### [+](Added) Field-only-Specs: Einzel-Feld-Specs (z. B. DE55/ICC) auf BinaryField-Payloads anwenden (0.6.0-Kandidat)
+
+- Neue Dokument-Form: eine Spec mit einem einzelnen `field:`-Block
+  (gleiche Feld-Grammatik wie `fields:`-Einträge) definiert die Semantik
+  eines **einzelnen** Feldes — typischer Use-Case: DE55 ICC Data
+  (Mastercard fix-TLV `lllbinary` + `tlv:`, oder EMV `lllbertlv`).
+- Neue Public API (additive only): `SpecDecoder::loadFieldFromYaml` /
+  `loadFieldBothFromYaml` (+ `Cached`-Varianten, `SpecLoadOptions` wird
+  unverändert wiederverwendet). Die geladene Spec operiert auf exakt den
+  Bytes, die ein `BinaryField` nach dem Vollnachrichten-Decode hält
+  (ohne das Längenpräfix des DEs); Roundtrip `parse(...)` ist
+  byte-identisch.
+- `SpecDecoder::decodeField(parser, binaryField)`: Convenience —
+  synthetische leere `ISOMessage` + Parser + `unparse` in einem Aufruf;
+  TLV-Kinder werden per SE/Tag, Sequenz-Kinder pro Position adressiert
+  (das einzelne Feld selbst wird als Key `0` introspektiert).
+- Getrennter Loader-Cache (LRU ≤ 64, gleiches TOCTOU-/SHA-256-Protokoll
+  wie der Message-Spec-Cache): `invalidateFieldCache(path)` /
+  `clearFieldCache()`. Hinweis: Wer eine Datei in beiden Formen lädt,
+  muss bei Änderung beide Caches invalidieren.
+- Fail-closed (positionierte Fehler): `fields:` und `header:` in
+  Field-only-Dokumenten sowie `field:` in Message-Specs werden
+  abgelehnt.
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):
