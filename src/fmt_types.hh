@@ -31,6 +31,8 @@ namespace TNG_NAMESPACE {
     // -- ASCII ----------------------------------------------------------------
     // Numerisch (rechts-ausgerichtet, Null-gefüllt)
     using IFA_NUMERIC    = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::ASCII, codec::Padder::LEFT_ZERO >;
+    // Monetär (Währung + Skala + Betrag, jPOS-ISOAmount-Konvention)
+    using IFA_AMOUNT     = AmountFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::ASCII, codec::Padder::LEFT_ZERO >;
     // Alphabetisch/alphanumerisch (links-ausgerichtet, Leerzeichen-gefüllt)
     using IFA_CHAR       = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::ASCII, codec::Padder::RIGHT_T_SPACE >;
     using IFA_NOPAD_CHAR = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::ASCII >;
@@ -53,6 +55,8 @@ namespace TNG_NAMESPACE {
     // -- BCD (Binary Coded Decimal) -------------------------------------------
     // Numerisch, gepackt (2 Ziffern pro Byte)
     using IFB_NUMERIC    = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::BCD, codec::Padder::LEFT_ZERO >;
+    // Monetär (Währung + Skala + Betrag, jPOS-ISOAmount-Konvention)
+    using IFB_AMOUNT     = AmountFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::BCD, codec::Padder::LEFT_ZERO >;
     // Variable Länge (BCD Length-Prefix)
     using IFB_LCHAR      = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
     using IFB_LLCHAR     = ISOOpaqueFieldParser< codec::Length::LL, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
@@ -69,6 +73,8 @@ namespace TNG_NAMESPACE {
     using IFE_LLLBINARY  = ISOBinaryFieldParser< codec::Length::LLL, codec::PrefixEncoder::EBCDIC, codec::Encoder::BINARY >;
     using IFE_LLLLBINARY = ISOBinaryFieldParser< codec::Length::LLLL, codec::PrefixEncoder::EBCDIC, codec::Encoder::BINARY >;
     using IFE_NUMERIC    = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC, codec::Padder::LEFT_ZERO >;
+    // Monetär (Währung + Skala + Betrag, jPOS-ISOAmount-Konvention)
+    using IFE_AMOUNT     = AmountFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC, codec::Padder::LEFT_ZERO >;
     using IFE_LNUM       = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::EBCDIC, codec::Encoder::EBCDIC >;
     using IFE_CHAR       = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC, codec::Padder::RIGHT_T_SPACE >;
     using IFE_NOPAD_CHAR = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC >;

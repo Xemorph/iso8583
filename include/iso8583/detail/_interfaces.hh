@@ -168,6 +168,7 @@ namespace TNG_NAMESPACE {
         BITMAP,      ///< Bitmap – computed automatically, cannot be set manually.
         NESTED,      ///< Composite sub-message – use dot-notation set() to populate.
         REMAINING,   ///< Consumes all remaining bytes of the parent buffer (no prefix).
+        AMOUNT,      ///< Monetary amount → `iso8583::AmountField` (currency code + scale + 12-digit amount).
     };
 
     /// @brief Abstract base class for message-level parsers.

@@ -97,6 +97,7 @@ namespace TNG_NAMESPACE {
         /// - `ISOOpaqueField`  → the raw string
         /// - `ISOBinaryField`  → uppercase hex string (e.g. `"DEADBEEF"`)
         /// - `ISOBitmap`       → binary bit string
+        /// - `AmountField`     → `"<currency code>/<amount>"` (e.g. `"978/19.99"`)
         std::string readable_value() const override;
 
         void description(const nonstd::string_view& desc) override;
@@ -137,6 +138,85 @@ namespace TNG_NAMESPACE {
         {
             delegate_ = std::move(delegate);
         }
+    };
+
+    // Forward declaration (full definition in <iso8583/Currency.hh>).
+    namespace currency {
+        class Currency;
+    }
+
+    /// @brief Monetary amount field (jPOS `ISOAmount` convention, C++20).
+    ///
+    /// The wire value is the 16-character string
+    /// `zeropad3(currency numeric code)` + `scale` (one digit) +
+    /// `zeropad12(amount in minor units)` — e.g. EUR 19.99 →
+    /// `"978200000001999"` (978 = ISO 4217 numeric code, scale 2,
+    /// 1999 minor units).
+    ///
+    /// The stored @ref value is the raw wire string (inherited from
+    /// `ISOComponent<TNG_KEY_TYPE, std::string>`); the typed accessors parse
+    /// it on demand. The `value(...)` setter is non-virtual, so input is only
+    /// validated lazily — a wire string shorter than 12 characters makes the
+    /// accessors throw `std::invalid_argument`.
+    ///
+    /// Currency data (decimals, alpha code) comes from
+    /// `iso8583::currency::Currency` (ISO 4217 table). Sensitive masking
+    /// (`set_sensitive`) is inherited like any other string field, and
+    /// `dump()`/`to_json()` behave accordingly.
+    class TNG_EXPORT AmountField final
+        : public ISOComponent< TNG_KEY_TYPE, std::string >
+    {
+    public:
+        // [Constructor]
+        explicit AmountField(TNG_KEY_TYPE key);
+
+        /// @brief Constructs the wire value from currency code and minor units.
+        ///
+        /// Builds `zeropad3(currencyCode)` + `currency->decimals()` +
+        /// `zeropad12(minorUnits)` via
+        /// `currency::Currency::formatAmountForISOMessage`.
+        ///
+        /// @throws std::invalid_argument `currencyCode` not in the ISO 4217 table.
+        /// @throws std::invalid_argument `minorUnits` negative or > 12 digits.
+        AmountField(TNG_KEY_TYPE key, int currencyCode, long long minorUnits);
+
+        // [Accessors]
+        /// @brief Numeric ISO 4217 currency code (chars 1-3 of the wire value).
+        /// @throws std::invalid_argument Wire value shorter than 12 characters.
+        int currencyCode() const;
+
+        /// @brief Currency code, zero-padded to 3 characters (e.g. `"978"`).
+        /// @throws std::invalid_argument Wire value shorter than 12 characters.
+        std::string currencyCodeAsString() const;
+
+        /// @brief Pointer into the ISO 4217 table, or `nullptr` if the
+        ///        numeric code is not a known currency.
+        const currency::Currency* currency() const;
+
+        /// @brief Scale digit (char 4 of the wire value).
+        /// @throws std::invalid_argument Wire value shorter than 12 characters.
+        int scale() const;
+
+        /// @brief Amount rescaled to the currency's minor units (`decimals()`).
+        ///
+        /// If the wire scale exceeds `decimals()` and the amount digits are
+        /// not divisible by `10^(scale - decimals)`, the rescaling is inexact.
+        /// @throws std::invalid_argument `"rounding problem"` (inexact) or
+        ///         wire value shorter than 12 characters.
+        long long minorUnits() const;
+
+        /// @brief `minorUnits() / 10^decimals()` as `double`.
+        double amount() const;
+
+        /// @brief The 12-digit amount part of the wire value, unscaled.
+        std::string legacyAmountString() const;
+
+        /// @brief `"<currency code>/<amount>"` (e.g. `"978/19.99"`).
+        std::string readable_value() const override;
+
+        /// @brief Base JSON plus `"currency"` (alpha code), `"amount"`
+        ///        (double) and `"minor_units"` (long long).
+        json to_json() const override;
     };
 }
 
@@ -370,6 +450,7 @@ namespace TNG_NAMESPACE {
         /// the parser's @ref ISOFieldParserType:
         ///   - `OPAQUE` / `EXCEPTIONAL` / `REMAINING` / `UNUSED` → `ISOOpaqueField`
         ///   - `BINARY`   → `ISOBinaryField` (input `data` must be an uppercase hex string)
+        ///   - `AMOUNT`   → `AmountField` (value = currency code + scale + 12-digit amount)
         ///   - `BITMAP`   → **error** (bitmap is computed automatically)
         ///   - `NESTED`   → **error** (use dot-notation overload instead)
         ///

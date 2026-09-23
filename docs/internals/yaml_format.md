@@ -168,6 +168,7 @@ Encoding-Einstellung:
 | Format | Parser | Beschreibung |
 |---|---|---|
 | `numeric` | `IFA_NUMERIC` | ASCII-Ziffern |
+| `amount` (0.6.0) | `IFA_AMOUNT` | jPOS-ISOAmount: Währungscode + Skala + 12-stelliger Betrag → `AmountField` |
 | `char` | `IFA_CHAR` | ASCII-Zeichenkette |
 | `nopad_char` | `IFA_NOPAD_CHAR` | ASCII-Zeichenkette ohne Padding |
 | `lchar` … `llllchar` | `IFA_LCHAR` … | 1–4-stelliges ASCII-Längenpräfix + `char`-Daten |
@@ -179,6 +180,7 @@ Encoding-Einstellung:
 | Format | Parser | Beschreibung |
 |---|---|---|
 | `numeric` | `IFB_NUMERIC` | BCD-Ziffern (2 Ziffern/Byte) |
+| `amount` (0.6.0) | `IFB_AMOUNT` | jPOS-ISOAmount, BCD (2 Ziffern/Byte) → `AmountField` |
 | `lchar` / `llchar` / `lllchar` | `IFB_LCHAR` … | BCD-Längenpräfix + BCD-Zeichendaten |
 | `lbinary` … `lllbinary` | `IFB_LBINARY` … | BCD-Längenpräfix + Binärdaten |
 
@@ -188,6 +190,7 @@ Encoding-Einstellung:
 |---|---|---|
 | `binary` / `lbinary` … `llllbinary` | `IFE_BINARY` … | EBCDIC-Längenpräfix + Binärdaten |
 | `numeric` / `lnum` | `IFE_NUMERIC` / `IFE_LNUM` | EBCDIC-Ziffern |
+| `amount` (0.6.0) | `IFE_AMOUNT` | jPOS-ISOAmount, EBCDIC → `AmountField` |
 | `char` / `nopad_char` | `IFE_CHAR` / `IFE_NOPAD_CHAR` | EBCDIC-Zeichenketten |
 | `lchar` / `llchar` / `lllchar` | `IFE_LCHAR` … | EBCDIC-Längenpräfix + EBCDIC-Zeichendaten |
 
@@ -210,6 +213,7 @@ dekodiert und kodiert:
 | Deklaration | Laufzeit-Typ | Encoding |
 |---|---|---|
 | `format: char` / `numeric` / `nopad_char` | `OpaqueField` (String via Codec) | `ascii`, `ebcdic` oder `bcd` — explizit deklariert ODER vererbt (Feld → globale Spec-`encoding`); bei `...bertlv`-Kindern muss das Encoding **explizit** gesetzt werden, weil dort nichts vererbt wird |
+| `format: amount` (0.6.0) | `AmountField` (String via Codec, jPOS-ISOAmount-Wert) | `ascii`, `ebcdic` oder `bcd` — wie `numeric` |
 | `format: binary` | `BinaryField` (Rohbytes) | beliebig aus `ascii`/`ebcdic`/`bcd`/`binary` (wird ignoriert) |
 | undeclared Tag | `BinaryField` (Rohbytes) + generische `"SE<n>"`-Beschreibung | — |
 
@@ -227,12 +231,13 @@ Beispiel (BERTLV-Kurzform mit gemischten Kindern):
 ```
 
 **Whitelist (Fail-closed beim Laden, positionierte Fehlermeldung):**
-- Erlaubte Kind-Formate: `binary`, `char`, `numeric`, `nopad_char`.
+- Erlaubte Kind-Formate: `binary`, `char`, `numeric`, `nopad_char`,
+  `amount` (0.6.0).
   L-präfixierte Formate (`llchar`, …), `bitmap`, `remaining` und `nop`
   sind bei TLV-Kindern widersprüchlich (die Länge liegt im Length-Feld
   des Frames) und werden verworfen.
 - Erlaubte deklarierte Kind-Encodings: `ascii`, `ebcdic`, `bcd`, `binary`;
-  Text-Formate (`char`/`numeric`/`nopad_char`) nur mit `ascii`/`ebcdic`/`bcd`.
+  Text-Formate (`char`/`numeric`/`nopad_char`/`amount`) nur mit `ascii`/`ebcdic`/`bcd`.
 - Kind-Deklarationen müssen Maps sein; ein Text-Kind, das nach der
   Encoding-Auflösung auf ein unbrauchbares Encoding landet (z. B. globale
   `encoding: binary`), wird verworfen.

@@ -1,7 +1,12 @@
 #include <iso8583/detail/_components.hh>
+#include <iso8583/Currency.hh>
 #include <iso8583/ISOUtils.hh>
 // [stdc++]
+#include <charconv>
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <system_error>
 // [tng/parser]
 #include "_parser.hh"
 #include "_utils.hh"
@@ -220,6 +225,176 @@ template class TNG_EXPORT TNG_NAMESPACE::ISOComponent< TNG_KEY_TYPE, ISO_MAP >;
 #  pragma GCC diagnostic pop
 #endif
 
+// ── AmountField (0.6.0) ─────────────────────────────────────────────────────
+// jPOS-ISOAmount-Wire-Format-Konvention:
+//   zeropad3(Währungs-Ziffercode) + Skala (1 Ziffer) + zeropad12(Betrag in Minor-Units)
+// (z. B. EUR 19.99 → "978200000001999": 978 = ISO-4217-Ziffercode, Skala 2,
+// 1999 Raten). Der gespeicherte value() ist der rohe Wire-String; die
+// typisierten Accessors parsen ihn on demand (der value()-Setter ist nicht
+// virtuell — Validierung daher lazy, wie in der Klasse dokumentiert).
+
+namespace {
+
+constexpr long long pow10ll(int e) {
+    long long r = 1;
+    while (e-- > 0)
+        r *= 10;
+    return r;
+}
+
+struct AmountWireParts {
+    int currency_code;   ///< 0..999 (Chars 1-3 des Wire-Werts)
+    int scale;           ///< 0..9 (Char 4 des Wire-Werts)
+    long long digits;    ///< Betrag-Ziffern ab Char 5, ungeskalte
+    std::string digits_str; ///< roher Ziffern-Slice ab Char 5 (mind. 8 Zeichen)
+};
+
+// Wirft std::invalid_argument: Wire-Wert kürzer als 12 Zeichen oder
+// nicht-numerische Ziffern im Code-/Skala-/Betragsteil.
+AmountWireParts parseAmountWire(const std::string& s) {
+    if (s.size() < 12)
+        throw std::invalid_argument("AmountField: wire value shorter than 12 characters");
+
+    const auto digits_of = [](std::string_view sv) -> long long {
+        long long v = 0;
+        const auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), v);
+        if (ec != std::errc{} || ptr != sv.data() + sv.size())
+            throw std::invalid_argument("AmountField: non-numeric wire value");
+        return v;
+    };
+
+    AmountWireParts w;
+    w.currency_code = static_cast<int>(digits_of(s.substr(0, 3)));
+    w.scale = static_cast<int>(digits_of(s.substr(3, 1)));
+    w.digits = digits_of(s.substr(4));
+    w.digits_str = s.substr(4, 12);
+    return w;
+}
+
+// Betrag-Ziffern (Skala `scale`) → Minor-Units (Decimals `decimals`);
+// wirft "rounding problem", wenn die Reskalierung inexact ist
+// (jPOS-ISOAmount-Parität).
+long long rescaleToMinorUnits(long long digits, int scale, int decimals) {
+    if (scale < decimals)
+        return digits * pow10ll(decimals - scale);
+    if (scale > decimals) {
+        const long long div = pow10ll(scale - decimals);
+        if (digits % div != 0)
+            throw std::invalid_argument("AmountField: rounding problem");
+        return digits / div;
+    }
+    return digits;
+}
+
+// Minor-Units → Dezimalstring mit Währungs-Stellenzahl (z. B. 1999 @ 2 dec →
+// "19.99"); Wire-Ziffern sind nicht-negativ, Negatives kann hier nicht
+// vorkommen.
+std::string minorUnitsToDecimalString(long long minor, int decimals) {
+    if (decimals <= 0)
+        return std::to_string(minor);
+    const long long base = pow10ll(decimals);
+    std::string frac = std::to_string(minor % base);
+    frac = std::string(static_cast<std::size_t>(decimals) - frac.size(), '0') + frac;
+    return std::to_string(minor / base) + "." + frac;
+}
+
+} // namespace
+
+// [AmountField: Constructors]
+TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key)
+    : ISOComponent(key)
+{
+}
+
+TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, int currencyCode, long long minorUnits)
+    : ISOComponent(key)
+{
+    const auto* cur = TNG_NAMESPACE::currency::findByNumeric(currencyCode);
+    if (cur == nullptr)
+        throw std::invalid_argument(
+            "AmountField: unknown ISO 4217 numeric currency code " + std::to_string(currencyCode));
+
+    std::string wire;
+    wire.reserve(16);
+    // Währungs-Ziffercode, 3-stellig nullgefüllt
+    wire += static_cast<char>('0' + currencyCode / 100);
+    wire += static_cast<char>('0' + (currencyCode / 10) % 10);
+    wire += static_cast<char>('0' + currencyCode % 10);
+    // Skala = Decimals der Währung (ISO 4217)
+    wire += static_cast<char>('0' + cur->decimals());
+    // Betrag in Minor-Units, 12-stellig nullgefüllt (wirft bei negativ/Overflow)
+    wire += cur->formatAmountForISOMessage(minorUnits, 12);
+    value(std::move(wire));
+}
+
+// [AmountField: Accessors]
+int TNG_NAMESPACE::AmountField::currencyCode() const {
+    return parseAmountWire(value()).currency_code;
+}
+
+std::string TNG_NAMESPACE::AmountField::currencyCodeAsString() const {
+    parseAmountWire(value());   // Längen-/Ziffern-Check
+    return value().substr(0, 3);
+}
+
+const TNG_NAMESPACE::currency::Currency* TNG_NAMESPACE::AmountField::currency() const {
+    return TNG_NAMESPACE::currency::findByNumeric(currencyCode());
+}
+
+int TNG_NAMESPACE::AmountField::scale() const {
+    return parseAmountWire(value()).scale;
+}
+
+long long TNG_NAMESPACE::AmountField::minorUnits() const {
+    const auto w = parseAmountWire(value());
+    const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
+    // Unbekannte Währung: keine Decimals in der Tabelle → roher Ziffernwert
+    return rescaleToMinorUnits(w.digits, w.scale, cur ? cur->decimals() : 0);
+}
+
+double TNG_NAMESPACE::AmountField::amount() const {
+    const auto w = parseAmountWire(value());
+    const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
+    const int decimals = cur ? cur->decimals() : 0;
+    return static_cast<double>(rescaleToMinorUnits(w.digits, w.scale, decimals)) /
+        static_cast<double>(pow10ll(decimals));
+}
+
+std::string TNG_NAMESPACE::AmountField::legacyAmountString() const {
+    return parseAmountWire(value()).digits_str;
+}
+
+// [AmountField: Overrides]
+std::string TNG_NAMESPACE::AmountField::readable_value() const {
+    const auto w = parseAmountWire(value());
+    const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
+    const int decimals = cur ? cur->decimals() : 0;
+    return value().substr(0, 3) + "/" +
+        minorUnitsToDecimalString(rescaleToMinorUnits(w.digits, w.scale, decimals), decimals);
+}
+
+json TNG_NAMESPACE::AmountField::to_json() const {
+    // Basis-JSON (key/value/wire_*) manuell nachbauen: to_json() ist virtual,
+    // daher waere ein gequalifizierter Basisklaufer
+    // (ISOComponent<...>::to_json()) dynamisch auf diesen Override
+    // zurueckgedispatcht und endlos rekursion.
+    json j;
+    j["key"] = k_;
+    j["value"] = d_;
+    if (wire_length_ > 0) {
+        j["wire_offset"] = wire_offset_;
+        j["wire_length"] = wire_length_;
+    }
+    // Typisierte Zusatzfelder (PCI: to_json() ist Daten-API — ohne Maskierung)
+    const auto w = parseAmountWire(value());
+    const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
+    const int decimals = cur ? cur->decimals() : 0;
+    j["currency"] = cur != nullptr ? cur->alphaCode() : value().substr(0, 3);
+    const long long minor = rescaleToMinorUnits(w.digits, w.scale, decimals);
+    j["amount"] = static_cast<double>(minor) / static_cast<double>(pow10ll(decimals));
+    j["minor_units"] = minor;
+    return j;
+}
 
 TNG_NAMESPACE::ISOMessage::ISOMessage()
     : ISOComponent(ROOT_KEY), hf_(-1), recalc_(true)
@@ -389,6 +564,17 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
             f->description(fieldParser->description());
             // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser uebernehmen
             // (Spec: 'sensitive: true') → dump() maskiert den Wert.
+            if (fieldParser->sensitive())
+                f->set_sensitive(true);
+            return f;
+        }
+        case ISOFieldParserType::AMOUNT: {
+            // (0.6.0) AmountField (jPOS-ISOAmount-Konvention); Wert-Layout und
+            // Sensitive-Propagation wie OPAQUE.
+            auto f = std::make_shared<::TNG_NAMESPACE::AmountField>(key);
+            f->value(std::move(data));
+            f->description(fieldParser->description());
+            // [ISO8583] 3.4 (PCI): Sensitive-Marker vom Parser uebernehmen.
             if (fieldParser->sensitive())
                 f->set_sensitive(true);
             return f;

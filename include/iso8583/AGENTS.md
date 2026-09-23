@@ -266,7 +266,7 @@ for (const auto& f : spec->fields())
 
 | Mitglied | Typ | Bedeutung |
 |---|---|---|
-| `type` | `std::string` | Basisformat: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"` |
+| `type` | `std::string` | Basisformat: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"`, `"AMOUNT"` (0.6.0) |
 | `prefix_digits` | `int` | `0`=fix, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
 | `max_length` | `int` | Maximale Nutzdatenlänge in logischen Einheiten (Zeichen, Ziffern oder Bytes); bei `REMAINING` das deklarierte Maximum (0.6.0, `length`-Pflicht), bei `NOP`/`UNUSED` 0 |
 
@@ -503,6 +503,11 @@ fields:
 **Format/Encoding-Kombinationen:**
 - `numeric`, `char`, `binary`, `bitmap`, `nop`
 - `llchar`, `lllchar`, `llllchar` (nur ascii), `llbinary`, `lllbinary`, `llllbinary`
+- `amount` (0.6.0) — jPOS-`ISOAmount`-Konvention (Währungs-Ziffercode + Skala +
+  12-stelliger Betrag, üblich `length: 16`); Encodings wie `numeric`
+  (`ascii`/`ebcdic`/`bcd`); erzeugt `AmountField` mit typisierten Accessors
+  (`currency()`, `scale()`, `minorUnits()`, `amount()`), `to_json()` ergänzt
+  `currency`/`amount`/`minor_units`; auch als typisiertes TLV-Kind erlaubt
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
   `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)

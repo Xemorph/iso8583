@@ -470,9 +470,9 @@ namespace TNG_NAMESPACE::spec {
                     const ryml::ConstNodeRef ch = field["children"];
                     if (ch.is_map()) {
                         static const std::set<std::string> textChildFormats = {
-                            "CHAR", "NUMERIC", "NOPAD_CHAR" };
+                            "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
                         static const std::set<std::string> allChildFormats = {
-                            "BINARY", "CHAR", "NUMERIC", "NOPAD_CHAR" };
+                            "BINARY", "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
                         static const std::set<std::string> allChildEncodings = {
                             "ASCII", "BCD", "BINARY", "EBCDIC" };
                         for (const ryml::ConstNodeRef c : ch.children()) {
@@ -695,7 +695,7 @@ namespace TNG_NAMESPACE::spec {
                     // Kind-Knoten); baut auf der Whitelist-Prüfung in
                     // validateSpecYaml auf (dort nur die deklarierten Werte).
                     if (child.format == "CHAR" || child.format == "NUMERIC" ||
-                        child.format == "NOPAD_CHAR")
+                        child.format == "NOPAD_CHAR" || child.format == "AMOUNT")
                         if (child.encoding != "ASCII" && child.encoding != "EBCDIC" &&
                             child.encoding != "BCD") {
                             const bool hasEncKey = hasKey(entry, "encoding");
@@ -769,6 +769,7 @@ namespace TNG_NAMESPACE::spec {
             { "LLLBINARY|BINARY",  MAKE(IF_LLLBINARY)    },
             // ── ASCII ────────────────────────────────────────────────────────────
             { "NUMERIC|ASCII",     MAKE(IFA_NUMERIC)     },
+            { "AMOUNT|ASCII",      MAKE(IFA_AMOUNT)      },
             { "CHAR|ASCII",        MAKE(IFA_CHAR)        },
             { "NOPAD_CHAR|ASCII",  MAKE(IFA_NOPAD_CHAR)  },
             { "LCHAR|ASCII",       MAKE(IFA_LCHAR)       },
@@ -784,6 +785,7 @@ namespace TNG_NAMESPACE::spec {
             { "LLLLBINARY|ASCII",  MAKE(IFA_LLLLBINARY)  },
             // ── BCD ──────────────────────────────────────────────────────────────
             { "NUMERIC|BCD",       MAKE(IFB_NUMERIC)     },
+            { "AMOUNT|BCD",        MAKE(IFB_AMOUNT)      },
             { "LCHAR|BCD",         MAKE(IFB_LCHAR)       },
             { "LLCHAR|BCD",        MAKE(IFB_LLCHAR)      },
             { "LLLCHAR|BCD",       MAKE(IFB_LLLCHAR)     },
@@ -797,6 +799,7 @@ namespace TNG_NAMESPACE::spec {
             { "LLLBINARY|EBCDIC",  MAKE(IFE_LLLBINARY)   },
             { "LLLLBINARY|EBCDIC", MAKE(IFE_LLLLBINARY)  },
             { "NUMERIC|EBCDIC",    MAKE(IFE_NUMERIC)     },
+            { "AMOUNT|EBCDIC",     MAKE(IFE_AMOUNT)      },
             { "LNUM|EBCDIC",       MAKE(IFE_LNUM)        },
             { "CHAR|EBCDIC",       MAKE(IFE_CHAR)        },
             { "NOPAD_CHAR|EBCDIC", MAKE(IFE_NOPAD_CHAR)  },
@@ -888,8 +891,8 @@ namespace TNG_NAMESPACE::spec {
     // (0.6.0, FR-3) Container-Basis-Parser normalisieren
     // =============================================================================
     //
-    // Text-basierte Containerformate (CHAR/NUMERIC/NOPAD_CHAR, mit oder ohne
-    // L-Prefix; REMAINING + Text-Encoding) erzeugen via createScalarParser
+    // Text-basierte Containerformate (CHAR/NUMERIC/NOPAD_CHAR/AMOUNT, mit oder
+    // ohne L-Prefix; REMAINING + Text-Encoding) erzeugen via createScalarParser
     // einen string-basierten Basis-Parser. In den T=parser-Zweigen von
     // ISOFieldParser (BinaryField-Scratch bei unparse / BinaryField-Wrapper
     // bei parse, s. src/_parser.hh) crasht das mit einer
@@ -918,7 +921,8 @@ namespace TNG_NAMESPACE::spec {
         while (ls < cf.format.size() && cf.format[ls] == 'L')
             ++ls;
         const std::string rest = cf.format.substr(ls);
-        if (rest == "CHAR" || rest == "NUMERIC" || rest == "NOPAD_CHAR") {
+        if (rest == "CHAR" || rest == "NUMERIC" || rest == "NOPAD_CHAR" ||
+            rest == "AMOUNT") {
             if (ls == 0) {
                 cf.format = "BINARY";
                 cf.encoding = "";
@@ -970,7 +974,8 @@ namespace TNG_NAMESPACE::spec {
         for (const auto& [tag, child] : f.tlv_children) {
             tlv_detail::TlvChildInfo info;
             const auto cf = child.format; // bereits Uppercase (parseSpecField)
-            info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR");
+            info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR" ||
+                         cf == "AMOUNT");
             if (info.text) {
                 if (child.encoding == "BCD")
                     info.enc = codec::Encoder::BCD;

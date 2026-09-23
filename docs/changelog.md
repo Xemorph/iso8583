@@ -132,6 +132,50 @@
   Field-only-Dokumenten sowie `field:` in Message-Specs werden
   abgelehnt.
 
+### [+](Added) `AmountField`: AMOUNT-Feldtyp — jPOS-`ISOAmount`-Konvention (Währungscode + Skala + Betrag) (0.6.0-Kandidat)
+
+- Neuer Feldtyp `format: amount` (Encodings `ascii`/`ebcdic`/`bcd`;
+  Parser-Aliase `IFA_AMOUNT`/`IFB_AMOUNT`/`IFE_AMOUNT`): dekodiert zur
+  neuen `iso8583::AmountField`-Komponente (String-Komponente mit
+  dünnem abgeleitetem `AmountFieldParser` — die String-
+  Parse-/Unparse-Pfade bleiben unverändert, keine Kern-Parser-Änderung,
+  keine neuen Template-Instantiierungen).
+- Wire-Konvention (jPOS `org.jpos.iso.ISOAmount`):
+  `zeropad3(Währungs-Ziffercode)` + 1-stellige Skala +
+  `zeropad12(Betrag-Integer)` = 16 Zeichen, z. B. EUR 19.99 →
+  `"978200000001999"` (978 = ISO 4217); `length: 16` üblich.
+- `AmountField` nutzt die eigene `currency::Currency` (ISO-4217-Tabelle)
+  statt jPOS `ISOCurrency`:
+  - Konstruktor `AmountField(key, currencyCode, minorUnits)` baut den
+    Wire-String (`std::invalid_argument` bei unbekanntem Währungscode);
+  - typisierte Accessors (parsen den Wire-Wert on demand,
+    `std::invalid_argument` bei Länge < 12): `currencyCode()` /
+    `currencyCodeAsString()`, `currency()` (nullptr, wenn nicht in der
+    Tabelle), `scale()`, `minorUnits()`, `amount()`,
+    `legacyAmountString()` (12-stellig, ungeskalter Integer) und
+    `readable_value()` (z. B. `"978/19.99"`);
+  - jPOS-Parität: „rounding problem" — Wire-Skala > Währungs-
+    Decimalstellen und nicht durch 10^(Skala−Decimalstellen) teilbare
+    Ziffern → `minorUnits()`/`amount()` werfen
+    `std::invalid_argument`; unbekannte Währungen laufen mit
+    Decimalstellen = 0 weiter;
+  - `to_json()` ergänzt `currency` (Alpha-Code), `amount` (double) und
+    `minor_units` (long long) zum Basis-JSON; `dump()` inkl.
+    Sensitive-Maskierung wird geerbt, kein Override.
+- Spec-Grammatik: `amount` in den Format-Validierungslisten (inkl.
+  typisierter TLV-Kind-Formate, Fail-closed), Parser-Tabelleinträge
+  `AMOUNT|ASCII/BCD/EBCDIC`, `SpecFieldFormat::type` meldet `"AMOUNT"`;
+  als typisiertes TLV-Kind erlaubt (Encodings wie `numeric`).
+- Doku: `docs/internals/spec_schema.md` (Matrix + Semantik),
+  `docs/internals/yaml_format.md` (Format-Tabellen + Whitelist), beide
+  `AGENTS.md` (Loader-Verhalten + Format-Liste + `SpecFieldFormat`-
+  Tabelle).
+- Tests: `tests/test_amount.cc` (11 TEST_CASEs, Tag `[amount]`:
+  Konstruktoren inkl. JPY (0 Decimals) / JOD (3 Decimals) / unbekannter
+  Code, Accessors, Reskalierung, Rounding-Problem, Länge < 12, unbekannte
+  Währung, YAML-Roundtrips `format: amount` + `encoding: ascii` (inkl.
+  Sensitive-Maskierung im dump) bzw. `encoding: bcd`, `to_json`).
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):

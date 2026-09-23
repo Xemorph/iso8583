@@ -666,5 +666,42 @@ namespace TNG_NAMESPACE {
     using ISORemainderFieldParser = ISOFieldParser< T, codec::Length::UNKNOWN, codec::PrefixEncoder::NONE, e, p>;
     using ISOConsumer = ISOFieldParser< std::vector<uint8_t>, codec::Length::CONSUME, codec::PrefixEncoder::NONE, codec::Encoder::BINARY, codec::Padder::NONE >;
 
+    // ── AmountFieldParser ────────────────────────────────────────────────────
+    // Dünner abgeleiteter Parser für den AMOUNT-Feldtyp (0.6.0):
+    // vererbt parse/unparse unverändert von ISOFieldParser<std::string, …>
+    // (AmountField leitet von OpaqueField ab — der String-Pfad greift),
+    // override nur type() und create_component (→ AmountField).
+    //
+    // Verwendung in YAML:   format: amount|ascii | amount|bcd | amount|ebcdic
+    // Verwendung in Code:   IFA_AMOUNT / IFB_AMOUNT / IFE_AMOUNT
+    template < codec::Length l, codec::PrefixEncoder pe, codec::Encoder e, codec::Padder p >
+    class TNG_EXPORT AmountFieldParser : public ISOFieldParser< std::string, l, pe, e, p >
+    {
+    public:
+        // [Constructor] — delegiert an die Basis-Konstruktoren (Länge/Beschreibung,
+        // Nested), damit z. B. die Spec-Parser-Tabelle (MAKE-Makro) den Parser
+        // mit (len, desc) erzeugen kann. Ein using-declaration für die
+        // Basis-Konstruktoren ist hier nicht möglich (MSVC C2873:
+        // Using-Deklaration für Basiskonstruktoren eines Template-Spezialisierung
+        // in einer Klassen-Vorlage).
+        explicit AmountFieldParser()
+            : ISOFieldParser< std::string, l, pe, e, p >() {}
+
+        explicit AmountFieldParser(std::size_t len, nonstd::string_view desc)
+            : ISOFieldParser< std::string, l, pe, e, p >(len, desc) {}
+
+        template < typename U = std::string, typename std::enable_if_t<std::is_base_of_v<ISOBaseParser, U>, int> = 0 >
+        explicit AmountFieldParser(ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr nested,
+            nonstd::string_view composite_description)
+            : ISOFieldParser< std::string, l, pe, e, p >(std::move(nested), composite_description) {}
+
+        const ISOFieldParserType type() const override { return ISOFieldParserType::AMOUNT; }
+
+        ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr create_component(TNG_KEY_TYPE key) const override
+        {
+            return std::make_shared<AmountField>(key);
+        }
+    };
+
 
 }

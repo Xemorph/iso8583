@@ -89,6 +89,8 @@ Default-Auswahl.
 
 - Text-Formate (`numeric`/`char`/`nopad_char` + `remaining` mit Text-
   Encoding) → `OpaqueField` (`std::string`)
+- `amount` mit Text-Encoding → `AmountField` (`std::string`, Wert = jPOS-
+  ISOAmount-Wire-String; s. Hinweis unten)
 - `binary`-Formate + `remaining` ohne Encoding/`binary` → `BinaryField`
   (`std::vector<uint8_t>`; set via **großgeschriebene Hex-Zeichenkette**)
 - `bitmap` → `Bitmap` (auto-berechnet, nie manuell setzen)
@@ -98,6 +100,7 @@ Default-Auswahl.
 | Format | `ascii` | `bcd` | `ebcdic` | `binary`/keine |
 |---|---|---|---|---|
 | `numeric` | ✔ (IFA_NUMERIC) | ✔ (IFB_NUMERIC) | ✔ (IFE_NUMERIC) | ✘ |
+| `amount` (0.6.0) | ✔ (IFA_AMOUNT) | ✔ (IFB_AMOUNT) | ✔ (IFE_AMOUNT) | ✘ |
 | `char` | ✔ | ✘ | ✔ | ✘ |
 | `nopad_char` | ✔ | ✘ | ✔ | ✘ |
 | `l*`-Varianten (`lchar`, `llchar`, `lllchar`; `ascii` zusätzlich `llllchar`) | `lchar`–`llllchar` ✔ | `lchar`–`lllchar` ✔ | `lchar`–`lllchar` ✔ | ✘ (s. Hinweis unten) |
@@ -121,6 +124,12 @@ Default-Auswahl.
 - **`l*binary` ohne/`binary`-Encoding**: Die Längenpräfix-Bytes werden
   als **Big-Endian-Bytes** gelesen (Encoding des Präfix = `binary`),
   die Daten bleiben roh. `lbinary` u. a. sind **nicht** encoding-neutral.
+- **`format: amount` (0.6.0)** → `AmountField` (jPOS-`ISOAmount`-
+  Konvention): Der Wire-Wert ist `zeropad3(Währungs-Ziffercode)` +
+  1-stellige Skala + `zeropad12(Betrag)`, z. B. EUR 19.99 →
+  `"978200000001999"`. `length` ist die Zeichenzahl (üblich: 16).
+  Typisierte Accessors (`currency()`, `minorUnits()`, `amount()`)
+  finden sich auf `iso8583::AmountField`.
 - **BCD-Semantik:** Bei allen BCD-Formaten ist `length` die
   **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
   *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als
