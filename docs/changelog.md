@@ -176,6 +176,37 @@
   Währung, YAML-Roundtrips `format: amount` + `encoding: ascii` (inkl.
   Sensitive-Maskierung im dump) bzw. `encoding: bcd`, `to_json`).
 
+### [+](Added) `SpecFieldInfo::tlv_is_ber`: TLV-Modus (fixer SE vs. BER-TLV) introspektierbar (FR-4, 0.6.0-Kandidat)
+
+- Neues `SpecFieldInfo`-Mitglied `bool tlv_is_ber = false` (per-Wert
+  zurückgegeben durch `ISOSpec::field(de)`): `true`, wenn das Feld ein
+  TLV-Container im **BER-TLV-Modus** ist — beide Schreibweisen,
+  `tlv: {ber: true}` (SE-Keys in Hex) **und** die `...bertlv`-
+  Kurzform (`format: lllbertlv` etc.), setzen das Flag identisch —,
+  `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei
+  allen Nicht-TLV-Feldern (Default).
+- Pure Introspection: kein Decode-/Encode-Verhalten ändert sich;
+  `SpecDecoder::makeSpecFieldInfo()` setzt das Flag aus
+  `SpecField::tlv->ber`. Auch für BER-Container **ohne** deklarierte
+  `children` wird `true` gemeldet.
+- Motivation (tng-wire-viewer): Compose-Tabs sollen zwei Typ-Badges
+  („TLV" vs. „BER-TLV") statt eines generischen „NESTED" anzeigen —
+  eine Heuristik über `SpecFieldFormat::type` ist nachweislich falsch,
+  da fixer SE- und BER-Container dasselbe `format.type` tragen können
+  (z. B. `lllbinary` + `tlv: {ber: true}` vs. `lllbinary` +
+  `tlv: {tag_bytes, len_bytes}`).
+- **ABI:** wie `tlv_children` (0.5.0) ändert das neue Mitglied das
+  Layout des per-Wert zurückgegebenen `SpecFieldInfo` —
+  Shared-Library-Consumer müssen gegen die neue Bibliothek neu
+  kompiliert werden (0.x).
+- Doku: beide `AGENTS.md` (Spez-Schema-/Introspektions-Tabellen +
+  ABI-Hinweis 0.6.0), `docs/internals/spec_schema.md`
+  (Signatur-Listing).
+- Tests: `tests/test_spec_loader.cc` — `tlv_is_ber`-Checks in den
+  FR-2-Tests (bertlv-Kurzform `true`, fixer SE-Block `false`) plus
+  neuer Test für `tlv: {ber: true}`-Block-Schreibweise (true) inkl.
+  Nicht-TLV-Default (false).
+
 ## 0.5.0
 
 > 0.5.0 (FR-1/FR-2, Plan `docs/plans/tlv-typed-children-plan.md`):

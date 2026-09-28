@@ -343,9 +343,12 @@ nachgelagerten Checks auf.
   Deployment `SpecLoadOptions::allowSmapWrite=false`.
 - Introspection: `ISOSpec::field(de)` liefert
   `SpecFieldInfo{key, description, format{type, prefix_digits,
-  max_length}, encoding, is_nested, is_bitmap, children}` —
+  max_length}, encoding, is_nested, is_bitmap, children,
+  tlv_children (0.5.0), tlv_is_ber (0.6.0)}` —
   bei `remaining` ist `max_length` das deklarierte Maximum
-  (0.6.0; vorher immer 0), bei `nop`/`unused` 0.
+  (0.6.0; vorher immer 0), bei `nop`/`unused` 0. `tlv_is_ber`
+  ist `true` im BER-TLV-Modus (beide Schreibweisen) und `false`
+  im fixen SE-Modus bzw. bei Nicht-TLV-Feldern.
 
 ## 10. Komplette Beispiele
 

@@ -282,11 +282,17 @@ for (const auto& f : spec->fields())
 | `is_bitmap` | `bool` | `true` für das Bitmap-DE |
 | `children` | `vector<SpecFieldInfo>` | Sub-Felder verschachtelter DEs (leer bei Blättern) |
 | `tlv_children` | `std::map<int, SpecFieldInfo>` | Deklarierte TLV-/BERTLV-Kinder (beide TLV-Formen; leer sonst). Der `int`-Key trägt den vollen Tag-Wert — 2-Byte-EMV-Tags wie `0x9F26` passen damit auch in `int16_t`-Builds; das `key`-Mitglied des Kinds ist der eingrenzende `TNG_KEY_TYPE`-Blick (seit 0.5.0) |
+| `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
 > per-Wert zurückgegebenen `SpecFieldInfo` — das Layout ändert sich, und
 > Shared-Library-Consumer müssen gegen die neue Bibliothek neu kompiliert
 > werden.
+
+> **ABI-Hinweis (0.6.0):** `tlv_is_ber` ist ebenfalls ein neues Mitglied
+> desselben per-Wert zurückgegebenen `SpecFieldInfo` — das Layout ändert
+> sich erneut, und Shared-Library-Consumer müssen gegen die neue
+> Bibliothek neu kompiliert werden (analog zu `tlv_children` in 0.5.0).
 
 ### Wann loadFromYaml vs. loadBothFromYaml
 
@@ -554,7 +560,11 @@ Key eine SE-Nummer oder ein BER-Tag:
   - Deklarierte Kinder sind per `loadBothFromYaml` über
     `SpecFieldInfo::tlv_children` (`std::map<int, SpecFieldInfo>`; `int`-Key
     trägt den vollen Tag-Wert, damit 2-Byte-EMV-Tags wie `0x9F26` auch in
-    `int16_t`-Builds passen) introspektierbar.
+    `int16_t`-Builds passen) introspektierbar. Der TLV-Modus des Containers
+    (fixer SE vs. BER-TLV) ist seit 0.6.0 über
+    `SpecFieldInfo::tlv_is_ber` abfragbar — `true` bei `tlv: {ber: true}`
+    und der `...bertlv`-Kurzform, `false` im fixen SE-Modus und bei
+    Nicht-TLV-Feldern.
 - Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
   generische `"SE<n>"`-Beschreibung zurück (Rohbytes, `BinaryField`) —
   unabhängig davon, ob das Containerfeld ein `tlv:`-Block oder die

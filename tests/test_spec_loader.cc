@@ -954,6 +954,8 @@ fields:
 
     auto de55 = spec->field(55);
     REQUIRE(de55.has_value());
+    // FR-4 (0.6.0): die ...bertlv-Kurzform ist BER-TLV-Modus → tlv_is_ber
+    CHECK(de55->tlv_is_ber);
     // Container-Semantik: BERTLV ist strukturell nested (Message mit Tag-
     // Kindern); 'children' (Sequence) bleibt leer ...
     CHECK(de55->is_nested);
@@ -1014,6 +1016,59 @@ fields:
     REQUIRE(de48->tlv_children.count(72) == 1);
     CHECK(de48->tlv_children.at(26).description == "Some Subelement");
     CHECK(de48->tlv_children.at(72).encoding == "BCD");
+    // FR-4 (0.6.0): fixer SE-Modus (tag_bytes/len_bytes) → tlv_is_ber == false
+    CHECK_FALSE(de48->tlv_is_ber);
+}
+
+TEST_CASE("FR-4 - tlv_is_ber distinguishes BER-TLV from fixed SE and non-TLV fields", "[spec][tlv][ber]") {
+    // FR-4 (0.6.0): tlv_is_ber muss beide BER-Schreibweisen (tlv: {ber: true}
+    // und die ...bertlv-Kurzform, die im benachbarten FR-2-Test geprüft wird)
+    // als true melden, den fixen SE-Modus sowie alle Nicht-TLV-Felder als
+    // false.
+    TempYaml yaml(R"(
+spec: "TLV Mode Introspection"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "002": { format: llchar, length: 19, description: "PAN" }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "26": { format: char, length: 10 }
+  "055":
+    type: nested
+    format: lllbinary
+    length: 999
+    tlv: { ber: true }
+    children:
+      "5A": { format: char, length: 16, encoding: ascii }
+      "9F26": { format: binary, length: 8 }
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // tlv: {ber: true}-Block-Schreibweise (Hex-Keys) → BER-TLV
+    REQUIRE(spec->has(55));
+    auto de55 = spec->field(55);
+    REQUIRE(de55.has_value());
+    CHECK(de55->tlv_is_ber);
+
+    // fixer SE-Modus → kein BER-TLV
+    REQUIRE(spec->has(48));
+    auto de48 = spec->field(48);
+    REQUIRE(de48.has_value());
+    CHECK_FALSE(de48->tlv_is_ber);
+
+    // Nicht-TLV-Feld → Default false
+    REQUIRE(spec->has(2));
+    auto de2 = spec->field(2);
+    REQUIRE(de2.has_value());
+    CHECK_FALSE(de2->tlv_is_ber);
 }
 
 // =============================================================================

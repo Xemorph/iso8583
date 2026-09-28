@@ -137,6 +137,19 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.x).
             std::map<int, SpecFieldInfo> tlv_children;
+
+            /// @brief `true` if this field is a TLV container in **BER-TLV mode**
+            ///        (`tlv: {ber: true}` or `format: ...bertlv`), `false` in
+            ///        fixed SE mode (`tlv: {tag_bytes, len_bytes, tcc}`).
+            ///
+            /// Both BER spellings set the flag identically; non-TLV fields
+            /// report `false` (the default).  Most meaningful when
+            /// `tlv_children` is not empty, but it is also `true` for BER
+            /// containers without declared children.
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.x).
+            bool tlv_is_ber = false;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────

@@ -1134,6 +1134,10 @@ namespace TNG_NAMESPACE::spec {
         info.encoding = f.encoding;
         info.is_nested = (f.type == SpecFieldType::NESTED);
         info.is_bitmap = (f.format == "BITMAP");
+        // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
+        // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
+        // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.
+        info.tlv_is_ber = f.tlv.has_value() && f.tlv->ber;
 
         TNG_KEY_TYPE childKey = 0;
         for (const auto& child : f.children)
