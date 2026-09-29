@@ -620,7 +620,7 @@ TEST_CASE("Guard I2 - ISONestedFieldParser mit text-basiertem remaining-Basis wi
 //    uneingeschränkt funktionsfähig (False-Positive-Ausschluss).
 // =============================================================================
 
-TEST_CASE("Guard J - ISONestedFieldParser mit binaerem Basis-Parser bleibt grün",
+TEST_CASE("Guard J - ISONestedFieldParser mit binaerem Basis-Parser bleibt gruen",
     "[fr3nested][unparse][roundtrip]")
 {
     // IF_LLLBINARY = ISOFieldParser<vector<uint8_t>, LLL, BINARY, BINARY>
