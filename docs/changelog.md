@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 > 0.6.0-Kandidat (Plan `docs/plans/remaining-encoding-spec-schema.md`):
 > `remaining` folgt ab jetzt dem aufgelösten Feld-/Global-Encoding

@@ -74,7 +74,7 @@ every release (procedure: §14.2):
 3. `version` in root `vcpkg.json`
 4. `version` in `vcpkg-port/vcpkg.json`
 
-Currently all four say **0.5.0** (synced). If you ever observe skew, the
+Currently all four say **0.6.0** (synced). If you ever observe skew, the
 release that introduced it missed a spot — fix it, don't normalize to the
 wrong value.
 
@@ -417,7 +417,7 @@ sphinx-build -b html docs docs/_build/html # → docs/_build/html/index.html
 
 ## 10. Recent history (see `changelog.md`)
 
-- **0.6.0 (Unreleased)** — `remaining` encoding-aware: Format folgt dem aufgelösten Feld-/Global-Encoding (roh `BinaryField` nur bei `""`/`binary`; `ascii`/`ebcdic`/`bcd` → `OpaqueField`), `length` wird Pflicht als Maximum (Fail-closed `SpecValidationError`), Introspection `max_length` meldet das deklarierte Maximum. Neu: `AmountField`-Feldtyp `format: amount` (jPOS-`ISOAmount`-Konvention, Encodings `ascii`/`ebcdic`/`bcd` → `IFA/IFB/IFE_AMOUNT`, inkl. typisierter TLV-Kind-Formate); optionaler Key `scale: N` schaltet auf die Standard-ISO-8583-Betragsform (nackte Ziffern, keine Währung im Feld) um, `SpecFieldInfo::amount_scale` introspektierbar (ABI). FR-4: TLV-Modus (fixer SE vs. BER-TLV) ist über `SpecFieldInfo::tlv_is_ber` introspektierbar — `true` bei `tlv: {ber: true}` und der `...bertlv`-Kurzform, `false` sonst (ABI: weiteres Layout-Mitglied des per-Wert `SpecFieldInfo`). Normative Schema-Referenz: `docs/internals/spec_schema.md`.
+- **0.6.0** — `remaining` encoding-aware: Format folgt dem aufgelösten Feld-/Global-Encoding (roh `BinaryField` nur bei `""`/`binary`; `ascii`/`ebcdic`/`bcd` → `OpaqueField`), `length` wird Pflicht als Maximum (Fail-closed `SpecValidationError`), Introspection `max_length` meldet das deklarierte Maximum. Neu: `AmountField`-Feldtyp `format: amount` (jPOS-`ISOAmount`-Konvention, Encodings `ascii`/`ebcdic`/`bcd` → `IFA/IFB/IFE_AMOUNT`, inkl. typisierter TLV-Kind-Formate); optionaler Key `scale: N` schaltet auf die Standard-ISO-8583-Betragsform (nackte Ziffern, keine Währung im Feld) um, `SpecFieldInfo::amount_scale` introspektierbar (ABI). FR-4: TLV-Modus (fixer SE vs. BER-TLV) ist über `SpecFieldInfo::tlv_is_ber` introspektierbar — `true` bei `tlv: {ber: true}` und der `...bertlv`-Kurzform, `false` sonst (ABI: weiteres Layout-Mitglied des per-Wert `SpecFieldInfo`). Normative Schema-Referenz: `docs/internals/spec_schema.md`.
 - **0.5.0** — typed TLV/BER-TLV children (FR-1/FR-2): declared `children` are decoded/encoded per declared `format`/`encoding` via the codec (BREAKING: text children now yield `OpaqueField` instead of `BinaryField`), the `...bertlv` shorthand accepts a `children:` Map (undeclared tags stay dynamic), D5 child whitelist (fail-closed), `SpecFieldInfo::tlv_children` introspection (ABI: layout change), BCD digit-count fix. Consumer migration checklist in the changelog.
 - **0.4.0** — iconv fallback removed (`ISO8583_ENABLE_ICONV` / `_iconv_wrapper`): the EBCDIC codec is fully table-based (no `thread_local` in the tree); `ISOSpec::hasHeader()`/`headerSize()` introspection; FAQ page; `isWithinRoot` Windows alias fix.
 - **0.3.0** — security/robustness release: strict mode (default), EBCDIC tables pinned against the ICU-78.3 oracle, spec include sandbox (`SpecLoadOptions`), thread-safe `ISOMessage` (one message from N threads), PCI masking (`sensitive: true`), `.smap` sidecar contract, `QuillBridge`.
