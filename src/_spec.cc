@@ -141,7 +141,7 @@ namespace TNG_NAMESPACE::spec {
         // Nach 0.6.0: 'sign: true' — Standardform mit führendem Vorzeichenzeichen
         // (C/D/+/-, z. B. DE28-31 "x+n 8"); nur zusammen mit 'scale', nicht mit bcd.
         bool                     sign = false;
-        // FR-5 (nach 0.6.1): Opt-in 'strict_length: true' (Feld-Key oder Root-Default).
+        // FR-5 (0.6.2): Opt-in 'strict_length: true' (Feld-Key oder Root-Default).
         // strict_length_explicit: im Feld deklariert → überschreibt den Root-Default.
         bool                     strict_length = false;
         bool                     strict_length_explicit = false;

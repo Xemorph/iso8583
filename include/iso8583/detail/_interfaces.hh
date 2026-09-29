@@ -272,7 +272,7 @@ namespace TNG_NAMESPACE {
         // "***" statt des Klartexts (Beschreibung bleibt sichtbar).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable bool sensitive_ = false;
-        // FR-5 (nach 0.6.1): Opt-in 'strict_length: true' — bei Feldern fester
+        // FR-5 (0.6.2): Opt-in 'strict_length: true' — bei Feldern fester
         // Länge (kein L-Präfix) wird ein zu kurzer Wert beim Serialisieren nicht
         // mehr still aufgefüllt (strict: Fehler, nicht-strikt: Warnung + Padding).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.

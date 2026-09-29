@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2
 
 ### `[+](Added)` Opt-in `strict_length`: Unterlängen-Prüfung bei Feldern fester Länge (FR-5)
 

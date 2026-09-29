@@ -515,7 +515,7 @@ fields:
 - `strict: true|false` (Spec-Wurzel, Default **true**) — Strict/Fail-closed-Modus;
   `parser.strict(bool)` steuert ihn zur Laufzeit (siehe „Strict-Modus" unten).
 - `strict_length: true|false` (Spec-Wurzel = Default für alle Felder, oder Feld-
-  Key, der den Root überschreibt; Default **false**; nach 0.6.1, FR-5) —
+  Key, der den Root überschreibt; Default **false**; 0.6.2, FR-5) —
   Opt-in Unterlängen-Prüfung: ein zu kurzer Wert bei Feldern **fester Länge**
   (kein L-Präfix) wird beim Serialisieren im strict-Modus mit
   `std::runtime_error` ("Serialisierung zu kurz …") abgelehnt statt still
@@ -755,7 +755,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Rohe Bytes an `BinaryField` übergeben | Hex-Zeichenkette in Großbuchstaben, z. B. `"DEADBEEF"` |
 | `msg->mti()` vor der Prüfung von `hasMTI()` | Wirft `std::logic_error`, wenn kein MTI gesetzt ist |
 | `scale:` an einem Nicht-`amount`-Feld, negativ oder nicht-numerisch (0.6.0) | Nur `format: amount` mit Ganzzahl ≥ 0 — sonst `SpecValidationError` beim Laden (Fail-closed); ohne `scale:` gilt die jPOS-Form |
-| Zu kurzen Wert bei fester Länge erwarten abgelehnt zu werden (nach 0.6.1) | Default ist Legacy-Padding; `strict_length: true` (Root oder Feld) aktiviert die Ablehnung im strict-Modus |
+| Zu kurzen Wert bei fester Länge erwarten abgelehnt zu werden (0.6.2) | Default ist Legacy-Padding; `strict_length: true` (Root oder Feld) aktiviert die Ablehnung im strict-Modus |
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 

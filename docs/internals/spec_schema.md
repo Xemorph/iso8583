@@ -73,7 +73,7 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 | `sensitive` | bool | nein (Default `false`) | PCI-Masking: Wert wird in `dump()`/`operator<<` als `***` gerendert; `value()`/`to_json()` bleiben unmasked. Bei Containern: auf alle Kinder/Tags erbt |
 | `scale` | int ≥ 0 | nein | nur `format: amount`: Standard-ISO-8583-Form (nackte Ziffern, deklarierte Skala, keine Währung im Feld); ohne Key jPOS-Form (§3) |
 | `sign` | bool | nein (Default `false`) | nur `format: amount` mit `scale`, nicht `bcd`: führendes Vorzeichenzeichen `C`/`D`/`+`/`-`; `length` zählt es mit |
-| `strict_length` | bool | nein | Opt-in (nach 0.6.1): zu kurzer Wert bei fester Länge wird beim Serialisieren abgelehnt (§9); überschreibt den Root-Default |
+| `strict_length` | bool | nein | Opt-in (0.6.2): zu kurzer Wert bei fester Länge wird beim Serialisieren abgelehnt (§9); überschreibt den Root-Default |
 | `tlv` | map | nein | `tag_bytes`/`len_bytes` (fester TLV) oder `ber: true` (EMV-BER-TLV), nur mit `type: nested` (§6) |
 | `children` | list \| map | ja bei `type: nested` | **Liste** = feste Subfelder (Positionsreihenfolge); **Map** = TLV-Modus (Schlüssel = SE-Nummer bzw. Hex-Tag) |
 
@@ -356,7 +356,7 @@ nachgelagerten Checks auf.
 - `msg->mti()` wirft `std::logic_error`, wenn kein MTI
   (`hasMTI()` zuerst prüfen); `mti()` setzt ein `OpaqueField`
   voraus (binary-MTIs: nur `hasMTI()`).
-- **Padding und `strict_length` (nach 0.6.1, FR-5):** Ein zu kurzer Wert bei
+- **Padding und `strict_length` (0.6.2, FR-5):** Ein zu kurzer Wert bei
   **fester Länge** (kein L-Präfix) wird standardmäßig beim Serialisieren
   aufgefüllt (`numeric`/`amount` links mit `0`, `char` rechts mit
   Leerzeichen) — Legacy, unverändert. Mit dem Opt-in `strict_length: true`
