@@ -523,7 +523,7 @@ Use `[!](BREAKING)` for breaking changes. One commit per logical change.
 1. Bump **all four** version spots: `project(VERSION …)` in `CMakeLists.txt`, `TNG_CORE_VERSION` in `include/iso8583/config.h`, `version` in root `vcpkg.json`, `version` in `vcpkg-port/vcpkg.json`.
 2. Update `changelog.md` **and** its tracked mirror `docs/changelog.md` (both must end up identical).
 3. Push, **wait for a green Docs run on that commit (release gate above)**, then create tag `vX.Y.Z` (the vcpkg portfile fetches `REF v${VERSION}` from `Xemorph/iso8583`).
-4. **After the tag exists**: compute the tag's SHA512 (GitHub codeload tarball of the tag) → fill it into `vcpkg-port/portfile.cmake` (currently holds the v0.6.0 archive hash; each release replaces it).
+4. **After the tag exists**: compute the tag's SHA512 (GitHub codeload tarball of the tag) → fill it into `vcpkg-port/portfile.cmake` (currently holds the v0.6.1 archive hash; each release replaces it).
 5. Push to `main` → docs auto-publish to GitHub Pages (`docs.yml`).
 6. Release commit: `[~](FIX) Release vX.Y.Z: <summary>`.
 
