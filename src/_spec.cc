@@ -1040,6 +1040,8 @@ namespace TNG_NAMESPACE::spec {
             // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
             // 'sensitive: true' oder Erbgang von einem sensitive Container).
             info.sensitive = child.sensitive || f.sensitive;
+            info.amount = (cf == "AMOUNT");
+            info.scale = child.scale;   // 0.6.0: in parseSpecField bereits validiert
             childMap[static_cast<std::size_t>(tag)] = std::move(info);
         }
 

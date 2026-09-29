@@ -117,8 +117,18 @@ namespace TNG_NAMESPACE::tlv_detail {
         // Binäre Kinder und undeklarierte Tags → BinaryField (rohe Bytes, Unchanged).
         std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > se;
         if (child && child->text) {
-            auto of = std::make_shared< ::TNG_NAMESPACE::OpaqueField >(
-                static_cast<TNG_KEY_TYPE>(se_num));
+            std::shared_ptr< ::TNG_NAMESPACE::OpaqueField > of;
+            if (child->amount) {
+                // 0.6.0: Betrag-Kind → AmountField (jPOS-Form oder Plain-Form je 'scale:')
+                of = child->scale.has_value()
+                    ? std::make_shared< ::TNG_NAMESPACE::AmountField >(
+                        static_cast<TNG_KEY_TYPE>(se_num), ::TNG_NAMESPACE::AmountForm::plain, *child->scale)
+                    : std::make_shared< ::TNG_NAMESPACE::AmountField >(
+                        static_cast<TNG_KEY_TYPE>(se_num));
+            }
+            else
+                of = std::make_shared< ::TNG_NAMESPACE::OpaqueField >(
+                    static_cast<TNG_KEY_TYPE>(se_num));
             (void)of->value(child_as_string(child->enc, buf, data_offset, data_len, strict));
             se = of;
         }

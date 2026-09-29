@@ -69,6 +69,8 @@ namespace TNG_NAMESPACE {
             bool           text = false;                 ///< true = char/numeric/nopad_char → OpaqueField
             std::string    description;                  ///< explizite Beschreibung (leer = "SE<n>"-Fallback)
             bool           sensitive = false;            ///< PCI-Masking (Kind-ebene oder vom Elternfeld geerbt)
+            bool           amount = false;               ///< 0.6.0: format amount → AmountField statt OpaqueField
+            std::optional<int> scale;                    ///< 0.6.0: deklarierte 'scale:' (nullopt = jPOS-Form; nur amount)
         };
 
         /// @brief Tag (bzw. SE-Nummer) → TlvChildInfo.
