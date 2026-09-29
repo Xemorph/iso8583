@@ -697,10 +697,28 @@ namespace TNG_NAMESPACE {
 
         const ISOFieldParserType type() const override { return ISOFieldParserType::AMOUNT; }
 
+        // 0.6.0: Wire-Form (jPOS vs. Standard-ISO-8583) wird vom Loader über
+        // 'scale:' gesetzt. nullopt → jPOS-Form (Default) bleibt.
+        void setAmountScale(std::optional<int> sc) override
+        {
+            if (sc.has_value())
+            {
+                form_ = AmountForm::plain;
+                declared_scale_ = *sc;
+            }
+        }
+
         ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr create_component(TNG_KEY_TYPE key) const override
         {
+            if (form_ == AmountForm::plain)
+                return std::make_shared<AmountField>(key, AmountForm::plain, declared_scale_);
             return std::make_shared<AmountField>(key);
         }
+
+    private:
+        // 0.6.0: Wire-Form (jPOS-ISOAmount 16-Z vs. Standard-ISO-8583 nackte Ziffern).
+        AmountForm form_ { AmountForm::jpos };
+        int declared_scale_ = 0;
     };
 
 

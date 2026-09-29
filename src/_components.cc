@@ -298,11 +298,26 @@ std::string minorUnitsToDecimalString(long long minor, int decimals) {
     return std::to_string(minor / base) + "." + frac;
 }
 
+// Plain-Form (0.6.0): gesamter Wire-Wert = nackte Ziffern (Minor-Units bei
+// deklarierter Skala). Wirft std::invalid_argument bei leer/nicht-numerisch/Overflow.
+long long parsePlainDigits(const std::string& s) {
+    long long v = 0;
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+    if (s.empty() || ec != std::errc{} || ptr != s.data() + s.size())
+        throw std::invalid_argument("AmountField: non-numeric wire value");
+    return v;
+}
+
 } // namespace
 
 // [AmountField: Constructors]
 TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key)
     : ISOComponent(key)
+{
+}
+
+TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale)
+    : ISOComponent(key), form_(form), declared_scale_(declaredScale)
 {
 }
 
@@ -329,23 +344,37 @@ TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, int currencyCode, long
 
 // [AmountField: Accessors]
 int TNG_NAMESPACE::AmountField::currencyCode() const {
+    if (form_ == AmountForm::plain) {
+        parsePlainDigits(value());
+        return 0;
+    }
     return parseAmountWire(value()).currency_code;
 }
 
 std::string TNG_NAMESPACE::AmountField::currencyCodeAsString() const {
+    if (form_ == AmountForm::plain) {
+        parsePlainDigits(value());
+        return {};
+    }
     parseAmountWire(value());   // Längen-/Ziffern-Check
     return value().substr(0, 3);
 }
 
 const TNG_NAMESPACE::currency::Currency* TNG_NAMESPACE::AmountField::currency() const {
+    if (form_ == AmountForm::plain)
+        return nullptr;   // Währung liegt netzwerkseitig (z. B. DE 49), nicht im Feld
     return TNG_NAMESPACE::currency::findByNumeric(currencyCode());
 }
 
 int TNG_NAMESPACE::AmountField::scale() const {
+    if (form_ == AmountForm::plain)
+        return declared_scale_;
     return parseAmountWire(value()).scale;
 }
 
 long long TNG_NAMESPACE::AmountField::minorUnits() const {
+    if (form_ == AmountForm::plain)
+        return parsePlainDigits(value());   // Skala = Decimals → keine Reskalierung
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     // Unbekannte Währung: keine Decimals in der Tabelle → roher Ziffernwert
@@ -353,6 +382,9 @@ long long TNG_NAMESPACE::AmountField::minorUnits() const {
 }
 
 double TNG_NAMESPACE::AmountField::amount() const {
+    if (form_ == AmountForm::plain)
+        return static_cast<double>(parsePlainDigits(value())) /
+            static_cast<double>(pow10ll(declared_scale_));
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     const int decimals = cur ? cur->decimals() : 0;
@@ -361,11 +393,17 @@ double TNG_NAMESPACE::AmountField::amount() const {
 }
 
 std::string TNG_NAMESPACE::AmountField::legacyAmountString() const {
+    if (form_ == AmountForm::plain) {
+        parsePlainDigits(value());
+        return value();
+    }
     return parseAmountWire(value()).digits_str;
 }
 
 // [AmountField: Overrides]
 std::string TNG_NAMESPACE::AmountField::readable_value() const {
+    if (form_ == AmountForm::plain)
+        return minorUnitsToDecimalString(parsePlainDigits(value()), declared_scale_);
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     const int decimals = cur ? cur->decimals() : 0;
@@ -386,6 +424,13 @@ json TNG_NAMESPACE::AmountField::to_json() const {
         j["wire_length"] = wire_length_;
     }
     // Typisierte Zusatzfelder (PCI: to_json() ist Daten-API — ohne Maskierung)
+    if (form_ == AmountForm::plain) {
+        const long long minor = parsePlainDigits(value());
+        j["amount"] = static_cast<double>(minor) / static_cast<double>(pow10ll(declared_scale_));
+        j["minor_units"] = minor;
+        j["scale"] = declared_scale_;
+        return j;
+    }
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     const int decimals = cur ? cur->decimals() : 0;

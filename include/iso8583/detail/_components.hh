@@ -145,7 +145,24 @@ namespace TNG_NAMESPACE {
         class Currency;
     }
 
+    /// @brief Wire-Form eines `format: amount`-Felds (0.6.0).
+    ///  - `jpos`:  jPOS-`ISOAmount` 16-Z-Form (Währung + Skala + 12-Z-Betrag auf dem Wire).
+    ///  - `plain`: Standard-ISO-8583-Form (`length` nackte Ziffern, deklarierte Skala,
+    ///             Währung NICHT auf dem Wire — siehe DE 49).
+    /// @note ABI: neues enum + neue `AmountField`-Mitglieder/-Ktor (0.x).
+    enum class AmountForm { jpos, plain };
+
     /// @brief Monetary amount field (jPOS `ISOAmount` convention, C++20).
+    ///
+    /// Two wire forms (0.6.0, selected by the optional YAML key `scale:`):
+    /// the jPOS form described below (default, `scale:` absent) and the
+    /// standard ISO-8583 form (`scale: N`): the wire value is bare digits,
+    /// the scale is the declared `N`, and the currency is NOT part of the
+    /// field (`currencyCode()` = 0, `currencyCodeAsString()` = `""`,
+    /// `currency()` = `nullptr`; `readable_value()` has no currency prefix;
+    /// `to_json()` has no `currency` member).
+    /// @note ABI: new members `form_`/`declared_scale_` and a new constructor
+    ///       change the class layout (0.x).
     ///
     /// The wire value is the 16-character string
     /// `zeropad3(currency numeric code)` + `scale` (one digit) +
@@ -169,6 +186,10 @@ namespace TNG_NAMESPACE {
     public:
         // [Constructor]
         explicit AmountField(TNG_KEY_TYPE key);
+
+        /// @brief Constructs a field of the given wire form (0.6.0).
+        /// @param declaredScale Declared decimal places (only used for `AmountForm::plain`).
+        AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale);
 
         /// @brief Constructs the wire value from currency code and minor units.
         ///
@@ -217,6 +238,10 @@ namespace TNG_NAMESPACE {
         /// @brief Base JSON plus `"currency"` (alpha code), `"amount"`
         ///        (double) and `"minor_units"` (long long).
         json to_json() const override;
+
+    private:
+        AmountForm form_ = AmountForm::jpos;   ///< Wire-Form (0.6.0)
+        int declared_scale_ = 0;               ///< deklarierte Skala (nur `plain`)
     };
 }
 
