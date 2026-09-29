@@ -58,7 +58,7 @@
   Roundtrip, Strict/Legacy, Fail-closed ohne `length`, Clamp):
   `tests/test_remaining_field.cc` (+6 TEST_CASEs).
 
-### [#](Fixed) SIGSEGV in text-basierten Nested-Containern (0.6.0-Kandidat)
+### `[#](Fixed)` SIGSEGV in text-basierten Nested-Containern (0.6.0-Kandidat)
 
 - `type: nested` + text-basiertes Containerformat (`char`/`numeric`/`nopad_char`, L-Prefix `llchar`/`lllchar`/`llllchar` (ascii) sowie `remaining` + Text-Encoding) crashte in `unparse()`/`parse()` mit SIGSEGV: der Container-Basis-Parser (string-basiert) empfing den `BinaryField`-Scratch/-Wrapper des Nested-Zweigs (seit 0.3.0 Thread-Sicherheits-Pattern) → Null-Pointer-Dereferenz. Die AGENTS.md-Beispiele (DE48 `lllchar`+`tlv`) waren betroffen; v0.5.0 ebenso.
 - Fix: Der Loader normalisiert den Container-Basis-Parser auf den binären Zwilling (wire-neutral: gleicher L-Zähler + Prefix-Encoding, Container-Daten bleiben Roh-Bytes für die Kinder; Introspektion meldet weiterhin das deklarierte Format). Neue Tabelle-Lücke geschlossen: `llllbinary|ascii` (`IFA_LLLLBINARY`).
@@ -108,7 +108,7 @@
   Tags `[pos]`, `[error]`, `[integration]` — inkl. Integration mit
   echtem `ISOMessage`/`BinaryField` über die übliche Feld-API).
 
-### [+](Added) Field-only-Specs: Einzel-Feld-Specs (z. B. DE55/ICC) auf BinaryField-Payloads anwenden (0.6.0-Kandidat)
+### `[+](Added)` Field-only-Specs: Einzel-Feld-Specs (z. B. DE55/ICC) auf BinaryField-Payloads anwenden (0.6.0-Kandidat)
 
 - Neue Dokument-Form: eine Spec mit einem einzelnen `field:`-Block
   (gleiche Feld-Grammatik wie `fields:`-Einträge) definiert die Semantik
@@ -132,7 +132,7 @@
   Field-only-Dokumenten sowie `field:` in Message-Specs werden
   abgelehnt.
 
-### [~](Changed) `AmountField`: auf Standard-ISO-8583-Betragsfelder generalisiert (optionaler `scale:`-Key) (0.6.0-Kandidat)
+### `[~](Changed)` `AmountField`: auf Standard-ISO-8583-Betragsfelder generalisiert (optionaler `scale:`-Key) (0.6.0-Kandidat)
 
 - Neuer optionaler Feld-Key `scale: N` (nur bei `format: amount`, Ganzzahl
   ≥ 0; Fail-closed mit positioniertem `SpecValidationError` bei
@@ -149,12 +149,12 @@
   (Vtable), neues Enum `AmountForm` sowie neue Mitglieder/neuer Konstruktor
   von `AmountField` (Layout) — Shared-Library-Consumer neu kompilieren.
 
-### [+](Added) `SpecFieldInfo::amount_scale`: deklarierte `scale` introspektierbar (0.6.0-Kandidat)
+### `[+](Added)` `SpecFieldInfo::amount_scale`: deklarierte `scale` introspektierbar (0.6.0-Kandidat)
 
 - Neues Mitglied `std::optional<int> amount_scale` (`nullopt` = jPOS-Form).
   ABI: weiteres Layout-Mitglied des per-Wert `SpecFieldInfo`.
 
-### [+](Added) `AmountField`: AMOUNT-Feldtyp — jPOS-`ISOAmount`-Konvention (Währungscode + Skala + Betrag) (0.6.0-Kandidat)
+### `[+](Added)` `AmountField`: AMOUNT-Feldtyp — jPOS-`ISOAmount`-Konvention (Währungscode + Skala + Betrag) (0.6.0-Kandidat)
 
 - Neuer Feldtyp `format: amount` (Encodings `ascii`/`ebcdic`/`bcd`;
   Parser-Aliase `IFA_AMOUNT`/`IFB_AMOUNT`/`IFE_AMOUNT`): dekodiert zur
@@ -198,7 +198,7 @@
   Währung, YAML-Roundtrips `format: amount` + `encoding: ascii` (inkl.
   Sensitive-Maskierung im dump) bzw. `encoding: bcd`, `to_json`).
 
-### [+](Added) `SpecFieldInfo::tlv_is_ber`: TLV-Modus (fixer SE vs. BER-TLV) introspektierbar (FR-4, 0.6.0-Kandidat)
+### `[+](Added)` `SpecFieldInfo::tlv_is_ber`: TLV-Modus (fixer SE vs. BER-TLV) introspektierbar (FR-4, 0.6.0-Kandidat)
 
 - Neues `SpecFieldInfo`-Mitglied `bool tlv_is_ber = false` (per-Wert
   zurückgegeben durch `ISOSpec::field(de)`): `true`, wenn das Feld ein
