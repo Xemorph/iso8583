@@ -512,9 +512,16 @@ Register the new `test_*.cc` in `tests/CMakeLists.txt` (keep `test_e2e_full_mess
 Use `[!](BREAKING)` for breaking changes. One commit per logical change.
 
 ### 14.2 Release procedure (ordered)
+> **Release gate (mandatory):** a release (tag, GitHub release, vcpkg hash) may
+> only be created from a commit whose **Docs workflow run (`docs.yml`, build-docs
+> + deploy) on `main` finished successfully**. Push the release-candidate commit
+> to `main` first, wait for the green docs run (`gh run list --workflow=docs.yml`),
+> and only then tag and publish. A red docs build blocks the release — fix it and
+> re-verify on the new commit. (Also run `sphinx-build -W` locally beforehand.)
+
 1. Bump **all four** version spots: `project(VERSION …)` in `CMakeLists.txt`, `TNG_CORE_VERSION` in `include/iso8583/config.h`, `version` in root `vcpkg.json`, `version` in `vcpkg-port/vcpkg.json`.
 2. Update `changelog.md` **and** its tracked mirror `docs/changelog.md` (both must end up identical).
-3. Push + create tag `vX.Y.Z` (the vcpkg portfile fetches `REF v${VERSION}` from `Xemorph/iso8583`).
+3. Push, **wait for a green Docs run on that commit (release gate above)**, then create tag `vX.Y.Z` (the vcpkg portfile fetches `REF v${VERSION}` from `Xemorph/iso8583`).
 4. **After the tag exists**: compute the tag's SHA512 (GitHub codeload tarball of the tag) → fill it into `vcpkg-port/portfile.cmake` (currently holds the v0.6.0 archive hash; each release replaces it).
 5. Push to `main` → docs auto-publish to GitHub Pages (`docs.yml`).
 6. Release commit: `[~](FIX) Release vX.Y.Z: <summary>`.
