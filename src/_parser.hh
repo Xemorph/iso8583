@@ -362,6 +362,19 @@ namespace TNG_NAMESPACE {
                         data.size(), de_l_);
                     return std::vector<uint8_t>{};
                 }
+                // FR-5 (Opt-in 'strict_length: true'): Unterlänge bei fester Länge.
+                // strict: positioniert verwerfen; nicht-strikt: warnen + wie bisher
+                // auffüllen. Nur Length::FIX (kein Präfix; 'remaining' = UNKNOWN ist
+                // ein Maximum und nie betroffen).
+                if (strict_length_ && l_ == codec::Length::FIX && data.size() < de_l_) {
+                    if (strict_)
+                        throw std::runtime_error(
+                            "Serialisierung zu kurz: " + std::to_string(data.size()) +
+                            " Einheiten < FIX-Länge " + std::to_string(de_l_) +
+                            " (Feld " + d_ + ", strict_length)");
+                    TNG_LOG_WARN("[codec] Serialisierung zu kurz (nicht-strikt, strict_length): {} Einheiten < FIX-Länge {} - Wert wird aufgefüllt (Feld {})",
+                        data.size(), de_l_, d_);
+                }
                 codec::pad<p_>(data, de_l_); // Padding data
                 std::vector<uint8_t> b_img(codec::parsed_length<pe_, l_>() + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable

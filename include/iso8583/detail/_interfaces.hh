@@ -272,6 +272,11 @@ namespace TNG_NAMESPACE {
         // "***" statt des Klartexts (Beschreibung bleibt sichtbar).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable bool sensitive_ = false;
+        // FR-5 (nach 0.6.1): Opt-in 'strict_length: true' — bei Feldern fester
+        // Länge (kein L-Präfix) wird ein zu kurzer Wert beim Serialisieren nicht
+        // mehr still aufgefüllt (strict: Fehler, nicht-strikt: Warnung + Padding).
+        // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
+        mutable bool strict_length_ = false;
     public:
         /// @brief Shared-pointer alias.
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
@@ -288,6 +293,19 @@ namespace TNG_NAMESPACE {
 
         /// @brief Liefert `true`, wenn das Feld sensitive ist.
         [[nodiscard]] bool sensitive() const noexcept { return sensitive_; }
+
+        /// @brief Aktiviert die Unterlängen-Prüfung für Felder fester Länge (Opt-in, FR-5).
+        ///
+        /// Aktiv: ein Wert, der KÜRZER als die deklarierte feste Länge ist, wird
+        /// beim Serialisieren (`parse()`) im strikten Modus mit einem
+        /// `std::runtime_error` abgelehnt; im nicht-strikten Modus wird eine
+        /// Warnung geloggt und wie bisher aufgefüllt. Default `false` (Legacy:
+        /// stilles Padding, z. B. NUMERIC links mit `0`). Wirkt nur bei Text-Feldern
+        /// mit fester Länge — L-präfixierte Felder und `remaining` sind nie betroffen.
+        void strictLength(bool v) const noexcept { strict_length_ = v; }
+
+        /// @brief Liefert den Status der Unterlängen-Prüfung.
+        [[nodiscard]] bool strictLength() const noexcept { return strict_length_; }
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;

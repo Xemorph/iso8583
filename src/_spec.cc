@@ -141,6 +141,10 @@ namespace TNG_NAMESPACE::spec {
         // Nach 0.6.0: 'sign: true' — Standardform mit führendem Vorzeichenzeichen
         // (C/D/+/-, z. B. DE28-31 "x+n 8"); nur zusammen mit 'scale', nicht mit bcd.
         bool                     sign = false;
+        // FR-5 (nach 0.6.1): Opt-in 'strict_length: true' (Feld-Key oder Root-Default).
+        // strict_length_explicit: im Feld deklariert → überschreibt den Root-Default.
+        bool                     strict_length = false;
+        bool                     strict_length_explicit = false;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -238,7 +242,7 @@ namespace TNG_NAMESPACE::spec {
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children",
-            "tlv", "sensitive", "scale", "sign"
+            "tlv", "sensitive", "scale", "sign", "strict_length"
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -676,6 +680,12 @@ namespace TNG_NAMESPACE::spec {
             f.scale = sc;
         }
 
+        // FR-5: optionaler Feld-Key 'strict_length' (bool).
+        if (hasKey(node, "strict_length")) {
+            f.strict_length = getBool(node, "strict_length", false);
+            f.strict_length_explicit = true;
+        }
+
         // Nach 0.6.0: optionale 'sign'-Key (führendes Vorzeichenzeichen C/D/+/-).
         // Fail-closed: nur für 'format: amount' mit 'scale' (Standardform), nicht mit
         // bcd (Vorzeichenzeichen ist keine BCD-Ziffer).
@@ -899,6 +909,10 @@ namespace TNG_NAMESPACE::spec {
 
         if (p)
         {
+            // FR-5: Opt-in Unterlängen-Prüfung (Feld-Key oder Root-Default).
+            if (f.strict_length)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
+                    fp->strictLength(true);
             // 0.6.0: 'format: amount' trägt die Wire-Form (jPOS vs. plain) über
             // die optionale 'scale'-Key. Für alle anderen Formate ist der Setter
             // ein no-op (s. ISOFieldParserPtrBase).
@@ -1246,6 +1260,17 @@ namespace TNG_NAMESPACE::spec {
     // YAML laden und vorverarbeiten
     // =============================================================================
 
+    // FR-5: Root-Default 'strict_length: true' rekursiv auf alle Felder anwenden,
+    // die den Key nicht selbst deklarieren (Feld-Deklaration gewinnt).
+    static void applyStrictLengthDefault(SpecField& f, bool def) {
+        if (!f.strict_length_explicit)
+            f.strict_length = def;
+        for (auto& c : f.children)
+            applyStrictLengthDefault(c, def);
+        for (auto& [tag, c] : f.tlv_children)
+            applyStrictLengthDefault(c, def);
+    }
+
     struct LoadedSpec {
         std::string              desc;
         std::string              defaultEncoding;
@@ -1280,12 +1305,15 @@ namespace TNG_NAMESPACE::spec {
         result.headerKey = hasKey(yaml, "header");
         result.strict = getBool(yaml, "strict", true);
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
+        const bool rootStrictLength = getBool(yaml, "strict_length", false);
 
         for (ryml::ConstNodeRef entry : yaml["fields"].children()) {
             const auto de = toStdString(entry.key());
             const int  deNum = std::stoi(de);
             result.fields[deNum] = parseSpecField(
                 entry, result.defaultEncoding, de, &pr.source_map);
+            if (rootStrictLength)
+                applyStrictLengthDefault(result.fields[deNum], true);
         }
         // Content-Snapshot (Dateimenge + Hash): SourceMap::finalise() lief
         // unbedingt (unabhaengig von trackSourceMap) im Preprocessor.
@@ -1312,6 +1340,8 @@ namespace TNG_NAMESPACE::spec {
         // Exakt ein Feld: Key 0 (s. Funktionsdokumentation).
         result.fields[0] = parseSpecField(
             yaml["field"], result.defaultEncoding, "0", &pr.source_map);
+        if (getBool(yaml, "strict_length", false))
+            applyStrictLengthDefault(result.fields[0], true);
         result.sourceFiles = std::move(pr.sourceFiles);
         result.contentHash = pr.source_map.hash();
         return result;
