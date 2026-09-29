@@ -469,3 +469,47 @@ fields:
     CHECK(jpos->currencyCode() == 978);
     CHECK(jpos->minorUnits() == 1999);
 }
+
+TEST_CASE("AmountField plain - scale is inherited via definitions and !merge", "[amount][spec][preprocessor][plain]") {
+    TempYaml yaml(R"(
+spec: "Amount Definitions"
+encoding: ascii
+
+definitions:
+  amount_std: { format: amount, length: 12, scale: 2, description: "Amount" }
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "004": !use amount_std
+  "008":
+    !merge
+    - !use amount_std
+    - length: 8
+)");
+    auto [parser, sp] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    const auto f4 = sp->field(4).value();
+    const auto f8 = sp->field(8).value();
+    REQUIRE(f4.amount_scale.has_value());
+    REQUIRE(f8.amount_scale.has_value());
+    CHECK(*f4.amount_scale == 2);
+    CHECK(*f8.amount_scale == 2);
+    CHECK(f4.format.max_length == 12);
+    CHECK(f8.format.max_length == 8);
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(0), std::string("0200")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(4), std::string("000000019990")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(8), std::string("00001999")));
+    const auto bytes = msg->parse(msg);
+
+    auto dec = std::make_shared<Message>();
+    dec->parser(parser);
+    REQUIRE(dec->unparse(dec, bytes) == bytes.size());
+    CHECK(dec->get<AmountField>(4)->minorUnits() == 19990);
+    CHECK(dec->get<AmountField>(8)->minorUnits() == 1999);
+    CHECK(dec->get<AmountField>(8)->readable_value() == "19.99");
+}
