@@ -1179,6 +1179,7 @@ namespace TNG_NAMESPACE::spec {
         info.encoding = f.encoding;
         info.is_nested = (f.type == SpecFieldType::NESTED);
         info.is_bitmap = (f.format == "BITMAP");
+        info.amount_scale = f.scale;   // 0.6.0: nullopt = jPOS-Form
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.

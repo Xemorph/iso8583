@@ -150,6 +150,17 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.x).
             bool tlv_is_ber = false;
+
+            /// @brief Declared `scale:` of a `format: amount` field (0.6.0).
+            ///
+            /// `std::nullopt` = jPOS-`ISOAmount` 16-digit form (no `scale:` key,
+            /// the default); a value `N` = standard ISO-8583 form (bare digits,
+            /// declared scale `N`, currency not on the wire).  Always
+            /// `std::nullopt` for non-`amount` fields.
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.x).
+            std::optional<int> amount_scale;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────
