@@ -168,7 +168,7 @@ Encoding-Einstellung:
 | Format | Parser | Beschreibung |
 |---|---|---|
 | `numeric` | `IFA_NUMERIC` | ASCII-Ziffern |
-| `amount` (0.6.0) | `IFA_AMOUNT` | jPOS-ISOAmount: Währungscode + Skala + 12-stelliger Betrag → `AmountField` |
+| `amount` (0.6.0) | `IFA_AMOUNT` | jPOS-ISOAmount: Währungscode + Skala + 12-stelliger Betrag → `AmountField`; optionaler Key `scale: N` (nur bei `amount`, Ganzzahl ≥ 0) = Standard-ISO-8583-Form: `length` nackte Ziffern, Skala `N`, keine Währung im Feld |
 | `char` | `IFA_CHAR` | ASCII-Zeichenkette |
 | `nopad_char` | `IFA_NOPAD_CHAR` | ASCII-Zeichenkette ohne Padding |
 | `lchar` … `llllchar` | `IFA_LCHAR` … | 1–4-stelliges ASCII-Längenpräfix + `char`-Daten |
@@ -213,7 +213,7 @@ dekodiert und kodiert:
 | Deklaration | Laufzeit-Typ | Encoding |
 |---|---|---|
 | `format: char` / `numeric` / `nopad_char` | `OpaqueField` (String via Codec) | `ascii`, `ebcdic` oder `bcd` — explizit deklariert ODER vererbt (Feld → globale Spec-`encoding`); bei `...bertlv`-Kindern muss das Encoding **explizit** gesetzt werden, weil dort nichts vererbt wird |
-| `format: amount` (0.6.0) | `AmountField` (String via Codec, jPOS-ISOAmount-Wert) | `ascii`, `ebcdic` oder `bcd` — wie `numeric` |
+| `format: amount` (0.6.0) | `AmountField` (String via Codec, jPOS-ISOAmount-Wert; mit `scale: N` Standard-Form, nackte Ziffern) | `ascii`, `ebcdic` oder `bcd` — wie `numeric` |
 | `format: binary` | `BinaryField` (Rohbytes) | beliebig aus `ascii`/`ebcdic`/`bcd`/`binary` (wird ignoriert) |
 | undeclared Tag | `BinaryField` (Rohbytes) + generische `"SE<n>"`-Beschreibung | — |
 

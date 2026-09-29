@@ -130,6 +130,15 @@ Default-Auswahl.
   `"978200000001999"`. `length` ist die Zeichenzahl (üblich: 16).
   Typisierte Accessors (`currency()`, `minorUnits()`, `amount()`)
   finden sich auf `iso8583::AmountField`.
+  **Optionaler Key `scale: N`** (nur auf `format: amount` gültig, Ganzzahl
+  ≥ 0; sonst positionierter `SpecValidationError`): Ohne `scale:` gilt die
+  jPOS-Form (Default, unverändert). Mit `scale: N` gilt die **Standard-
+  ISO-8583-Form** (z. B. DE 4): Der Wire-Wert besteht aus `length` nackten
+  Ziffern, die Skala ist das deklarierte `N`, die Währung steht **nicht** im
+  Feld (`currency()` = `nullptr`; sie liegt netzwerkseitig in DE 49).
+  Beispiel: `"004": { format: amount, length: 12, scale: 2 }`,
+  Wire `"000000019990"` → `minorUnits() == 19990`, `readable_value() ==
+  "199.90"`. Introspektion: `SpecFieldInfo::amount_scale`.
 - **BCD-Semantik:** Bei allen BCD-Formaten ist `length` die
   **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
   *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als

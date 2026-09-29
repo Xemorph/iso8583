@@ -282,6 +282,7 @@ for (const auto& f : spec->fields())
 | `is_bitmap` | `bool` | `true` für das Bitmap-DE |
 | `children` | `vector<SpecFieldInfo>` | Sub-Felder verschachtelter DEs (leer bei Blättern) |
 | `tlv_children` | `std::map<int, SpecFieldInfo>` | Deklarierte TLV-/BERTLV-Kinder (beide TLV-Formen; leer sonst). Der `int`-Key trägt den vollen Tag-Wert — 2-Byte-EMV-Tags wie `0x9F26` passen damit auch in `int16_t`-Builds; das `key`-Mitglied des Kinds ist der eingrenzende `TNG_KEY_TYPE`-Blick (seit 0.5.0) |
+| `amount_scale` | `std::optional<int>` | Deklarierte `scale:` eines `format: amount`-Felds; `std::nullopt` = jPOS-Form (kein `scale:`-Key) und für alle Nicht-`amount`-Felder (seit 0.6.0) |
 | `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
@@ -293,6 +294,12 @@ for (const auto& f : spec->fields())
 > desselben per-Wert zurückgegebenen `SpecFieldInfo` — das Layout ändert
 > sich erneut, und Shared-Library-Consumer müssen gegen die neue
 > Bibliothek neu kompiliert werden (analog zu `tlv_children` in 0.5.0).
+
+> **ABI-Hinweis (0.6.0):** `amount_scale` (`SpecFieldInfo`), die neue
+> virtuelle Funktion `ISOFieldParserPtrBase::setAmountScale` (Vtable) sowie
+> `AmountForm` und die neuen Mitglieder/den neuen Konstruktor von
+> `AmountField` ändern Layout bzw. Vtable — Shared-Library-Consumer müssen
+> neu kompiliert werden.
 
 ### Wann loadFromYaml vs. loadBothFromYaml
 
@@ -514,6 +521,14 @@ fields:
   (`ascii`/`ebcdic`/`bcd`); erzeugt `AmountField` mit typisierten Accessors
   (`currency()`, `scale()`, `minorUnits()`, `amount()`), `to_json()` ergänzt
   `currency`/`amount`/`minor_units`; auch als typisiertes TLV-Kind erlaubt
+  (dort ebenfalls `AmountField`). **Zwei Wire-Formen**, gewählt über den
+  optionalen Key `scale:` (nur auf `format: amount` gültig, Ganzzahl ≥ 0):
+  ohne `scale:` = jPOS-Form (unverändert); mit `scale: N` = **Standard-
+  ISO-8583-Form** (z. B. DE 4): Wire = `length` nackte Ziffern, Skala = `N`,
+  **keine** Währung im Feld (`currency()` = `nullptr`, `currencyCode()` = 0,
+  `readable_value()` ohne Währungspräfix, `to_json()` ohne `currency`, mit
+  `scale`; Währung liegt netzwerkseitig in DE 49). Beispiel:
+  `"004": { format: amount, length: 12, scale: 2 }`
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
   `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)
@@ -718,6 +733,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Hex-Zeichenkette an ein nicht-BINARY-Feld | Nur `BinaryField` akzeptiert Hex-Eingabe |
 | Rohe Bytes an `BinaryField` übergeben | Hex-Zeichenkette in Großbuchstaben, z. B. `"DEADBEEF"` |
 | `msg->mti()` vor der Prüfung von `hasMTI()` | Wirft `std::logic_error`, wenn kein MTI gesetzt ist |
+| `scale:` an einem Nicht-`amount`-Feld, negativ oder nicht-numerisch (0.6.0) | Nur `format: amount` mit Ganzzahl ≥ 0 — sonst `SpecValidationError` beim Laden (Fail-closed); ohne `scale:` gilt die jPOS-Form |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 
 ---

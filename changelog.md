@@ -132,6 +132,28 @@
   Field-only-Dokumenten sowie `field:` in Message-Specs werden
   abgelehnt.
 
+### [~](Changed) `AmountField`: auf Standard-ISO-8583-Betragsfelder generalisiert (optionaler `scale:`-Key) (0.6.0-Kandidat)
+
+- Neuer optionaler Feld-Key `scale: N` (nur bei `format: amount`, Ganzzahl
+  ≥ 0; Fail-closed mit positioniertem `SpecValidationError` bei
+  Nicht-`amount`-Feld, negativem oder nicht-numerischem Wert). Ohne `scale:`
+  bleibt die jPOS-`ISOAmount`-Form **unverändert** (rückwärtskompatibel).
+  Mit `scale: N` gilt die Standard-ISO-8583-Form (z. B. DE 4): `length`
+  nackte Ziffern, Skala = `N`, Währung **nicht** im Feld (`currency()` =
+  `nullptr`, `readable_value()` ohne Währungspräfix, `to_json()` ohne
+  `currency`, mit `scale`).
+- Auch für typisierte TLV-Kinder (`amount`-Kinder werden jetzt als
+  `AmountField` statt `OpaqueField` dekodiert; `AmountField` ist eine
+  `OpaqueField`-Ableitung, `get<OpaqueField>` funktioniert weiter).
+- ABI: neue virtuelle Funktion `ISOFieldParserPtrBase::setAmountScale`
+  (Vtable), neues Enum `AmountForm` sowie neue Mitglieder/neuer Konstruktor
+  von `AmountField` (Layout) — Shared-Library-Consumer neu kompilieren.
+
+### [+](Added) `SpecFieldInfo::amount_scale`: deklarierte `scale` introspektierbar (0.6.0-Kandidat)
+
+- Neues Mitglied `std::optional<int> amount_scale` (`nullopt` = jPOS-Form).
+  ABI: weiteres Layout-Mitglied des per-Wert `SpecFieldInfo`.
+
 ### [+](Added) `AmountField`: AMOUNT-Feldtyp — jPOS-`ISOAmount`-Konvention (Währungscode + Skala + Betrag) (0.6.0-Kandidat)
 
 - Neuer Feldtyp `format: amount` (Encodings `ascii`/`ebcdic`/`bcd`;
