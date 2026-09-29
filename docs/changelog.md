@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### `[+](Added)` `AmountField`: optionales Vorzeichen (`sign: true`) in der Standardform
+
+- Neuer optionaler Feld-Key `sign: true` für `format: amount` (nur zusammen
+  mit `scale:`, nicht mit `encoding: bcd`; Fail-closed mit positioniertem
+  `SpecValidationError` sonst, `sign: false` ist erlaubt). Der Wire-Wert
+  beginnt mit einem Vorzeichenzeichen `C`/`+` (positiv) oder `D`/`-` (negativ),
+  danach nackte Ziffern; `length` zählt das Vorzeichenzeichen mit (z. B.
+  DE 28–31 „x+n 8“: `length: 9`). Ohne `sign:` bleibt alles unverändert.
+- `AmountField`: neuer Konstruktor `(key, AmountForm, scale, signedWire)`,
+  `hasSign()`, `isNegative()`; `minorUnits()`/`amount()` vorzeichenbehaftet,
+  `readable_value()` mit führendem `-` (z. B. `"-0.05"`), `to_json()` ergänzt
+  `negative`. Auch für typisierte TLV-Kinder.
+- Neu: `SpecFieldInfo::amount_signed`.
+- ABI: neue virtuelle Funktion `ISOFieldParserPtrBase::setAmountSigned`
+  (Vtable), neues Mitglied `signed_` in `AmountField`, neues Mitglied in
+  `SpecFieldInfo` (Layout) — Shared-Library-Consumer neu kompilieren.
+
 ## 0.6.0
 
 > 0.6.0-Kandidat (Plan `docs/plans/remaining-encoding-spec-schema.md`):

@@ -139,6 +139,14 @@ Default-Auswahl.
   Beispiel: `"004": { format: amount, length: 12, scale: 2 }`,
   Wire `"000000019990"` → `minorUnits() == 19990`, `readable_value() ==
   "199.90"`. Introspektion: `SpecFieldInfo::amount_scale`.
+  **Optionaler Key `sign: true`** (nach 0.6.0; nur zusammen mit `scale:`, nicht
+  mit `encoding: bcd`, nur auf `format: amount`; sonst positionierter
+  `SpecValidationError`): Der Wire-Wert beginnt mit einem Vorzeichenzeichen
+  `C`/`+` (positiv) oder `D`/`-` (negativ), danach nackte Ziffern; `length`
+  zählt das Vorzeichenzeichen mit (DE 28–31 „x+n 8“ → `length: 9`). Beispiel:
+  Wire `"D00000150"` bei `scale: 2` → `minorUnits() == -150`,
+  `readable_value() == "-1.50"`, `isNegative() == true`. Introspektion:
+  `SpecFieldInfo::amount_signed`.
 - **BCD-Semantik:** Bei allen BCD-Formaten ist `length` die
   **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
   *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als

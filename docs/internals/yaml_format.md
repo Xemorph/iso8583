@@ -168,7 +168,7 @@ Encoding-Einstellung:
 | Format | Parser | Beschreibung |
 |---|---|---|
 | `numeric` | `IFA_NUMERIC` | ASCII-Ziffern |
-| `amount` (0.6.0) | `IFA_AMOUNT` | jPOS-ISOAmount: Währungscode + Skala + 12-stelliger Betrag → `AmountField`; optionaler Key `scale: N` (nur bei `amount`, Ganzzahl ≥ 0) = Standard-ISO-8583-Form: `length` nackte Ziffern, Skala `N`, keine Währung im Feld |
+| `amount` (0.6.0) | `IFA_AMOUNT` | jPOS-ISOAmount: Währungscode + Skala + 12-stelliger Betrag → `AmountField`; optionaler Key `scale: N` (nur bei `amount`, Ganzzahl ≥ 0) = Standard-ISO-8583-Form: `length` nackte Ziffern, Skala `N`, keine Währung im Feld; zusätzlich `sign: true` (nach 0.6.0, nur mit `scale`, nicht mit bcd) = führendes Vorzeichenzeichen `C`/`D`/`+`/`-`, `length` inkl. Vorzeichen |
 | `char` | `IFA_CHAR` | ASCII-Zeichenkette |
 | `nopad_char` | `IFA_NOPAD_CHAR` | ASCII-Zeichenkette ohne Padding |
 | `lchar` … `llllchar` | `IFA_LCHAR` … | 1–4-stelliges ASCII-Längenpräfix + `char`-Daten |
