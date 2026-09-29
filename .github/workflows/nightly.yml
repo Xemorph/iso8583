@@ -77,14 +77,14 @@ jobs:
           # issues/a/test_message.txt ist hex-kodiert (1 Byte = 2 hex-Zeichen)
           if [ -f issues/a/test_message.txt ]; then
             python3 - <<'PY'
-            import pathlib
-            raw = pathlib.Path("issues/a/test_message.txt").read_text().strip()
-            wire = bytes.fromhex(raw)
-            pathlib.Path("corpus/wire_reference.bin").write_bytes(wire)
-            # Trunkaturen (alle Praefixlaengen) ueben die B1/B6-Guards.
-            for i in range(1, len(wire) + 1):
-                pathlib.Path(f"corpus/trunc_{i:04d}.bin").write_bytes(wire[:i])
-            PY
+          import pathlib
+          raw = pathlib.Path("issues/a/test_message.txt").read_text().strip()
+          wire = bytes.fromhex(raw)
+          pathlib.Path("corpus/wire_reference.bin").write_bytes(wire)
+          # Trunkaturen (alle Praefixlaengen) ueben die B1/B6-Guards.
+          for i in range(1, len(wire) + 1):
+              pathlib.Path(f"corpus/trunc_{i:04d}.bin").write_bytes(wire[:i])
+          PY
           fi
           # 256-Byte-Tabellen-Sweep (Phase-0-Tabelle, je Einzelbyte).
           python3 - <<'PY'

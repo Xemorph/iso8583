@@ -244,7 +244,7 @@ TEST_CASE("FR-3 B - fixed TLV (lllbinary), binary-Kind SE71 bleibt BinaryField",
 //    deklarierte Format (Normalisierung ist intern, Spec-Tree bleibt sauber).
 // =============================================================================
 
-TEST_CASE("FR-3 C - fixed TLV (lllchar), typisiertes EBCDIC-Kind SE71 -> OpaqueField (früher SEGV)",
+TEST_CASE("FR-3 C - fixed TLV (lllchar), typisiertes EBCDIC-Kind SE71 -> OpaqueField (frueher SEGV)",
     "[fr3nested][tlv][fixed][unparse][roundtrip][ebcdic][spec]")
 {
     TempYaml yaml(specHead + "lllchar" + specTlvTail +
@@ -305,7 +305,7 @@ TEST_CASE("FR-3 C - fixed TLV (lllchar), typisiertes EBCDIC-Kind SE71 -> OpaqueF
 //    Nested-Container.
 // =============================================================================
 
-TEST_CASE("FR-3 D - lllchar + children-Sequenz (kein tlv) -> OpaqueField-Kinder (früher SEGV)",
+TEST_CASE("FR-3 D - lllchar + children-Sequenz (kein tlv) -> OpaqueField-Kinder (frueher SEGV)",
     "[fr3nested][unparse][roundtrip][ebcdic]")
 {
     TempYaml yaml(specHead + "lllchar" + R"YAML(
@@ -620,7 +620,7 @@ TEST_CASE("Guard I2 - ISONestedFieldParser mit text-basiertem remaining-Basis wi
 //    uneingeschränkt funktionsfähig (False-Positive-Ausschluss).
 // =============================================================================
 
-TEST_CASE("Guard J - ISONestedFieldParser mit binärem Basis-Parser bleibt grün",
+TEST_CASE("Guard J - ISONestedFieldParser mit binaerem Basis-Parser bleibt grün",
     "[fr3nested][unparse][roundtrip]")
 {
     // IF_LLLBINARY = ISOFieldParser<vector<uint8_t>, LLL, BINARY, BINARY>

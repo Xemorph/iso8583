@@ -162,7 +162,7 @@ header: 4
     CHECK(msg.find("Konflikt") != std::string::npos);
 }
 
-TEST_CASE("FE-1 Error - ungültiger Key im field:-Block (validateFieldKeys)",
+TEST_CASE("FE-1 Error - ungueltiger Key im field:-Block (validateFieldKeys)",
     "[fe1][error][validation]") {
     const auto msg = field_error(R"YAML(
 spec: "ICC"
