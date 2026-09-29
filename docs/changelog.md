@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
 
 ### `[+](Added)` `AmountField`: optionales Vorzeichen (`sign: true`) in der Standardform
 
@@ -15,6 +15,8 @@
   `readable_value()` mit führendem `-` (z. B. `"-0.05"`), `to_json()` ergänzt
   `negative`. Auch für typisierte TLV-Kinder.
 - Neu: `SpecFieldInfo::amount_signed`.
+- Intern: `TEST_CASE`-Namen ASCII-only (Windows-ctest-Registrierung), `nightly.yml`-Heredoc
+  im Seed-Corpus-Schritt repariert (Fuzz-Soak lief nicht).
 - ABI: neue virtuelle Funktion `ISOFieldParserPtrBase::setAmountSigned`
   (Vtable), neues Mitglied `signed_` in `AmountField`, neues Mitglied in
   `SpecFieldInfo` (Layout) — Shared-Library-Consumer neu kompilieren.
