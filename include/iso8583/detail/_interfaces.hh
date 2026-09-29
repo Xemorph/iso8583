@@ -168,7 +168,10 @@ namespace TNG_NAMESPACE {
         BITMAP,      ///< Bitmap – computed automatically, cannot be set manually.
         NESTED,      ///< Composite sub-message – use dot-notation set() to populate.
         REMAINING,   ///< Consumes all remaining bytes of the parent buffer (no prefix).
-        AMOUNT,      ///< Monetary amount → `iso8583::AmountField` (currency code + scale + 12-digit amount).
+        AMOUNT,      ///< Monetary amount → `iso8583::AmountField`. Two wire forms (0.6.0):
+                     ///   jPOS-`ISOAmount` 16-Z (currency + scale + 12-digit amount, the
+                     ///   default) or standard ISO-8583 bare digits (declared `scale:`,
+                     ///   currency NOT on the wire — see `AmountField`).
     };
 
     /// @brief Abstract base class for message-level parsers.
@@ -310,6 +313,17 @@ namespace TNG_NAMESPACE {
         /// types without requiring a downcast to the concrete parser class.
         virtual ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
             subParser() const noexcept { return nullptr; }
+
+        /// @brief Konfiguriert die Wire-Form eines `AMOUNT`-Felds (0.6.0).
+        ///
+        /// `std::nullopt` = jPOS-`ISOAmount` 16-Z-Form (Währung + Skala + Betrag auf
+        /// dem Wire) — das historische Default, backward compatible. `N` = Standard-
+        /// ISO-8583-Form: Wire = `length` nackte Ziffern, Skala = deklariertes `N`,
+        /// Währung NICHT auf dem Wire (liegt netzwerkseitig z. B. in DE 49).
+        /// No-op für alle nicht-AMOUNT-Parsers.
+        ///
+        /// @note ABI: neue virtuelle Funktion (Vtable-Änderung, 0.x).
+        virtual void setAmountScale(std::optional<int>) {}
 
         /// @brief Serialises the given component to a wire byte sequence.
         /// @param c Component whose value should be encoded.

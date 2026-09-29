@@ -133,6 +133,11 @@ namespace TNG_NAMESPACE::spec {
         // Wert mit "***". Bei NESTED-Containern vererbt sich der Satz auf
         // alle Kinder (s. buildFieldParser).
         bool                     sensitive = false;
+        // 0.6.0: optionale 'scale'-Key für 'format: amount'.
+        //   nullopt  = jPOS-ISOAmount-Form (16-Z: Währung+Skala+Betrag auf dem Wire)
+        //   scale=N  = Standard-ISO-8583-Form (reine fixbreite Ziffern, Skala = N,
+        //              Währung NICHT auf dem Wire — liegt netzwerkseitig z.B. in DE 49)
+        std::optional<int>       scale;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -230,7 +235,7 @@ namespace TNG_NAMESPACE::spec {
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children",
-            "tlv", "sensitive"
+            "tlv", "sensitive", "scale"
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -638,6 +643,30 @@ namespace TNG_NAMESPACE::spec {
         // Feld-Wert wird in dump()/Log-Ausgaben als "***" maskiert.
         f.sensitive = getBool(node, "sensitive", false);
 
+        // 0.6.0: optionale 'scale'-Key, nur für 'format: amount' gültig.
+        //   nullopt (Key weggelassen) = jPOS-ISOAmount-Form (16-Z: Währung+Skala+Betrag
+        //     auf dem Wire) — das historische Default, backward compatible.
+        //   scale=N = Standard-ISO-8583-Form: Wire = length nackte Ziffern, Skala = N,
+        //     Währung NICHT auf dem Wire (liegt netzwerkseitig z. B. in DE 49).
+        // Fail-closed: 'scale' auf Nicht-amount-Feldern sowie negative/nicht-numerische
+        // Werte werfen einen positionierten Fehler — nie rohe std-Exceptions.
+        if (hasKey(node, "scale")) {
+            const int sc = getInt(node, "scale", -1);   // -1 = "nicht parsbar"-Sentinel
+            if (f.format != "AMOUNT")
+                throw SpecValidationError(
+                    "'scale' ist nur für 'format: amount' gültig (Feld '" +
+                    getStr(node, "description", "<unnamed>") + "', format=" +
+                    f.format + ")",
+                    node["scale"].id(), smap);
+            if (sc < 0)   // erfasst explizit negativ UND nicht-numerisch
+                throw SpecValidationError(
+                    "Feld '" + getStr(node, "description", "<unnamed>") +
+                    "' hat ungültige scale=" + std::to_string(sc) +
+                    " (muss eine nicht-negative Ganzzahl sein)",
+                    node["scale"].id(), smap);
+            f.scale = sc;
+        }
+
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet
         const bool expectsData = (f.format != "NOP" && f.format != "UNUSED" &&
             f.format != "BITMAP" && f.format != "REMAINING" &&
@@ -821,13 +850,27 @@ namespace TNG_NAMESPACE::spec {
         const std::string key = f.format + "|" + f.encoding;
 
         auto it = table.find(key);
-        if (it != table.end())
-            return it->second(static_cast<int>(f.length), f.description);
+        auto p = it != table.end()
+            ? it->second(static_cast<int>(f.length), f.description)
+            : nullptr;
 
-        // Fallback: ohne Encoding (für BITMAP, NOP, BINARY)
-        auto it2 = table.find(f.format + "|");
-        if (it2 != table.end())
-            return it2->second(static_cast<int>(f.length), f.description);
+        if (!p)
+        {
+            // Fallback: ohne Encoding (für BITMAP, NOP, BINARY)
+            auto it2 = table.find(f.format + "|");
+            if (it2 != table.end())
+                p = it2->second(static_cast<int>(f.length), f.description);
+        }
+
+        if (p)
+        {
+            // 0.6.0: 'format: amount' trägt die Wire-Form (jPOS vs. plain) über
+            // die optionale 'scale'-Key. Für alle anderen Formate ist der Setter
+            // ein no-op (s. ISOFieldParserPtrBase).
+            if (f.format == "AMOUNT")
+                p->setAmountScale(f.scale);
+            return p;
+        }
 
         throw std::runtime_error(
             "Unbekannte Format/Encoding-Kombination in der Spec:\n"
