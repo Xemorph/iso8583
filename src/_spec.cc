@@ -651,7 +651,13 @@ namespace TNG_NAMESPACE::spec {
         // Fail-closed: 'scale' auf Nicht-amount-Feldern sowie negative/nicht-numerische
         // Werte werfen einen positionierten Fehler — nie rohe std-Exceptions.
         if (hasKey(node, "scale")) {
-            const int sc = getInt(node, "scale", -1);   // -1 = "nicht parsbar"-Sentinel
+            // Nicht-numerisch (c4::atoi schlägt fehl) → -1-Sentinel, wird unten abgelehnt.
+            int sc = -1;
+            {
+                const ryml::ConstNodeRef sn = node["scale"];
+                if (!sn.has_val() || !c4::atoi(sn.val(), &sc))
+                    sc = -1;
+            }
             if (f.format != "AMOUNT")
                 throw SpecValidationError(
                     "'scale' ist nur für 'format: amount' gültig (Feld '" +

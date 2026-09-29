@@ -33,6 +33,7 @@
 // [stdc++]
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -285,4 +286,186 @@ TEST_CASE("AmountField - to_json adds currency, amount and minor_units", "[amoun
     CHECK(j.at("minor_units") == 1999);
     CHECK(j.contains("amount"));
     CHECK_THAT(j.at("amount").get<double>(), WithinAbs(19.99, 1e-9));
+}
+// =============================================================================
+// Plain-Form (Standard-ISO-8583, 'scale:'-Key) - 0.6.0
+// =============================================================================
+
+namespace {
+
+std::string plainAmountYaml(const std::string& extra, const std::string& fmt = "amount") {
+    return std::string(R"(
+spec: "Amount Plain"
+encoding: ascii
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "004":
+    format: )") + fmt + R"(
+    length: 12
+)" + extra + R"(    description: "Amount of Transaction"
+)";
+}
+
+} // namespace
+
+TEST_CASE("AmountField plain - YAML roundtrip ascii", "[amount][spec][ascii][plain]") {
+    TempYaml yaml(plainAmountYaml("    scale: 2\n"));
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    const std::string wire = "000000019990";
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(0), std::string("0200")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(4), wire));
+
+    const auto bytes = msg->parse(msg);
+    REQUIRE(bytes.size() == 4 + 8 + 12);
+    const auto tail = ascii_b(wire);
+    CHECK(std::equal(bytes.end() - 12, bytes.end(), tail.begin()));
+
+    auto dec = std::make_shared<Message>();
+    dec->parser(parser);
+    REQUIRE(dec->unparse(dec, bytes) == bytes.size());
+    auto af = dec->get<AmountField>(4);
+    REQUIRE(af != nullptr);
+    CHECK(af->value() == wire);
+    CHECK(af->scale() == 2);
+    CHECK(af->minorUnits() == 19990);
+    CHECK_THAT(af->amount(), WithinAbs(199.90, 1e-9));
+    CHECK(af->readable_value() == "199.90");
+    CHECK(af->legacyAmountString() == wire);
+    CHECK(af->currency() == nullptr);
+    CHECK(af->currencyCode() == 0);
+    CHECK(af->currencyCodeAsString().empty());
+}
+
+TEST_CASE("AmountField plain - YAML roundtrip bcd", "[amount][spec][bcd][plain]") {
+    TempYaml yaml(plainAmountYaml("    encoding: bcd\n    scale: 2\n"));
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    const std::string wire = "000000019990";
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(0), std::string("0200")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(4), wire));
+
+    const auto bytes = msg->parse(msg);
+    REQUIRE(bytes.size() == 4 + 8 + 6); // 12 BCD-Ziffern = 6 Bytes
+    const std::vector<uint8_t> bcd_tail{ 0x00, 0x00, 0x00, 0x01, 0x99, 0x90 };
+    CHECK(std::equal(bytes.end() - 6, bytes.end(), bcd_tail.begin()));
+
+    auto dec = std::make_shared<Message>();
+    dec->parser(parser);
+    REQUIRE(dec->unparse(dec, bytes) == bytes.size());
+    auto af = dec->get<AmountField>(4);
+    REQUIRE(af != nullptr);
+    CHECK(af->minorUnits() == 19990);
+    CHECK(af->scale() == 2);
+}
+
+TEST_CASE("AmountField plain - scale 0 has no decimals", "[amount][plain]") {
+    AmountField f(TNG_KEY_TYPE(4), AmountForm::plain, 0);
+    f.value(std::string("000000001234"));
+    CHECK(f.minorUnits() == 1234);
+    CHECK(f.readable_value() == "1234");
+    CHECK_THAT(f.amount(), WithinAbs(1234.0, 1e-9));
+}
+
+TEST_CASE("AmountField plain - non-numeric wire value throws", "[amount][plain][error]") {
+    AmountField f(TNG_KEY_TYPE(4), AmountForm::plain, 2);
+    f.value(std::string("00000001AB90"));
+    CHECK_THROWS_AS(f.minorUnits(), std::invalid_argument);
+}
+
+TEST_CASE("AmountField plain - to_json has scale and no currency", "[amount][json][plain]") {
+    AmountField f(TNG_KEY_TYPE(4), AmountForm::plain, 2);
+    f.value(std::string("000000019990"));
+
+    const json j = f.to_json();
+    CHECK(j.at("value") == "000000019990");
+    CHECK_FALSE(j.contains("currency"));
+    CHECK(j.at("scale") == 2);
+    CHECK(j.at("minor_units") == 19990);
+    CHECK_THAT(j.at("amount").get<double>(), WithinAbs(199.90, 1e-9));
+}
+
+TEST_CASE("AmountField plain - scale key validation is fail-closed", "[amount][spec][error][plain]") {
+    SECTION("scale on non-amount field") {
+        TempYaml yaml(plainAmountYaml("    scale: 2\n", "numeric"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+    SECTION("negative scale") {
+        TempYaml yaml(plainAmountYaml("    scale: -1\n"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+    SECTION("non-numeric scale") {
+        TempYaml yaml(plainAmountYaml("    scale: abc\n"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+}
+
+TEST_CASE("AmountField plain - introspection reports amount_scale", "[amount][spec][plain]") {
+    SECTION("declared") {
+        TempYaml yaml(plainAmountYaml("    scale: 3\n"));
+        auto [parser, sp] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+        const auto info = sp->field(4).value();
+        REQUIRE(info.amount_scale.has_value());
+        CHECK(*info.amount_scale == 3);
+    }
+    SECTION("absent means jPOS form") {
+        TempYaml yaml(plainAmountYaml(""));
+        auto [parser, sp] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+        CHECK_FALSE(sp->field(4).value().amount_scale.has_value());
+    }
+}
+
+TEST_CASE("AmountField plain - TLV child honors scale", "[amount][spec][tlv][plain]") {
+    TempYaml yaml(R"(
+spec: "Amount TLV"
+encoding: ascii
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "01": { format: amount, length: 12, scale: 2 }
+      "02": { format: amount, length: 16 }
+)");
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // SE 01 (plain, 12 Ziffern) + SE 02 (jPOS, 16 Zeichen): Tag(2)+Len(2)+Daten (ASCII-Ziffern)
+    const std::string payload = "01120000000199900216" "9782000000001999";
+    std::string body = "0200";
+    const auto bmp = makeBitmap({ 48 });
+    body.append(bmp.begin(), bmp.end());
+    char len[4];
+    std::snprintf(len, sizeof(len), "%03zu", payload.size());
+    body += len + payload;
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, ascii_b(body)) == body.size());
+
+    auto de48 = msg->get<Message>(48);
+    REQUIRE(de48 != nullptr);
+    auto plain = de48->get<AmountField>(1);
+    REQUIRE(plain != nullptr);
+    CHECK(plain->scale() == 2);
+    CHECK(plain->minorUnits() == 19990);
+    CHECK(plain->currency() == nullptr);
+
+    auto jpos = de48->get<AmountField>(2);
+    REQUIRE(jpos != nullptr);
+    CHECK(jpos->currencyCode() == 978);
+    CHECK(jpos->minorUnits() == 1999);
 }
