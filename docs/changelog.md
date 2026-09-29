@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### `[+](Added)` Opt-in `strict_length`: Unterlängen-Prüfung bei Feldern fester Länge (FR-5)
+
+- Neuer optionaler Key `strict_length: true` — als Spec-Wurzel (Default für alle
+  Felder) oder pro Feld (überschreibt die Wurzel). Default `false`: das bisherige
+  Verhalten bleibt **unverändert** (zu kurze Werte werden beim Serialisieren
+  aufgefüllt: `numeric`/`amount` links mit `0`, `char` rechts mit Leerzeichen).
+- Aktiv: ein Wert, der kürzer als die feste Länge ist (kein L-Präfix), löst im
+  strict-Modus einen `std::runtime_error` („Serialisierung zu kurz …") aus;
+  nicht-strikt: Warnung + Padding. L-präfixierte Felder und `remaining`
+  (Maximum) sind nie betroffen; `binary`-Felder fester Länge waren schon immer
+  exakt-längenpflichtig.
+- Laufzeit-API: `ISOFieldParserPtrBase::strictLength(bool)`/`strictLength()`.
+- ABI: neues Mitglied in `ISOFieldParserPtrBase` (Layout) — Shared-Library-Consumer
+  neu kompilieren.
+- Hinweis (0.6.0-Interaktion): Seit 0.6.0 ist `SpecFieldInfo::is_nested` auch
+  für TLV-Container `true` (unter 0.5.0 blieb es `false`); Konsumenten, die einen
+  TLV-Katalog klassifizieren, werten `tlv_children`/`tlv_is_ber` **vor**
+  `is_nested` aus.
+
 ## 0.6.1
 
 ### `[+](Added)` `AmountField`: optionales Vorzeichen (`sign: true`) in der Standardform

@@ -44,6 +44,7 @@ Beispiel:
 spec: "Worldline"
 encoding: ebcdic
 strict: true
+strict_length: false  # optional (nach 0.6.1): true = zu kurze Werte bei fester Länge ablehnen
 header: 93        # 93-Byte-Netzwerk-Header vor dem Nachrichtenbody
 
 fields:

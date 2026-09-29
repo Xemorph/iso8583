@@ -514,6 +514,14 @@ fields:
 **Feld-/Spec-Attribute (0.3.0):**
 - `strict: true|false` (Spec-Wurzel, Default **true**) — Strict/Fail-closed-Modus;
   `parser.strict(bool)` steuert ihn zur Laufzeit (siehe „Strict-Modus" unten).
+- `strict_length: true|false` (Spec-Wurzel = Default für alle Felder, oder Feld-
+  Key, der den Root überschreibt; Default **false**; nach 0.6.1, FR-5) —
+  Opt-in Unterlängen-Prüfung: ein zu kurzer Wert bei Feldern **fester Länge**
+  (kein L-Präfix) wird beim Serialisieren im strict-Modus mit
+  `std::runtime_error` ("Serialisierung zu kurz …") abgelehnt statt still
+  aufgefüllt (Legacy: `numeric`/`amount` links `0`, `char` rechts Leerzeichen);
+  nicht-strikt: Warnung + Padding. L-präfixierte Felder und `remaining` sind nie
+  betroffen. Laufzeit: `ISOFieldParserPtrBase::strictLength(bool)`.
 - `sensitive: true` (Feld, `children`-Eintrag oder `definitions:`) — der
   **Wert** wird in `dump()`/`operator<<` und Log-Ausgaben als `***` maskiert
   (PCI); `value()`/`to_json()` bleiben unmaskiert (siehe „Logging"). Auf
@@ -747,6 +755,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Rohe Bytes an `BinaryField` übergeben | Hex-Zeichenkette in Großbuchstaben, z. B. `"DEADBEEF"` |
 | `msg->mti()` vor der Prüfung von `hasMTI()` | Wirft `std::logic_error`, wenn kein MTI gesetzt ist |
 | `scale:` an einem Nicht-`amount`-Feld, negativ oder nicht-numerisch (0.6.0) | Nur `format: amount` mit Ganzzahl ≥ 0 — sonst `SpecValidationError` beim Laden (Fail-closed); ohne `scale:` gilt die jPOS-Form |
+| Zu kurzen Wert bei fester Länge erwarten abgelehnt zu werden (nach 0.6.1) | Default ist Legacy-Padding; `strict_length: true` (Root oder Feld) aktiviert die Ablehnung im strict-Modus |
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 

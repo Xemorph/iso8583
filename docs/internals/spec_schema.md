@@ -24,6 +24,7 @@ enthält die eigentliche Spec; vorherige Dokumente dürfen
 spec: "My Network"      # PFLICHT, String – Spec-Name
 encoding: ascii         # optional: ascii | bcd | ebcdic | binary
 strict: true            # optional, Default true (false = Legacy-Mapping)
+strict_length: false    # optional, Default false (Opt-in: Unterlängen-Prüfung, s. §9)
 header: 93              # optional, int – N-Byte-Netz-Header vor dem Body
 definitions:            # optional – wiederverwendbare Bausteine (-> !use)
   pan_field: { type: scalar, format: llchar, length: 19 }
@@ -70,6 +71,9 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | feldweises Override über das globale Encoding (§7) |
 | `description` | string | nein | Beschreibung (Introspection + Dump); bei `sensitive`-Feldern die einzige sichtbare Info im Dump |
 | `sensitive` | bool | nein (Default `false`) | PCI-Masking: Wert wird in `dump()`/`operator<<` als `***` gerendert; `value()`/`to_json()` bleiben unmasked. Bei Containern: auf alle Kinder/Tags erbt |
+| `scale` | int ≥ 0 | nein | nur `format: amount`: Standard-ISO-8583-Form (nackte Ziffern, deklarierte Skala, keine Währung im Feld); ohne Key jPOS-Form (§3) |
+| `sign` | bool | nein (Default `false`) | nur `format: amount` mit `scale`, nicht `bcd`: führendes Vorzeichenzeichen `C`/`D`/`+`/`-`; `length` zählt es mit |
+| `strict_length` | bool | nein | Opt-in (nach 0.6.1): zu kurzer Wert bei fester Länge wird beim Serialisieren abgelehnt (§9); überschreibt den Root-Default |
 | `tlv` | map | nein | `tag_bytes`/`len_bytes` (fester TLV) oder `ber: true` (EMV-BER-TLV), nur mit `type: nested` (§6) |
 | `children` | list \| map | ja bei `type: nested` | **Liste** = feste Subfelder (Positionsreihenfolge); **Map** = TLV-Modus (Schlüssel = SE-Nummer bzw. Hex-Tag) |
 
@@ -352,6 +356,15 @@ nachgelagerten Checks auf.
 - `msg->mti()` wirft `std::logic_error`, wenn kein MTI
   (`hasMTI()` zuerst prüfen); `mti()` setzt ein `OpaqueField`
   voraus (binary-MTIs: nur `hasMTI()`).
+- **Padding und `strict_length` (nach 0.6.1, FR-5):** Ein zu kurzer Wert bei
+  **fester Länge** (kein L-Präfix) wird standardmäßig beim Serialisieren
+  aufgefüllt (`numeric`/`amount` links mit `0`, `char` rechts mit
+  Leerzeichen) — Legacy, unverändert. Mit dem Opt-in `strict_length: true`
+  (Root-Key = Default für alle Felder oder Feld-Key, der den Root
+  überschreibt) wird stattdessen im strict-Modus ein `std::runtime_error`
+  ("Serialisierung zu kurz …") geworfen; nicht-strikt: Warnung + Padding.
+  Nie betroffen: L-präfixierte Felder und `remaining` (Maximum);
+  `binary`-Felder fester Länge sind ohnehin immer exakt-längenpflichtig.
 - `sensitive: true` maskiert **nur** die Dump-/Log-Oberfläche
   (`dump()`, `operator<<` → `***`); `value()`/`to_json()`
   sind bewusst unmasked.
@@ -599,6 +612,8 @@ Wire-Vertrag (s. o.) eindeutig zu halten.
 
 ## 12. Häufige Fehler (Checkliste für Generatoren)
 
+0. **Zu kurze Werte bei fester Länge** werden still aufgefüllt (Default) —
+   für exakte Kontrolle `strict_length: true` setzen (§9).
 1. **`remaining` ohne `length`** → Ladefehler (0.6.0, Fail-closed).
    Immer `length` (Maximum) mit angeben.
 2. **`remaining`/`char`/`numeric` in TLV-Kindern** → Whitelist-Fehler.
