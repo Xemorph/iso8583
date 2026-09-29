@@ -513,3 +513,177 @@ fields:
     CHECK(dec->get<AmountField>(8)->minorUnits() == 1999);
     CHECK(dec->get<AmountField>(8)->readable_value() == "19.99");
 }
+
+// =============================================================================
+// Optionales Vorzeichen ('sign: true', C/D/+/-) - nach 0.6.0
+// =============================================================================
+
+TEST_CASE("AmountField signed - accessors for C/D/+/- prefix", "[amount][plain][sign]") {
+    AmountField f(TNG_KEY_TYPE(28), AmountForm::plain, 2, true);
+    CHECK(f.hasSign());
+
+    f.value(std::string("D00001999"));
+    CHECK(f.isNegative());
+    CHECK(f.minorUnits() == -1999);
+    CHECK_THAT(f.amount(), WithinAbs(-19.99, 1e-9));
+    CHECK(f.readable_value() == "-19.99");
+    CHECK(f.legacyAmountString() == "00001999");
+
+    f.value(std::string("C00001999"));
+    CHECK_FALSE(f.isNegative());
+    CHECK(f.minorUnits() == 1999);
+    CHECK(f.readable_value() == "19.99");
+
+    f.value(std::string("-00000005"));
+    CHECK(f.minorUnits() == -5);
+    CHECK(f.readable_value() == "-0.05");
+
+    f.value(std::string("+00000005"));
+    CHECK(f.minorUnits() == 5);
+
+    f.value(std::string("D00000000"));   // negative zero keeps the marker
+    CHECK(f.isNegative());
+    CHECK(f.minorUnits() == 0);
+}
+
+TEST_CASE("AmountField signed - malformed wire values throw", "[amount][plain][sign][error]") {
+    AmountField f(TNG_KEY_TYPE(28), AmountForm::plain, 2, true);
+    f.value(std::string("X00001999"));   // invalid sign
+    CHECK_THROWS_AS(f.minorUnits(), std::invalid_argument);
+    f.value(std::string("000001999"));   // digit where sign expected
+    CHECK_THROWS_AS(f.minorUnits(), std::invalid_argument);
+    f.value(std::string("D"));           // sign only
+    CHECK_THROWS_AS(f.minorUnits(), std::invalid_argument);
+    f.value(std::string("D0000AB99"));
+    CHECK_THROWS_AS(f.minorUnits(), std::invalid_argument);
+}
+
+TEST_CASE("AmountField signed - to_json has negative flag", "[amount][json][plain][sign]") {
+    AmountField f(TNG_KEY_TYPE(28), AmountForm::plain, 2, true);
+    f.value(std::string("D00001999"));
+    const json j = f.to_json();
+    CHECK(j.at("negative") == true);
+    CHECK(j.at("minor_units") == -1999);
+    CHECK_FALSE(j.contains("currency"));
+
+    AmountField u(TNG_KEY_TYPE(4), AmountForm::plain, 2);
+    u.value(std::string("000000019990"));
+    CHECK_FALSE(u.to_json().contains("negative"));
+    CHECK_FALSE(u.hasSign());
+    CHECK_FALSE(u.isNegative());
+}
+
+TEST_CASE("AmountField signed - YAML roundtrip ascii and introspection", "[amount][spec][ascii][plain][sign]") {
+    TempYaml yaml(R"(
+spec: "Amount Fee"
+encoding: ascii
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "028": { format: amount, length: 9, scale: 2, sign: true, description: "Amount, Transaction Fee" }
+  "004": { format: amount, length: 12, scale: 2, description: "Amount" }
+)");
+    auto [parser, sp] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+    CHECK(sp->field(28).value().amount_signed);
+    CHECK_FALSE(sp->field(4).value().amount_signed);
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(0), std::string("0200")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(4), std::string("000000019990")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(28), std::string("D00000150")));
+    const auto bytes = msg->parse(msg);
+    REQUIRE(bytes.size() == 4 + 8 + 12 + 9);
+
+    auto dec = std::make_shared<Message>();
+    dec->parser(parser);
+    REQUIRE(dec->unparse(dec, bytes) == bytes.size());
+    auto fee = dec->get<AmountField>(28);
+    REQUIRE(fee != nullptr);
+    CHECK(fee->hasSign());
+    CHECK(fee->isNegative());
+    CHECK(fee->minorUnits() == -150);
+    CHECK(fee->readable_value() == "-1.50");
+    CHECK(dec->get<AmountField>(4)->minorUnits() == 19990);
+}
+
+TEST_CASE("AmountField signed - EBCDIC roundtrip", "[amount][spec][ebcdic][plain][sign]") {
+    TempYaml yaml(R"(
+spec: "Amount Fee EBCDIC"
+encoding: ebcdic
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "028": { format: amount, length: 9, scale: 2, sign: true }
+)");
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(0), std::string("0200")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(28), std::string("C00000150")));
+    const auto bytes = msg->parse(msg);
+    CHECK(bytes.at(bytes.size() - 9) == 0xC3);   // EBCDIC 'C'
+
+    auto dec = std::make_shared<Message>();
+    dec->parser(parser);
+    REQUIRE(dec->unparse(dec, bytes) == bytes.size());
+    CHECK(dec->get<AmountField>(28)->minorUnits() == 150);
+}
+
+TEST_CASE("AmountField signed - sign key validation is fail-closed", "[amount][spec][error][plain][sign]") {
+    SECTION("sign without scale (jPOS form)") {
+        TempYaml yaml(plainAmountYaml("    sign: true\n"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+    SECTION("sign with bcd") {
+        TempYaml yaml(plainAmountYaml("    encoding: bcd\n    scale: 2\n    sign: true\n"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+    SECTION("sign on non-amount field") {
+        TempYaml yaml(plainAmountYaml("    sign: true\n", "numeric"));
+        CHECK_THROWS_AS(spec::SpecDecoder::loadFromYaml(yaml.str()), std::runtime_error);
+    }
+    SECTION("sign false is accepted") {
+        TempYaml yaml(plainAmountYaml("    scale: 2\n    sign: false\n"));
+        CHECK_NOTHROW(spec::SpecDecoder::loadFromYaml(yaml.str()));
+    }
+}
+
+TEST_CASE("AmountField signed - TLV child honors sign", "[amount][spec][tlv][plain][sign]") {
+    TempYaml yaml(R"(
+spec: "Amount TLV Sign"
+encoding: ascii
+
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "01": { format: amount, length: 9, scale: 2, sign: true }
+)");
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    const std::string payload = "0109D00000150";
+    std::string body = "0200";
+    const auto bmp = makeBitmap({ 48 });
+    body.append(bmp.begin(), bmp.end());
+    char len[4];
+    std::snprintf(len, sizeof(len), "%03zu", payload.size());
+    body += len + payload;
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, ascii_b(body)) == body.size());
+    auto af = msg->get<Message>(48)->get<AmountField>(1);
+    REQUIRE(af != nullptr);
+    CHECK(af->isNegative());
+    CHECK(af->minorUnits() == -150);
+}

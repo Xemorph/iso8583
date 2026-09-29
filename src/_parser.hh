@@ -708,10 +708,13 @@ namespace TNG_NAMESPACE {
             }
         }
 
+        // Nach 0.6.0: führendes Vorzeichenzeichen (nur mit Standardform).
+        void setAmountSigned(bool sg) override { signed_ = sg; }
+
         ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr create_component(TNG_KEY_TYPE key) const override
         {
             if (form_ == AmountForm::plain)
-                return std::make_shared<AmountField>(key, AmountForm::plain, declared_scale_);
+                return std::make_shared<AmountField>(key, AmountForm::plain, declared_scale_, signed_);
             return std::make_shared<AmountField>(key);
         }
 
@@ -719,6 +722,7 @@ namespace TNG_NAMESPACE {
         // 0.6.0: Wire-Form (jPOS-ISOAmount 16-Z vs. Standard-ISO-8583 nackte Ziffern).
         AmountForm form_ { AmountForm::jpos };
         int declared_scale_ = 0;
+        bool signed_ = false;
     };
 
 

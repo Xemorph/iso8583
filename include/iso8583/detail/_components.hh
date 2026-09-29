@@ -191,6 +191,22 @@ namespace TNG_NAMESPACE {
         /// @param declaredScale Declared decimal places (only used for `AmountForm::plain`).
         AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale);
 
+        /// @brief Like the constructor above; `signedWire` = the wire value starts
+        ///        with a sign character (`C`/`D`/`+`/`-`), then digits (plain form only).
+        ///
+        /// `D` and `-` mean negative, `C` and `+` positive. `minorUnits()`/`amount()`
+        /// are then signed, `readable_value()` has a leading `-` for negative values
+        /// and `to_json()` adds `"negative"`. `currency*()` semantics are as in the
+        /// plain form.
+        AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale, bool signedWire);
+
+        /// @brief `true` if the wire value carries a leading sign character.
+        bool hasSign() const;
+
+        /// @brief `true` if a signed field carries `D` or `-` (always `false` when unsigned).
+        /// @throws std::invalid_argument Signed field with malformed wire value.
+        bool isNegative() const;
+
         /// @brief Constructs the wire value from currency code and minor units.
         ///
         /// Builds `zeropad3(currencyCode)` + `currency->decimals()` +
@@ -242,6 +258,7 @@ namespace TNG_NAMESPACE {
     private:
         AmountForm form_ = AmountForm::jpos;   ///< Wire-Form (0.6.0)
         int declared_scale_ = 0;               ///< deklarierte Skala (nur `plain`)
+        bool signed_ = false;                  ///< führendes Vorzeichenzeichen (nur `plain`)
     };
 }
 

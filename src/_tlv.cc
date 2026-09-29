@@ -122,7 +122,7 @@ namespace TNG_NAMESPACE::tlv_detail {
                 // 0.6.0: Betrag-Kind → AmountField (jPOS-Form oder Plain-Form je 'scale:')
                 of = child->scale.has_value()
                     ? std::make_shared< ::TNG_NAMESPACE::AmountField >(
-                        static_cast<TNG_KEY_TYPE>(se_num), ::TNG_NAMESPACE::AmountForm::plain, *child->scale)
+                        static_cast<TNG_KEY_TYPE>(se_num), ::TNG_NAMESPACE::AmountForm::plain, *child->scale, child->sign)
                     : std::make_shared< ::TNG_NAMESPACE::AmountField >(
                         static_cast<TNG_KEY_TYPE>(se_num));
             }

@@ -161,6 +161,15 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.x).
             std::optional<int> amount_scale;
+
+            /// @brief `true` if a `format: amount` field declares `sign: true`
+            ///        (leading sign character `C`/`D`/`+`/`-` on the wire, standard form only).
+            ///
+            /// Always `false` for all other fields (default).
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.x).
+            bool amount_signed = false;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────

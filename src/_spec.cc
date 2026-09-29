@@ -138,6 +138,9 @@ namespace TNG_NAMESPACE::spec {
         //   scale=N  = Standard-ISO-8583-Form (reine fixbreite Ziffern, Skala = N,
         //              Währung NICHT auf dem Wire — liegt netzwerkseitig z.B. in DE 49)
         std::optional<int>       scale;
+        // Nach 0.6.0: 'sign: true' — Standardform mit führendem Vorzeichenzeichen
+        // (C/D/+/-, z. B. DE28-31 "x+n 8"); nur zusammen mit 'scale', nicht mit bcd.
+        bool                     sign = false;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -235,7 +238,7 @@ namespace TNG_NAMESPACE::spec {
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children",
-            "tlv", "sensitive", "scale"
+            "tlv", "sensitive", "scale", "sign"
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -673,6 +676,32 @@ namespace TNG_NAMESPACE::spec {
             f.scale = sc;
         }
 
+        // Nach 0.6.0: optionale 'sign'-Key (führendes Vorzeichenzeichen C/D/+/-).
+        // Fail-closed: nur für 'format: amount' mit 'scale' (Standardform), nicht mit
+        // bcd (Vorzeichenzeichen ist keine BCD-Ziffer).
+        if (hasKey(node, "sign")) {
+            const bool sg = getBool(node, "sign", false);
+            if (f.format != "AMOUNT")
+                throw SpecValidationError(
+                    "'sign' ist nur für 'format: amount' gültig (Feld '" +
+                    getStr(node, "description", "<unnamed>") + "', format=" +
+                    f.format + ")",
+                    node["sign"].id(), smap);
+            if (sg && !f.scale.has_value())
+                throw SpecValidationError(
+                    "Feld '" + getStr(node, "description", "<unnamed>") +
+                    "': 'sign: true' erfordert 'scale' (Standardform); die jPOS-Form "
+                    "kennt kein Vorzeichen",
+                    node["sign"].id(), smap);
+            if (sg && f.encoding == "BCD")
+                throw SpecValidationError(
+                    "Feld '" + getStr(node, "description", "<unnamed>") +
+                    "': 'sign: true' ist mit encoding bcd nicht möglich "
+                    "(Vorzeichenzeichen ist keine BCD-Ziffer)",
+                    node["sign"].id(), smap);
+            f.sign = sg;
+        }
+
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet
         const bool expectsData = (f.format != "NOP" && f.format != "UNUSED" &&
             f.format != "BITMAP" && f.format != "REMAINING" &&
@@ -874,7 +903,10 @@ namespace TNG_NAMESPACE::spec {
             // die optionale 'scale'-Key. Für alle anderen Formate ist der Setter
             // ein no-op (s. ISOFieldParserPtrBase).
             if (f.format == "AMOUNT")
+            {
                 p->setAmountScale(f.scale);
+                p->setAmountSigned(f.sign);
+            }
             return p;
         }
 
@@ -1047,6 +1079,7 @@ namespace TNG_NAMESPACE::spec {
             // 'sensitive: true' oder Erbgang von einem sensitive Container).
             info.sensitive = child.sensitive || f.sensitive;
             info.amount = (cf == "AMOUNT");
+            info.sign = child.sign;
             info.scale = child.scale;   // 0.6.0: in parseSpecField bereits validiert
             childMap[static_cast<std::size_t>(tag)] = std::move(info);
         }
@@ -1186,6 +1219,7 @@ namespace TNG_NAMESPACE::spec {
         info.is_nested = (f.type == SpecFieldType::NESTED);
         info.is_bitmap = (f.format == "BITMAP");
         info.amount_scale = f.scale;   // 0.6.0: nullopt = jPOS-Form
+        info.amount_signed = f.sign;
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.

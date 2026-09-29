@@ -300,12 +300,22 @@ std::string minorUnitsToDecimalString(long long minor, int decimals) {
 
 // Plain-Form (0.6.0): gesamter Wire-Wert = nackte Ziffern (Minor-Units bei
 // deklarierter Skala). Wirft std::invalid_argument bei leer/nicht-numerisch/Overflow.
-long long parsePlainDigits(const std::string& s) {
+// Nach 0.6.0: `signedWire` = führendes Vorzeichenzeichen (C/+ positiv, D/- negativ),
+// Rest nackte Ziffern; Ergebnis dann vorzeichenbehaftet.
+long long parsePlainDigits(const std::string& s, bool signedWire = false) {
+    std::size_t off = 0;
+    bool neg = false;
+    if (signedWire) {
+        if (s.empty() || (s[0] != 'C' && s[0] != 'D' && s[0] != '+' && s[0] != '-'))
+            throw std::invalid_argument("AmountField: missing or invalid sign character");
+        neg = (s[0] == 'D' || s[0] == '-');
+        off = 1;
+    }
     long long v = 0;
-    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
-    if (s.empty() || ec != std::errc{} || ptr != s.data() + s.size())
+    const auto [ptr, ec] = std::from_chars(s.data() + off, s.data() + s.size(), v);
+    if (s.size() == off || ec != std::errc{} || ptr != s.data() + s.size())
         throw std::invalid_argument("AmountField: non-numeric wire value");
-    return v;
+    return neg ? -v : v;
 }
 
 } // namespace
@@ -319,6 +329,23 @@ TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key)
 TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale)
     : ISOComponent(key), form_(form), declared_scale_(declaredScale)
 {
+}
+
+TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, AmountForm form, int declaredScale, bool signedWire)
+    : ISOComponent(key), form_(form), declared_scale_(declaredScale),
+      signed_(signedWire && form == AmountForm::plain)
+{
+}
+
+bool TNG_NAMESPACE::AmountField::hasSign() const {
+    return signed_;
+}
+
+bool TNG_NAMESPACE::AmountField::isNegative() const {
+    if (!signed_)
+        return false;
+    parsePlainDigits(value(), true);   // validiert Vorzeichen + Ziffern
+    return value()[0] == 'D' || value()[0] == '-';   // "D0" bleibt negativ-markiert
 }
 
 TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, int currencyCode, long long minorUnits)
@@ -345,7 +372,7 @@ TNG_NAMESPACE::AmountField::AmountField(TNG_KEY_TYPE key, int currencyCode, long
 // [AmountField: Accessors]
 int TNG_NAMESPACE::AmountField::currencyCode() const {
     if (form_ == AmountForm::plain) {
-        parsePlainDigits(value());
+        parsePlainDigits(value(), signed_);
         return 0;
     }
     return parseAmountWire(value()).currency_code;
@@ -353,7 +380,7 @@ int TNG_NAMESPACE::AmountField::currencyCode() const {
 
 std::string TNG_NAMESPACE::AmountField::currencyCodeAsString() const {
     if (form_ == AmountForm::plain) {
-        parsePlainDigits(value());
+        parsePlainDigits(value(), signed_);
         return {};
     }
     parseAmountWire(value());   // Längen-/Ziffern-Check
@@ -374,7 +401,7 @@ int TNG_NAMESPACE::AmountField::scale() const {
 
 long long TNG_NAMESPACE::AmountField::minorUnits() const {
     if (form_ == AmountForm::plain)
-        return parsePlainDigits(value());   // Skala = Decimals → keine Reskalierung
+        return parsePlainDigits(value(), signed_);   // Skala = Decimals → keine Reskalierung
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     // Unbekannte Währung: keine Decimals in der Tabelle → roher Ziffernwert
@@ -383,7 +410,7 @@ long long TNG_NAMESPACE::AmountField::minorUnits() const {
 
 double TNG_NAMESPACE::AmountField::amount() const {
     if (form_ == AmountForm::plain)
-        return static_cast<double>(parsePlainDigits(value())) /
+        return static_cast<double>(parsePlainDigits(value(), signed_)) /
             static_cast<double>(pow10ll(declared_scale_));
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
@@ -394,8 +421,8 @@ double TNG_NAMESPACE::AmountField::amount() const {
 
 std::string TNG_NAMESPACE::AmountField::legacyAmountString() const {
     if (form_ == AmountForm::plain) {
-        parsePlainDigits(value());
-        return value();
+        parsePlainDigits(value(), signed_);
+        return signed_ ? value().substr(1) : value();
     }
     return parseAmountWire(value()).digits_str;
 }
@@ -403,7 +430,12 @@ std::string TNG_NAMESPACE::AmountField::legacyAmountString() const {
 // [AmountField: Overrides]
 std::string TNG_NAMESPACE::AmountField::readable_value() const {
     if (form_ == AmountForm::plain)
-        return minorUnitsToDecimalString(parsePlainDigits(value()), declared_scale_);
+    {
+        const long long m = parsePlainDigits(value(), signed_);
+        // Vorzeichen separat, damit -5 @ scale 2 → "-0.05" (nicht "0.-5")
+        return (m < 0 ? "-" : "") +
+            minorUnitsToDecimalString(m < 0 ? -m : m, declared_scale_);
+    }
     const auto w = parseAmountWire(value());
     const auto* cur = TNG_NAMESPACE::currency::findByNumeric(w.currency_code);
     const int decimals = cur ? cur->decimals() : 0;
@@ -425,10 +457,12 @@ json TNG_NAMESPACE::AmountField::to_json() const {
     }
     // Typisierte Zusatzfelder (PCI: to_json() ist Daten-API — ohne Maskierung)
     if (form_ == AmountForm::plain) {
-        const long long minor = parsePlainDigits(value());
+        const long long minor = parsePlainDigits(value(), signed_);
         j["amount"] = static_cast<double>(minor) / static_cast<double>(pow10ll(declared_scale_));
         j["minor_units"] = minor;
         j["scale"] = declared_scale_;
+        if (signed_)
+            j["negative"] = value()[0] == 'D' || value()[0] == '-';
         return j;
     }
     const auto w = parseAmountWire(value());

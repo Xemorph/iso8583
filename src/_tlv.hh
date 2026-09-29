@@ -70,6 +70,7 @@ namespace TNG_NAMESPACE {
             std::string    description;                  ///< explizite Beschreibung (leer = "SE<n>"-Fallback)
             bool           sensitive = false;            ///< PCI-Masking (Kind-ebene oder vom Elternfeld geerbt)
             bool           amount = false;               ///< 0.6.0: format amount → AmountField statt OpaqueField
+            bool           sign = false;                 ///< nach 0.6.0: 'sign: true' (führendes C/D/+/-, nur amount+scale)
             std::optional<int> scale;                    ///< 0.6.0: deklarierte 'scale:' (nullopt = jPOS-Form; nur amount)
         };
 

@@ -325,6 +325,15 @@ namespace TNG_NAMESPACE {
         /// @note ABI: neue virtuelle Funktion (Vtable-Änderung, 0.x).
         virtual void setAmountScale(std::optional<int>) {}
 
+        /// @brief Aktiviert das führende Vorzeichenzeichen (`C`/`D`/`+`/`-`) eines
+        ///        `AMOUNT`-Felds in Standardform (`sign: true`, nach 0.6.0).
+        ///
+        /// Nur zusammen mit `setAmountScale(N)` sinnvoll (Loader validiert das).
+        /// No-op für alle nicht-AMOUNT-Parsers.
+        ///
+        /// @note ABI: neue virtuelle Funktion (Vtable-Änderung, 0.x).
+        virtual void setAmountSigned(bool) {}
+
         /// @brief Serialises the given component to a wire byte sequence.
         /// @param c Component whose value should be encoded.
         /// @return Encoded bytes ready for transmission.
