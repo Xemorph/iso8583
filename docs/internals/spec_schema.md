@@ -41,6 +41,7 @@ fields:                 # PFLICHT, nicht-leere Map
 | `spec` | string | ja | Name der Spec (Introspection: `ISOSpec::name()`) |
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | globales Encoding (Auflösung s. §7) |
 | `strict` | bool | nein | Default `true`; `false` = Legacy-`'.'`/`'?'`-Mapping statt positioned Throw (s. §8) |
+| `strict_length` | bool | nein (Default `false`) | Opt-in (0.6.2): Root-Default für die Unterlängen-Prüfung bei fester Länge — Felder ohne eigenen `strict_length`-Key erben diesen Wert (s. §9) |
 | `header` | int | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`) |
 | `definitions` | map | nein | benannte Feld-Bausteine für `!use` |
 | `fields` | map | ja | **nicht-leere** Map `DE-Schlüssel → Feld-Deklaration` |
@@ -483,6 +484,7 @@ field:                              # PFLICHT: eine nicht-leere Map (EIN Feld)
 | `spec` | string | nein | Name der Spec (Default `<unnamed>`; Introspection `ISOSpec::name()`) |
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | globales Encoding (Auflösung s. §7) |
 | `strict` | bool | nein | Default `true` (§8) |
+| `strict_length` | bool | nein (Default `false`) | wie §1: Root-Default für die Unterlängen-Prüfung bei fester Länge; ein Feld-Key `strict_length` überschreibt pro Feld (s. §9) |
 | `definitions` | map | nein | wie §1 — mit allen Direktiven (`!include_files`, `!use`, `!template`, `!merge`) |
 | `field` | map | ja | **nicht-leere** Map: die *einzige* Feld-Deklaration des Dokuments (Grammatik wie `fields:`-Einträge, §2) |
 | `fields` | — | — | **verboten** → Fail-closed-Fehler |
@@ -500,9 +502,9 @@ field:                              # PFLICHT: eine nicht-leere Map (EIN Feld)
 
 **Feld-Regeln:** Die `field:`-Deklaration folgt exakt der Grammatik der
 `fields:`-Einträge (§2): Key-Whitelist `type`/`format`/`encoding`/`length`/
-`description`/`children`/`tlv`/`sensitive` (`validateFieldKeys`, DE-Key
-synthetisch `0`), Formate und Encoding-Matrix (§3), `remaining` benötigt
-`length` (§4), TLV-Kind-Whitelist und
+`description`/`children`/`tlv`/`sensitive`/`scale`/`sign`/`strict_length`
+(`validateFieldKeys`, DE-Key synthetisch `0`), Formate und Encoding-Matrix
+(§3), `remaining` benötigt `length` (§4), TLV-Kind-Whitelist und
 Container-Basis-Parser-Normalisierung (§6). Die `header`-Defaults bleiben
 in Kraft, haben aber ohne `header:`-Block keine Wirkung — ein
 Field-only-Dokument trägt per Definition keinen Header.
