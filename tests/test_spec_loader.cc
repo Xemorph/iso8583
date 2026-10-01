@@ -1847,3 +1847,338 @@ fields:
         CHECK(spec->headerSize() == 0);
     }
 }
+
+// =============================================================================
+// 0.6.4: Constructed-TLV-Kinder (verschachtelte TLV-Werte)
+// =============================================================================
+// Ein TLV-Kind mit eigenem 'tlv'-Block (ber: true oder tag_bytes/len_bytes)
+// ist ein constructed-Container: sein Wert ist selbst eine Folge von TLVs.
+// Diese Tests laufen end-to- ueber die YAML-Loader-Pipeline (loadFromYaml ->
+// Voll-Nachrichten-Decode/Encode) und pruefen die Loader-Whitelist
+// (Fail-closed) sowie die Introspektion (tlv_children rekursiv, tlv_is_ber,
+// is_nested).
+
+TEST_CASE("0.6.4 - BERTLV constructed-Kind: Full-Spec-Decode (Punkt-Pfad) + byte-identischer Re-Encode", "[spec][tlv][ber][constructed]") {
+    TempYaml yaml(R"(
+spec: "Constructed BERTLV"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "057":
+    format: lllbertlv
+    length: 999
+    description: "ICC Data"
+    children:
+      "69":
+        tlv: { ber: true }
+        description: "Transaction Status Information"
+        children:
+          "63":
+            format: binary
+            description: "Result of EMV Application"
+          "A0":
+            format: char
+            encoding: ascii
+            description: "Custom Tag A0"
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // Handwerkliches Wire-Image: MTI "0200" (ascii) + 8-Byte-Bitmap
+    // (Bit 1 = Bitmap-Feld, DE57 = Byte 7 Bit 0x80) + DE57 = LLL("013" =
+    // 13 Bytes: 69-Frame = Tag(1) + BER-Length(1) + 11 Wert-Bytes) +
+    // TLV-Payload (constructed Tag 69 mit inneren Frames 63 und A0).
+    const std::vector<uint8_t> wire = {
+        '0', '2', '0', '0',
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        '0', '1', '3',
+        0x69, 0x0B,
+        0x63, 0x05, 0x1E, 0x40, 0x00, 0x80, 0x00,
+        0xA0, 0x02, 'A', 'B'
+    };
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    CHECK(msg->unparse(msg, wire) == wire.size());
+
+    // Constructed-Kind = Sub-Message des DE57-Sub-Message; die inneren TLVs
+    // sind ueber die Sub-Message ansprechbar (Punkt-Pfad "57.69.63").
+    const auto de57 = msg->get<Message>(57);
+    REQUIRE(de57 != nullptr);
+    const auto tsi = de57->get<Message>(0x69);
+    REQUIRE(tsi != nullptr);
+    CHECK(tsi->parser() != nullptr);
+    CHECK(tsi->description() == "Transaction Status Information");
+
+    const auto r63 = tsi->get<BinaryField>(0x63);
+    REQUIRE(r63 != nullptr);
+    CHECK(r63->value() == std::vector<uint8_t>{ 0x1E, 0x40, 0x00, 0x80, 0x00 });
+    const auto a0 = tsi->get<OpaqueField>(0xA0);
+    REQUIRE(a0 != nullptr);
+    CHECK(a0->value() == "AB");
+
+    // Re-Encode (inkl. innerer Frame des constructed-Kinds): byte-identisch.
+    CHECK(parser->parse(msg) == wire);
+}
+
+TEST_CASE("0.6.4 - Fix-TLV constructed-Kind: Full-Spec-Roundtrip (gleicher Codepfad)", "[spec][tlv][constructed]") {
+    TempYaml yaml(R"(
+spec: "Constructed Fix TLV"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    description: "Additional Data"
+    children:
+      "60":
+        tlv: { tag_bytes: 2, len_bytes: 2 }
+        description: "Constructed SE60"
+        children:
+          "48":
+            format: binary
+            description: "SE48"
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // MTI "0200" + Bitmap (Bit 1, DE48 = Byte 5 Bit 0x01) + DE48 = LLL("010")
+    // + Frame 60/06 = Frame 48/02 DE AD (Tag/Length ASCII, Wert roh).
+    const std::vector<uint8_t> wire = {
+        '0', '2', '0', '0',
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        '0', '1', '0',
+        '6', '0', '0', '6',
+        '4', '8', '0', '2', 0xDE, 0xAD
+    };
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    CHECK(msg->unparse(msg, wire) == wire.size());
+
+    const auto de48 = msg->get<Message>(48);
+    REQUIRE(de48 != nullptr);
+    const auto se60 = de48->get<Message>(60);
+    REQUIRE(se60 != nullptr);
+    const auto se48 = se60->get<BinaryField>(48);
+    REQUIRE(se48 != nullptr);
+    CHECK(se48->value() == std::vector<uint8_t>{ 0xDE, 0xAD });
+
+    CHECK(parser->parse(msg) == wire);
+}
+
+TEST_CASE("Error - TLV-Container-Kind mit format/length/encoding wird fail-closed abgelehnt (0.6.4)", "[error][spec][tlv][constructed]") {
+    const auto run = [](const std::string& extra) -> std::string {
+        TempYaml y(std::string(R"(
+spec: "Constructed Child Conflict"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "057":
+    format: lllbertlv
+    length: 999
+    children:
+      "69":
+        tlv: { ber: true }
+)") + extra);
+        try {
+            spec::SpecDecoder::loadFromYaml(y.str());
+            return "";
+        }
+        catch (const std::exception& e) { return e.what(); }
+    };
+
+    const auto mf = run("        format: binary\n");
+    INFO("Key: format");
+    REQUIRE(mf.find("nicht deklarieren") != std::string::npos);
+    CHECK(mf.find("'format'") != std::string::npos);
+    CHECK(mf.find("TLV-Kind '69'") != std::string::npos);
+
+    const auto ml = run("        length: 10\n");
+    INFO("Key: length");
+    REQUIRE(ml.find("nicht deklarieren") != std::string::npos);
+    CHECK(ml.find("'length'") != std::string::npos);
+
+    const auto me = run("        encoding: ascii\n");
+    INFO("Key: encoding");
+    REQUIRE(me.find("nicht deklarieren") != std::string::npos);
+    CHECK(me.find("'encoding'") != std::string::npos);
+}
+
+TEST_CASE("Error - TLV-Container-Kind mit unvoelligem tlv-Block wird abgelehnt (0.6.4)", "[error][spec][tlv][constructed]") {
+    const auto run = [](const std::string& tlvBlock) -> std::string {
+        TempYaml y(std::string(R"(
+spec: "Constructed Child Bad TLV Block"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "057":
+    format: lllbertlv
+    length: 999
+    children:
+      "69":
+        tlv: )" + tlvBlock + R"(
+)"));
+        try {
+            spec::SpecDecoder::loadFromYaml(y.str());
+            return "";
+        }
+        catch (const std::exception& e) { return e.what(); }
+    };
+
+    // Leerer Block: weder 'ber: true' noch 'tag_bytes'/'len_bytes'.
+    const auto mEmpty = run("{}");
+    REQUIRE(mEmpty.find("ber: true") != std::string::npos);
+    CHECK(mEmpty.find("tag_bytes") != std::string::npos);
+
+    // Nur tag_bytes ohne len_bytes.
+    const auto mHalf = run("{ tag_bytes: 2 }");
+    REQUIRE(mHalf.find("ber: true") != std::string::npos);
+}
+
+TEST_CASE("0.6.4 - Introspektion: constructed-Kind is_nested + tlv_is_ber + rekursive tlv_children", "[spec][tlv][constructed]") {
+    TempYaml yaml(R"(
+spec: "Constructed Introspection"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "057":
+    format: lllbertlv
+    length: 999
+    children:
+      "69":
+        tlv: { ber: true }
+        children:
+          "63": { format: binary }
+          "A0": { format: char, encoding: ascii }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 2 }
+    children:
+      "60":
+        tlv: { tag_bytes: 2, len_bytes: 2 }
+        children:
+          "48": { format: binary }
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // BER-Form: constructed-Kind meldet is_nested=true + tlv_is_ber=true,
+    // Enkel-Tags sind rekursiv in tlv_children gefuellt.
+    const auto de57 = spec->field(57);
+    REQUIRE(de57.has_value());
+    REQUIRE(de57->tlv_children.count(0x69) == 1);
+    const auto& tsi = de57->tlv_children.at(0x69);
+    CHECK(tsi.is_nested);
+    CHECK(tsi.tlv_is_ber);
+    REQUIRE(tsi.tlv_children.size() == 2);
+    REQUIRE(tsi.tlv_children.count(0x63) == 1);
+    REQUIRE(tsi.tlv_children.count(0xA0) == 1);
+    CHECK_FALSE(tsi.tlv_children.at(0x63).is_nested);
+    CHECK_FALSE(tsi.tlv_children.at(0x63).tlv_is_ber); // Skalar-Enkel
+    CHECK_FALSE(tsi.tlv_children.at(0xA0).is_nested);
+
+    // Fix-TLV-Form: constructed-Kind is_nested=true, tlv_is_ber=false.
+    const auto de48 = spec->field(48);
+    REQUIRE(de48.has_value());
+    REQUIRE(de48->tlv_children.count(60) == 1);
+    const auto& se60 = de48->tlv_children.at(60);
+    CHECK(se60.is_nested);
+    CHECK_FALSE(se60.tlv_is_ber);
+    REQUIRE(se60.tlv_children.count(48) == 1);
+    CHECK_FALSE(se60.tlv_children.at(48).is_nested);
+}
+
+TEST_CASE("0.6.4 - Undeklariertes constructed-Tag bleibt BinaryField (Full-Spec-Regression)", "[spec][tlv][ber][constructed]") {
+    // Tag 0x82 (Constructed-Bit gesetzt) ohne Deklaration in den children:
+    // dynamischer Rohbytes-Blob, kein constructed-Verhalten (Plan b).
+    TempYaml yaml(R"(
+spec: "Undeclared Constructed"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "057":
+    format: lllbertlv
+    length: 999
+    children:
+      "5A": { format: char, encoding: ascii, description: "Application PAN" }
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // DE57 = LLL("009") + [5A 02 'A' 'B'] [82 03 63 05 1E]
+    const std::vector<uint8_t> wire = {
+        '0', '2', '0', '0',
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        '0', '0', '9',
+        0x5A, 0x02, 'A', 'B',
+        0x82, 0x03, 0x63, 0x05, 0x1E
+    };
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    CHECK(msg->unparse(msg, wire) == wire.size());
+
+    const auto de57 = msg->get<Message>(57);
+    REQUIRE(de57 != nullptr);
+    const auto undecl = de57->get<BinaryField>(0x82);
+    REQUIRE(undecl != nullptr);
+    CHECK(undecl->value() == std::vector<uint8_t>{ 0x63, 0x05, 0x1E });
+    CHECK(de57->get<Message>(0x82) == nullptr);
+
+    CHECK(parser->parse(msg) == wire);
+}
+
+TEST_CASE("0.6.4 - Field-only-Spec: constructed-Kind laeuft ueber denselben Pfad (FE-1-Regression)", "[spec][fe1][constructed]") {
+    // Plan Section 5: Field-only-Specs (buildFieldBlockParser) nutzen
+    // identische Loader-/Parser-Pfade; hier die BERTLV-Kombination.
+    TempYaml yaml(R"(
+spec: "Field-only Constructed"
+encoding: ascii
+field:
+  format: lllbinary
+  length: 255
+  tlv: { ber: true }
+  children:
+    "69":
+      tlv: { ber: true }
+      description: "Transaction Status Information"
+      children:
+        "63": { format: binary, description: "Result of EMV Application" }
+)");
+
+    const auto parser = spec::SpecDecoder::loadFieldFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // DE55-artiger Payload: 69 (constructed) = [63 05 1E 40 00 80 00]
+    const std::vector<uint8_t> payload{
+        0x69, 0x07, 0x63, 0x05, 0x1E, 0x40, 0x00, 0x80, 0x00
+    };
+    const auto bf = std::make_shared<BinaryField>(0, payload);
+    const auto msg = spec::SpecDecoder::decodeField(parser, *bf);
+    REQUIRE(msg != nullptr);
+
+    const auto tsi = msg->get<Message>(0x69);
+    REQUIRE(tsi != nullptr);
+    const auto r63 = tsi->get<BinaryField>(0x63);
+    REQUIRE(r63 != nullptr);
+    CHECK(r63->value() == std::vector<uint8_t>{ 0x1E, 0x40, 0x00, 0x80, 0x00 });
+
+    // Roundtrip (Field-only-Wire-Vertrag: Frames ohne auesres Praefix).
+    CHECK(parser->parse(msg) == payload);
+}

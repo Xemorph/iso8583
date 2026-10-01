@@ -702,3 +702,254 @@ TEST_CASE("F5 - store_se tag-fit: no silent static_cast truncation", "[tlv][f5]"
         CHECK(se->value() == std::vector<uint8_t>{ 0xAA, 0xBB });
     }
 }
+
+// =============================================================================
+// 0.6.4: Constructed-TLV-Kinder (verschachtelte TLV-Werte)
+// =============================================================================
+// Ein TLV-Kind mit eigenem 'tlv'-Block (constructed) traegt als Wert selbst
+// eine Folge von TLVs. Decode: rekursiv in eine Sub-Message (Punkt-Notation
+// "57.69.63"), Encode: Sub-Message wird per ihrem Parser re-serialisiert.
+// Primaer-Tests = EMV/BER; fix-TLV laeuft ueber denselben Codepfad (ISOTLVParser
+// ist Policy-agnostisch).
+
+namespace {
+
+// BERTLV-Parser mit constructed-Kind Tag 0x69 (EMV "Transaction Status
+// Information"): der innere Parser kennt 0x63 (binaer) und 0xA0 (ASCII-Text).
+static std::shared_ptr<BERTLVParser> makeConstructedBerTlv() {
+    tlv_detail::TlvChildMap inner;
+    tlv_detail::TlvChildInfo c63;
+    c63.description = "EMV Result";
+    inner[0x63] = c63;
+    tlv_detail::TlvChildInfo ca0;
+    ca0.text = true;
+    ca0.enc = codec::Encoder::ASCII;
+    ca0.description = "Custom A0";
+    inner[0xA0] = ca0;
+    auto innerTlv = std::make_shared<BERTLVParser>(std::move(inner));
+
+    tlv_detail::TlvChildMap outer;
+    tlv_detail::TlvChildInfo c69;
+    c69.container = true;
+    c69.subParser = innerTlv;
+    c69.description = "Transaction Status Information";
+    outer[0x69] = c69;
+    return std::make_shared<BERTLVParser>(std::move(outer));
+}
+
+// Fix-TLV (Visa-Style: 2 BCD-Tag-Bytes, 1 BCD-Laenge): SE 60 ist constructed,
+// der innere Parser kennt SE 48 (binaer).
+static std::shared_ptr<ISOTLVParser_VI> makeConstructedFixedTlv() {
+    tlv_detail::TlvChildMap inner;
+    tlv_detail::TlvChildInfo c48;
+    c48.description = "SE48";
+    inner[48] = c48;
+    auto innerTlv = std::make_shared<ISOTLVParser_VI>(std::move(inner));
+
+    tlv_detail::TlvChildMap outer;
+    tlv_detail::TlvChildInfo c60;
+    c60.container = true;
+    c60.subParser = innerTlv;
+    c60.description = "Constructed SE60";
+    outer[60] = c60;
+    return std::make_shared<ISOTLVParser_VI>(std::move(outer));
+}
+
+} // namespace
+
+TEST_CASE("Constructed BER-TLV-Kind - decode in Sub-Message + byte-identischer Roundtrip", "[tlv][ber][constructed]") {
+    auto tlv = makeConstructedBerTlv();
+    // 69 (constructed) = [63 05 1E 40 00 80 00] [A0 02 'A' 'B']  (11 Bytes)
+    const std::vector<uint8_t> payload{
+        0x69, 0x0B,
+        0x63, 0x05, 0x1E, 0x40, 0x00, 0x80, 0x00,
+        0xA0, 0x02, 'A', 'B'
+    };
+
+    auto msg = std::make_shared<Message>();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    // Constructed-Kind = Sub-Message (kein BinaryField!) mit Sub-Parser.
+    const auto sub = msg->get<Message>(0x69);
+    REQUIRE(sub != nullptr);
+    CHECK(sub->parser() != nullptr);
+    REQUIRE(sub->size() == 2);
+
+    // Innere TLVs: binaeres Kind roh, Text-Kind typisiert.
+    const auto c63 = sub->get<BinaryField>(0x63);
+    REQUIRE(c63 != nullptr);
+    CHECK(c63->value() == std::vector<uint8_t>{ 0x1E, 0x40, 0x00, 0x80, 0x00 });
+    CHECK(c63->description() == "EMV Result");
+    const auto ca0 = sub->get<OpaqueField>(0xA0);
+    REQUIRE(ca0 != nullptr);
+    CHECK(ca0->value() == "AB");
+
+    // Wire-Tracking des Container-Kinds (Frame-Anfang..Frame-Ende).
+    CHECK(sub->wire_offset() == 0);
+    CHECK(sub->wire_length() == payload.size());
+    // Inneres Kind: Offset relativ zum ORIGINAL-Puffer (base_offset-Fortgabe).
+    CHECK(c63->wire_offset() == 2);   // 69-Tag(1) + Length(1)
+    CHECK(c63->wire_length() == 7);   // 63 05 + 5 Daten
+    CHECK(ca0->wire_offset() == 9);
+    CHECK(ca0->wire_length() == 4);
+
+    // Encode: Sub-Message wird re-serialisiert -> byte-identisch.
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("Constructed Fix-TLV-Kind - gleicher Codepfad, byte-identischer Roundtrip", "[tlv][vi][constructed]") {
+    auto tlv = makeConstructedFixedTlv();
+    // SE 60 (constructed, BCD-Tag 0060, LEN 5) = innerer Frame 00 48 02 DE AD
+    const std::vector<uint8_t> payload{
+        0x00, 0x60, 0x05,
+        0x00, 0x48, 0x02, 0xDE, 0xAD
+    };
+
+    auto msg = std::make_shared<Message>();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto sub = msg->get<Message>(60);
+    REQUIRE(sub != nullptr);
+    CHECK(sub->parser() != nullptr);
+    const auto c48 = sub->get<BinaryField>(48);
+    REQUIRE(c48 != nullptr);
+    CHECK(c48->value() == std::vector<uint8_t>{ 0xDE, 0xAD });
+
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("Undeklariertes constructed-Tag bleibt BinaryField (No-Regression)", "[tlv][ber][constructed][undeclared]") {
+    // Constructed-Bit (0x82) ohne eigene Deklaration: weiterhin dynamischer
+    // Rohbytes-Blob, keine Implizit-Rekursion (Plan-Entscheidung b).
+    auto tlv = std::make_shared<BERTLVParser>();
+    const std::vector<uint8_t> payload{ 0x82, 0x03, 0x63, 0x05, 0x1E };
+
+    auto msg = std::make_shared<Message>();
+    CHECK(tlv->unparse(msg, payload) == payload.size());
+
+    const auto se = msg->get<BinaryField>(0x82);
+    REQUIRE(se != nullptr);
+    CHECK(se->value() == std::vector<uint8_t>{ 0x63, 0x05, 0x1E });
+    CHECK(msg->get<Message>(0x82) == nullptr);
+    CHECK(tlv->parse(msg) == payload);
+}
+
+TEST_CASE("Constructed-Kind Encode: fehlendes Kind wird uebersprungen (warn+skip)", "[tlv][constructed][encode]") {
+    auto tlv = makeConstructedBerTlv();
+    auto msg = std::make_shared<Message>();
+    auto se10 = std::make_shared<BinaryField>(0x10);
+    se10->value({ 0x01, 0x02 });
+    msg->set(se10);
+
+    // Kein 0x69-Frame in der Ausgabe, SE 0x10 unveraendert.
+    const auto out = tlv->parse(msg);
+    CHECK(out == std::vector<uint8_t>{ 0x10, 0x02, 0x01, 0x02 });
+}
+
+TEST_CASE("Constructed-Kind Encode: Sub-Message ohne Parser wird uebersprungen", "[tlv][constructed][encode]") {
+    // Manuell gebaute Sub-Message ohne Parser (decode-freier Pfad): kann
+    // nicht re-serialisiert werden -> warn+skip statt Frame mit vermursten
+    // Daten.
+    auto tlv = makeConstructedBerTlv();
+    auto msg = std::make_shared<Message>();
+    auto sub = std::make_shared<Message>(0x69);
+    sub->set(0x63, std::string("AABB"));
+    msg->set(sub);
+
+    const auto out = tlv->parse(msg);
+    CHECK(out.empty());
+}
+
+TEST_CASE("Constructed-Kind Encode: Typ-Fehlmatch (BinaryField statt Message) wird verworfen", "[tlv][constructed][encode][error]") {
+    // Deklariertes Container-Kind wird mit einem BinaryField besetzt:
+    // Fail-closed (Programmierfehler, nicht Datenkorruption).
+    auto tlv = makeConstructedBerTlv();
+    auto msg = std::make_shared<Message>();
+    msg->set(std::make_shared<BinaryField>(0x69, std::vector<uint8_t>{ 0x01 }));
+
+    bool threw = false;
+    try
+    {
+        tlv->parse(msg);
+    }
+    catch (const std::runtime_error& e)
+    {
+        threw = true;
+        CHECK(std::string(e.what()).find("Container-Kind") != std::string::npos);
+    }
+    REQUIRE(threw);
+}
+
+TEST_CASE("Constructed-Kind: Strict-Modus propagiert auf den Sub-Parser", "[tlv][constructed][strict]") {
+    // Inneres EBCDIC-Text-Kind 0x63: 0x9C ist nicht-mappbar (ICU-78.3-Pin).
+    // strict (Default): positionierte Exception aus dem SUB-Parser;
+    // outer->strict(false) propagiert auf den Container-Sub-Parser
+    // (ISOTLVParser::strict-Override) -> Legacy-'.'-Mapping.
+    tlv_detail::TlvChildMap inner;
+    tlv_detail::TlvChildInfo c63;
+    c63.text = true;
+    c63.enc = codec::Encoder::EBCDIC;
+    inner[0x63] = c63;
+    auto innerTlv = std::make_shared<BERTLVParser>(std::move(inner));
+    tlv_detail::TlvChildMap outer;
+    tlv_detail::TlvChildInfo c69;
+    c69.container = true;
+    c69.subParser = innerTlv;
+    outer[0x69] = c69;
+
+    // 69 04 | 63 02 | C1 9C   ('A' + nicht-mappbares 0x9C)
+    const std::vector<uint8_t> payload{ 0x69, 0x04, 0x63, 0x02, 0xC1, 0x9C };
+
+    {
+        auto tlv = std::make_shared<BERTLVParser>(outer);
+        auto msg = std::make_shared<Message>();
+        CHECK_THROWS_AS(tlv->unparse(msg, payload), std::runtime_error);
+    }
+    {
+        auto tlv = std::make_shared<BERTLVParser>(outer);
+        tlv->strict(false); // muss den Container-Sub-Parser erreichen
+        auto msg = std::make_shared<Message>();
+        CHECK(tlv->unparse(msg, payload) == payload.size());
+        const auto sub = msg->get<Message>(0x69);
+        REQUIRE(sub != nullptr);
+        const auto c63f = sub->get<OpaqueField>(0x63);
+        REQUIRE(c63f != nullptr);
+        CHECK(c63f->value() == "A.");
+    }
+}
+
+TEST_CASE("Constructed-Kind: Key-Width-Guard auf dem inneren Tag (F5-Pfad)", "[tlv][constructed][f5]") {
+    // Inneres 2-Byte-EMV-Tag 0x9F26 (>= 0x8000) im constructed-Kind:
+    // Default-Build (int16): Key-Width-Guard waernt und SPRINGT das innere
+    // SE bewusst ueber (kein Fehlrouting); BERTLV-Build (int32): wird
+    // gespeichert und roundtript byte-identisch.
+    const std::vector<uint8_t> payload{
+        0x69, 0x05, 0x9F, 0x26, 0x02, 0xAA, 0xBB
+    };
+
+    // Sub-Parser wie beim Loader-Pfad: reiner BERTLV-Parser (dynamische Tags)
+    tlv_detail::TlvChildMap outer;
+    tlv_detail::TlvChildInfo c69;
+    c69.container = true;
+    c69.subParser = std::make_shared<BERTLVParser>();
+    outer[0x69] = c69;
+    auto tlv = std::make_shared<BERTLVParser>(std::move(outer));
+    auto msg = std::make_shared<Message>();
+    const auto consumed = tlv->unparse(msg, payload);
+    CHECK(consumed == payload.size());
+
+    const auto sub = msg->get<Message>(0x69);
+    if constexpr (sizeof(TNG_KEY_TYPE) < sizeof(std::int32_t)) {
+        // int16-Build: 0x9F26 > int16_max -> inneres SE NICHT gespeichert.
+        REQUIRE(sub != nullptr);
+        CHECK(sub->size() == 0);
+    }
+    else {
+        // int32-Build (ISO8583_BERTLV): inneres SE vorhanden + Roundtrip.
+        REQUIRE(sub != nullptr);
+        const auto se = sub->get<BinaryField>(static_cast<TNG_KEY_TYPE>(0x9F26));
+        REQUIRE(se != nullptr);
+        CHECK(se->value() == std::vector<uint8_t>{ 0xAA, 0xBB });
+        CHECK(tlv->parse(msg) == payload);
+    }
+}
