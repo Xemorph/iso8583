@@ -307,6 +307,65 @@ Nested-Zweigs); manuell konstruierte nicht-binäre Container-Basen
 - Undeklarierte Tags/SEs werden dekodiert (Fallback-Beschreibung
   `SE<n>` bzw. generischer Tag-Name), nie verworfen.
 
+**Constructed-TLV-Kinder (0.6.4, normativ):**
+
+Ein TLV-Kind, das einen **eigenen `tlv:`-Block** trägt (`tlv: { ber: true }`
+oder `tlv: { tag_bytes, len_bytes }`), ist ein **constructed-Container**
+(BER-Constructed-Bit `0x20`, ISO/IEC 8825-1): sein Wert ist selbst eine
+Folge von TLVs — z. B. EMV-Tag `69` *Transaction Status Information*, das
+Tags wie `63` *Result of EMV Application* enthält. Verhalten:
+
+- **Decode:** das Kind wird rekursiv über seinen eigenen Sub-Parser in eine
+  Sub-`Message` aufgeschlüsselt (keine flache Komponente). Die inneren TLVs
+  sind über die bestehende Punkt-Notation adressierbar
+  (z. B. `57.69.63`: DE57 → Tag `69` → Tag `63`).
+- **Encode:** die Sub-`Message` wird über ihren (beim Decode angehängten)
+  Parser zurückkodiert — Roundtrip byte-identisch. Fehlt das Kind (oder
+  seine Parser-Zuordnung), gilt die übliche „SE fehlt“-Semantik
+  (Warnung + Frame weglassen); ein Typ-Fehlmatch (z. B. `BinaryField`
+  statt `Message`) wirft fail-closed.
+- **Scope:** beide TLV-Formen (`ber: true` **und** fixer
+  `tag_bytes`/`len_bytes`) nutzen denselben Codepfad (Policy-agnostisch);
+  die Rekursionstiefe unterliegt der bestehenden ≤ 200-Ebene-Begrenzung.
+
+```yaml
+"057":
+  format: lllbertlv
+  length: 999
+  children:
+    "69":                                   # constructed-Kind (eigener tlv-Block)
+      tlv: { ber: true }
+      description: "Transaction Status Information"
+      children:                             # optional: deklarierte innere Tags
+        "63": { format: binary }
+```
+
+Regeln (Fail-closed beim Laden, positioniertes `SpecValidationError`):
+
+- Ein constructed-Kind darf **keine** `format:`, `length:` oder `encoding:`
+  deklarieren — das äußere TLV-Frame trägt Tag + Länge, diese Keys wären
+  widersprüchlich.
+- Der `tlv:`-Block des Kinds benötigt `ber: true` **oder**
+  `tag_bytes`/`len_bytes`.
+- Ohne `children:` ist das Kind ein *dynamischer* Container: die inneren
+  TLVs werden dynamisch dekodiert (wie undeclarierter BERTLV-Container).
+- Die eigenen `children:` des Kinds (Enkel-Tags) werden mit denselben
+  Whitelist-Regeln **rekursiv** validiert.
+- Ein constructed-Tag **ohne** `tlv:`-Block bleibt ein dynamischer
+  `BinaryField`-Blob (Rohbytes) wie bisher — es gibt **keine** implizite
+  Erkennung über das Constructed-Bit; nur explizit erklärte Container-Kinder
+  werden rekursiv aufgeschlüsselt.
+- `sensitive: true` auf dem Container-Kind verbreitet sich auf den
+  Sub-Baum (PCI-Masking); der Strict-Modus propagiert auf den
+  Kind-Sub-Parser.
+- **Introspektion:** ein constructed-Kind meldet `is_nested = true`,
+  `tlv_is_ber` nach seinem eigenen `tlv:`-Block, und seine
+  `tlv_children` sind mit den deklarierten Enkel-Tags gefüllt.
+- **Key-Typ:** 2-Byte-Sub-Tags (≥ `0x8000`) unterliegen der bestehenden
+  `TNG_KEY_TYPE`-Regel — im Default-Build (int16) werden sie gewarnt und
+  übersprungen (kein Fehlrouting), mit `ISO8583_BERTLV` (int32) werden sie
+  voll unterstützt.
+
 ## 7. Encoding-Auflösung und -Vererbung
 
 ```

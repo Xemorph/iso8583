@@ -453,11 +453,22 @@ fields:
         length: 10
         encoding: bcd
         description: "Application PAN"
+      "69":                 # 0.6.4: constructed-Kind (eigener tlv-Block) —
+        tlv: { ber: true }  # sein Wert ist selbst eine Folge von TLVs
+        description: "Transaction Status Information"
+        children:           # optional: deklarierte innere Tags
+          "63": { format: binary, description: "Result of EMV Application" }
     # Seit 0.5.0: deklarierte Kinder werden typisiert dekodiert/kodiert
     # (char/numeric/nopad_char → OpaqueField via Codec, binary → BinaryField
     # mit Rohbytes) — Whitelist und Encoding-Regeln s. u. "TLV-children".
     # Nicht deklarierte Tags fallen weiterhin automatisch auf eine generische
     # "SE<n>"-Beschreibung zurück (BinaryField, dynamisch).
+    # 0.6.4: Ein Kind mit eigenem 'tlv:'-Block = constructed-Container (EMV
+    # Book 3, z. B. Tag 69 → enthält Tags wie 63): der Wert wird rekursiv
+    # über den eigenen Sub-Parser in eine Sub-Message dekodiert (Punkt-Notation
+    # "57.69.63", Re-Encode byte-identisch). Solche Kinder dürfen KEIN
+    # format:/length:/encoding: deklarieren (das äußere Frame trägt Tag +
+    # Länge) — sonst positioniertes SpecValidationError (Fail-closed).
   "048":                  # Mastercard-artiges fixes TLV — SE-Keys DEZIMAL
     type: nested
     format: lllchar          # 0.6.0: intern binär normalisiert (wire-neutral)
@@ -601,6 +612,31 @@ Key eine SE-Nummer oder ein BER-Tag:
     `SpecFieldInfo::tlv_is_ber` abfragbar — `true` bei `tlv: {ber: true}`
     und der `...bertlv`-Kurzform, `false` im fixen SE-Modus und bei
     Nicht-TLV-Feldern.
+- **Constructed-Kinder (0.6.4):** Ein TLV-Kind, das einen **eigenen
+  `tlv:`-Block** trägt (`tlv: {ber: true}` oder `tlv: { tag_bytes,
+  len_bytes }`), ist ein *constructed*-Container (BER-Constructed-Bit
+  `0x20`, ISO/IEC 8825-1; EMV Book 3, z. B. Tag `69` *Transaction Status
+  Information* mit Tags wie `63`): sein Wert ist selbst eine Folge von TLVs.
+  Bei der Dekodierung wird er rekursiv über seinen eigenen Sub-Parser in
+  eine Sub-`Message` aufgelöst — die inneren TLVs sind per Punkt-Notation
+  erreichbar (z. B. `57.69.63`), beim Re-Encode werden sie byte-identisch
+  zurückkodiert. Beide TLV-Formen (BER **und** fixes TLV) nutzen denselben
+  Codepfad (Policy-agnostisch); Rekursionstiefe ≤ 200 Ebenen. Regeln
+  (Fail-closed beim Laden, positioniertes `SpecValidationError`):
+  - `format:`, `length:` und `encoding:` sind **verboten** (das äußere
+    TLV-Frame trägt Tag + Länge — diese Keys wären widersprüchlich).
+  - Der `tlv:`-Block des Kinds benötigt `ber: true` **oder**
+    `tag_bytes`/`len_bytes`.
+  - Ohne `children:` ist es ein *dynamischer* Container (innere Tags werden
+    dynamisch dekodiert); die eigenen `children:` (Enkel-Tags) werden mit
+    denselben Whitelist-Regeln rekursiv validiert.
+  - `sensitive: true` verbreitet sich auf den Sub-Baum (PCI-Masking); der
+    Strict-Modus propagiert auf den Kind-Sub-Parser.
+  - Introspektion: `is_nested = true`, `tlv_is_ber` nach dem eigenen
+    `tlv:`-Block des Kinds, `tlv_children` rekursiv gefüllt.
+  - Ein constructed-Tag **ohne** `tlv:`-Block bleibt ein dynamischer
+    `BinaryField`-Blob (Rohbytes) wie bisher — es gibt **keine** implizite
+    Erkennung über das Constructed-Bit.
 - Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
   generische `"SE<n>"`-Beschreibung zurück (Rohbytes, `BinaryField`) —
   unabhängig davon, ob das Containerfeld ein `tlv:`-Block oder die
@@ -758,6 +794,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Zu kurzen Wert bei fester Länge erwarten abgelehnt zu werden (0.6.2) | Default ist Legacy-Padding; `strict_length: true` (Root oder Feld) aktiviert die Ablehnung im strict-Modus |
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
+| Constructed-Kind (eigener `tlv:`-Block) mit `format:`/`length:`/`encoding:` (0.6.4) | Das äußere TLV-Frame trägt Tag + Länge — diese Keys sind bei Container-Kindern verboten, sonst `SpecValidationError` (Fail-closed); für die rekursive Dekodierung genügt `tlv:` (+ optional `children:`) |
 
 ---
 

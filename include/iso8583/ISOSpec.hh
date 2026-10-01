@@ -123,10 +123,21 @@ namespace TNG_NAMESPACE {
             /// Since 0.5.0 this is populated for TLV containers: fields with a
             /// `tlv:` block (fixed-format TLV, decimal SE keys) and fields with
             /// `format: ...bertlv` (hex tag keys).  Each child mirrors its YAML
-            /// declaration: `key` = tag value / SE number, `is_nested = false`,
+            /// declaration: `key` = tag value / SE number,
             /// `format`/`encoding` from the child's `format:`/`encoding:` keys,
             /// `description` from the child's `description:` key.
             /// Empty when no TLV children are declared.
+            ///
+            /// Since 0.6.4 a declared child that carries its **own** `tlv:`
+            /// block (`tlv: {ber: true}` or `tlv: {tag_bytes, len_bytes}`) is
+            /// a *constructed* container (ISO/IEC 8825-1; EMV Book 3, e.g. tag
+            /// `69` *Transaction Status Information* holding tags like `63`):
+            /// at decode time it is recursively decoded into a sub-`Message`
+            /// (addressable via dot notation, e.g. `57.69.63`) and re-encoded
+            /// byte-identically.  Such a child reports `is_nested = true`,
+            /// `tlv_is_ber` according to its own `tlv:` block, and its own
+            /// `tlv_children` is recursively populated with the declared
+            /// grandchild tags.
             ///
             /// The map key is deliberately `int` (and **not** `TNG_KEY_TYPE`):
             /// 2-byte EMV tags such as `0x9F26` (40742) do not fit into

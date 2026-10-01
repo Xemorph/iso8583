@@ -251,6 +251,45 @@ Deklarierte Kinder sind per `loadBothFromYaml` über
 `SpecFieldInfo::tlv_children` introspektierbar (Key = voller Tag-Wert als
 `int`, damit 2-Byte-EMV-Tags wie `0x9F26` auch in `int16_t`-Builds passen).
 
+#### Constructed-TLV-Kinder (0.6.4)
+
+Ein TLV-Kind mit einem **eigenen `tlv:`-Block** (`tlv: { ber: true }` oder
+`tlv: { tag_bytes, len_bytes }`) ist ein *constructed*-Container
+(ISO/IEC 8825-1, EMV Book 3 — z. B. Tag `69` *Transaction Status
+Information* mit Tags wie `63`): sein Wert ist selbst eine Folge von TLVs.
+
+```yaml
+"057":
+  format: lllbertlv
+  length: 999
+  children:
+    "69":                                   # constructed-Kind
+      tlv: { ber: true }
+      description: "Transaction Status Information"
+      children:                             # optional: deklarierte innere Tags
+        "63": { format: binary, description: "Result of EMV Application" }
+```
+
+- **Decode:** rekursive Auflösung über den eigenen Sub-Parser in eine
+  Sub-`Message` — die inneren TLVs sind per Punkt-Notation erreichbar
+  (z. B. `57.69.63`); **Encode:** byte-identischer Re-Encode. Beide
+  TLV-Formen (BER **und** fixes TLV) nutzen denselben Codepfad
+  (Policy-agnostisch); Rekursionstiefe ≤ 200 Ebenen.
+- Container-Kinder dürfen **kein** `format:`/`length:`/`encoding:`
+  deklarieren (das äußere TLV-Frame trägt Tag + Länge) — sonst positioniertes
+  `SpecValidationError` (Fail-closed). Der `tlv:`-Block benötigt
+  `ber: true` **oder** `tag_bytes`/`len_bytes`.
+- Ohne `children:` ist das Kind ein *dynamischer* Container (innere Tags
+  werden dynamisch dekodiert); eigene `children:` (Enkel-Tags) werden mit
+  denselben Whitelist-Regeln rekursiv validiert.
+- Ein constructed-Tag **ohne** `tlv:`-Block bleibt ein dynamischer
+  `BinaryField`-Blob (Rohbytes) — es gibt keine implizite Erkennung über
+  das Constructed-Bit (`0x20`).
+- `sensitive: true` verbreitet sich auf den Sub-Baum (PCI-Masking); der
+  Strict-Modus propagiert auf den Kind-Sub-Parser.
+- Introspektion: `is_nested = true`, `tlv_is_ber` nach dem eigenen
+  `tlv:`-Block, `tlv_children` rekursiv gefüllt.
+
 ## Verschachtelte Felder
 
 ```yaml
