@@ -111,6 +111,43 @@ namespace TNG_NAMESPACE::tlv_detail {
             log_warn_se_key_too_wide(se_num);
             return; // SE wird bewusst NICHT gespeichert (kein Fehlrouting)
         }
+        // 0.6.4: Container-Kind (constructed): kein Skalar-Feld. Der
+        // Kind-Wert ist selbst eine Folge von TLVs und wird über den
+        // Sub-Parser in eine Sub-Message dekodiert (Muster: NESTED-Pfad,
+        // src/_parser.hh) — die inneren TLVs sind danach per Punkt-Notation
+        // erreichbar (z.B. "57.69.63"). Der Sub-Parser wird an die
+        // Sub-Nachricht angehängen, damit sie sich selbst re-serialisieren
+        // kann (parse() im ISOTLVParser-Encode-Pfad). Fehlt der Sub-Parser
+        // (defensiv; der Loader setzt container immer zusammen mit
+        // subParser), gilt der Skalar-Pfad (rohe Bytes wie undeklariert).
+        if (child && child->container && child->subParser) {
+            auto subMsg = std::make_shared< ::TNG_NAMESPACE::ISOMessage >(
+                static_cast<TNG_KEY_TYPE>(se_num));
+            // `description` zeigt in Parser-langlebigen Speicher (s.
+            // ISOTLVParser::description_for_wire) — sichere, nicht
+            // kopierende Sicht.
+            subMsg->description(description);
+            // [ISO8583] 3.4 (PCI): Sensitivität des Container-Kinds aus der
+            // Spec (pro-Tag oder Container-Ebene); der Sub-Baum erbt sie über
+            // den Sub-Parser (sensitive-All-Family bzw. Kind-Erbe beim Build).
+            subMsg->set_sensitive(sensitive);
+            subMsg->wire_offset(wire_offset);
+            subMsg->wire_length(wire_len);
+            // Wert-Bytes = äußeres TLV-Frame abzüglich Tag+Length: das
+            // Length-Feld wurde bereits von LenPolicy konsumiert, ein
+            // zusätzliches L-Präfix existiert NICHT.
+            const std::vector<uint8_t> valueBytes(
+                buf.begin() + static_cast<std::ptrdiff_t>(data_offset),
+                buf.begin() + static_cast<std::ptrdiff_t>(data_offset + data_len));
+            // Absolutes Wire-Offset des Wert-Anfangs = Frame-Anfang +
+            // (Tag+Länge)-Größe; der Sub-Parser nutzt es als base_offset für
+            // die wire_offset seiner eigenen Kinder.
+            const std::size_t value_wire = wire_offset + (wire_len - data_len);
+            (void)child->subParser->unparse(subMsg, valueBytes, value_wire);
+            subMsg->parser(child->subParser);
+            msg->set(subMsg);
+            return;
+        }
         // FR-1 (0.5.0): deklarierter Text-Kind (char/numeric/nopad_char) →
         // OpaqueField per Codec (strict: nicht-mappbare Bytes werfen ein
         // std::runtime_error; nicht-strikt: Legacy-Sentinel-Mapping '.'/'?').

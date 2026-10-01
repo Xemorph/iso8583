@@ -72,6 +72,12 @@ namespace TNG_NAMESPACE {
             bool           amount = false;               ///< 0.6.0: format amount → AmountField statt OpaqueField
             bool           sign = false;                 ///< nach 0.6.0: 'sign: true' (führendes C/D/+/-, nur amount+scale)
             std::optional<int> scale;                    ///< 0.6.0: deklarierte 'scale:' (nullopt = jPOS-Form; nur amount)
+            // 0.6.4: constructed-Container-Kind (TLV-Kind mit eigenem 'tlv:'-
+            // Block): der Kind-Wert ist selbst eine Folge von TLVs und wird
+            // nicht als Skalar (Skalar-Felder oben) sondern über subParser
+            // rekursiv in eine Sub-Message dekodiert / zurückkodiert.
+            bool                             container = false; ///< true = Container-Kind (constructed)
+            std::shared_ptr<ISOParserPtrBase> subParser;         ///< Sub-Parser des Container-Kinds (read-only nach Build; container ⇒ gesetzt)
         };
 
         /// @brief Tag (bzw. SE-Nummer) → TlvChildInfo.
@@ -127,6 +133,10 @@ namespace TNG_NAMESPACE {
         /// werden per Codec in eine OpaqueField gespeichert (strict: nicht-mappbare
         /// Bytes werfen ein std::runtime_error; nicht-strikt: Legacy-Sentinel-Mapping);
         /// binäre Kinder und undeklarierte Tags bleiben BinaryField (rohe Bytes).
+        /// 0.6.4: Container-Kinder (constructed, `child->container` + `child->subParser`)
+        /// erzeugen KEIN Skalar-Feld: der Kind-Wert (Folge von TLVs) wird über den
+        /// Sub-Parser in eine Sub-Message dekodiert und per `msg->set()` angehängt
+        /// (innere TLVs sind dann per Punkt-Notation erreichbar, z.B. "57.69.63").
         TNG_EXPORT void store_se(
             const std::shared_ptr<ISOMessage>& msg,
             std::size_t  se_num,
@@ -169,8 +179,21 @@ namespace TNG_NAMESPACE {
         {
         }
 
-        bool emit_bitmap() const noexcept override { 
-            return false; 
+        bool emit_bitmap() const noexcept override {
+            return false;
+        }
+
+        // [ISO8583] Strikter Modus: 0.6.4-Container-Kinder (constructed)
+        // halten ihre Sub-Parserv in child_map_ — diese sind NICHT eigene
+        // Feld-Parserv dieses Parsers (l_ ist bei einem reinen TLV-Parser
+        // leer), daher erreicht sie ISOBaseParser::strict() nicht. Hier
+        // explizit weiterreichen (rekursiv: die Sub-Parserv sind selbst
+        // ISOTLVParser/ISOBaseParser und propagieren auf ihre eigenen Kinder).
+        void strict(bool v) const noexcept override {
+            ISOBaseParser::strict(v);
+            for (const auto& [_, info] : child_map_)
+                if (info.container && info.subParser)
+                    info.subParser->strict(v);
         }
 
         std::size_t unparse(
@@ -281,7 +304,31 @@ namespace TNG_NAMESPACE {
                 const bool want_text = (child && child->text);
 
                 std::vector<uint8_t> data;
-                if (want_text) {
+                if (child && child->container && child->subParser) {
+                    // 0.6.4: Container-Kind (constructed): der Frame-Wert ist
+                    // die (re-)serialisierte Sub-Message; ihr Sub-Parser wurde
+                    // beim Decode angehängt (store_se) bzw. ist über
+                    // msg->set(parser,...) gesetzt. Fehlt das Kind (oder ist
+                    // es ohne Parser), gilt die übliche SE-fehlt-Semantik.
+                    const auto sub = msg->get< ::TNG_NAMESPACE::ISOMessage >(se_key);
+                    if (!sub) {
+                        if (msg->has(se_key))
+                            // Fail-closed: anderes Komponenten-Typ vorhanden
+                            // (Programmierfehler, nicht Datenkorruption).
+                            throw std::runtime_error(
+                                "[ISO8583] TLV-Kind SE" + std::to_string(se_num) +
+                                ": Spec erwartet ein Container-Kind (constructed), es ist aber "
+                                "ein anderes Komponenten-Typ gesetzt");
+                        tlv_detail::log_warn_se_missing(se_num);
+                        continue;
+                    }
+                    if (!sub->parser()) {
+                        tlv_detail::log_warn_se_missing(se_num);
+                        continue;
+                    }
+                    data = sub->parser()->parse(sub);
+                }
+                else if (want_text) {
                     const auto of = msg->get< ::TNG_NAMESPACE::OpaqueField >(se_key);
                     if (!of) {
                         if (msg->has(se_key))

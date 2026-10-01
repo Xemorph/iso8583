@@ -332,6 +332,112 @@ namespace TNG_NAMESPACE::spec {
         validateFieldSpecYaml(pr.tree.crootref(), &pr.source_map);
     }
 
+    // FR-1 (0.5.0, D5) / 0.6.4: (Rekursive) TLV-Kind-Validierung. Läuft auf
+    // dem gepreprozessierten Baum → sieht die Endform nach !use/!template/
+    // !merge-Expansion. Die TLV-Länge liegt auf dem Wire im Length-Feld,
+    // daher sind L-präfixierte Formate, 'bitmap', 'remaining' und 'nop' bei
+    // TLV-Kindern widersprüchlich (Fail-closed statt stiller
+    // "documentation-only"-Semantik, Q2-Präzedenz aus 0.3.0).
+    // 0.6.4: Container-Kinder (eigener 'tlv'-Block = constructed) werden
+    // gesondert geprüft: der Block muss BER oder fix sein ('ber: true' ODER
+    // 'tag_bytes'/'len_bytes'), und 'format'/'length'/'encoding' sind
+    // verboten (das äußere TLV-Frame trägt Tag + Länge); die eigenen
+    // 'children' des Container-Kinds (Enkel-Tags) werden rekursiv mit
+    // denselben Regeln validiert.
+    static void validateTlvChildMap(ryml::ConstNodeRef ch,
+        const std::string& fieldKey, const SourceMap* smap)
+    {
+        static const std::set<std::string> textChildFormats = {
+            "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
+        static const std::set<std::string> allChildFormats = {
+            "BINARY", "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
+        static const std::set<std::string> allChildEncodings = {
+            "ASCII", "BCD", "BINARY", "EBCDIC" };
+        for (const ryml::ConstNodeRef c : ch.children()) {
+            const auto seKey = toStdString(c.key());
+            if (!c.is_map())
+                throw SpecValidationError(
+                    "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                    "': Kind-Deklaration muss eine Map sein "
+                    "(z.B. { format: binary, "
+                    "description: ... })",
+                    c.id(), smap);
+
+            if (hasKey(c, "tlv")) {
+                // 0.6.4: Container-Kind (constructed) — eigener tlv-Block.
+                const ryml::ConstNodeRef ct = c["tlv"];
+                const bool ctBer = getBool(ct, "ber", false);
+                if (!ctBer && (!hasKey(ct, "tag_bytes") || !hasKey(ct, "len_bytes")))
+                    throw SpecValidationError(
+                        "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                        "': der 'tlv'-Block eines Container-Kinds benötigt "
+                        "'ber: true' oder 'tag_bytes' und 'len_bytes'",
+                        ct.id(), smap);
+                // Widersprüchliche Keys: das äußere TLV-Frame trägt Tag +
+                // Länge, ein Container-Kind ist kein Skalar.
+                for (const char* badKey : { "format", "length", "encoding" })
+                    if (hasKey(c, badKey))
+                        throw SpecValidationError(
+                            "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                            "': ein Container-Kind (eigener 'tlv'-Block) darf "
+                            "'" + std::string(badKey) + "' nicht deklarieren "
+                            "(das äußere TLV-Frame trägt Tag + Länge)",
+                            c[badKey].id(), smap);
+                // Rekursion: die eigenen children des Container-Kinds sind
+                // ihrerseits TLV-Kinder → dieselben Regeln (Enkel-Tags).
+                if (hasKey(c, "children")) {
+                    const ryml::ConstNodeRef gc = c["children"];
+                    if (!gc.is_map())
+                        throw SpecValidationError(
+                            "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                            "': 'children' eines Container-Kinds muss eine "
+                            "Map sein (Tag → Deklaration)",
+                            gc.id(), smap);
+                    validateTlvChildMap(gc, fieldKey, smap);
+                }
+                continue;
+            }
+
+            if (hasKey(c, "format")) {
+                const auto cf = toUpper(getStr(c, "format"));
+                if (!allChildFormats.count(cf))
+                    throw SpecValidationError(
+                        "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                        "': Format '" + cf +
+                        "' unzulässig - die TLV-Länge liegt im "
+                        "Length-Feld, L-präfixierte Formate "
+                        "(llchar, ...), 'bitmap', 'remaining' "
+                        "und 'nop' sind bei TLV-Kindern nicht "
+                        "erlaubt (erlaubt: binary, char, "
+                        "numeric, nopad_char)",
+                        c["format"].id(), smap);
+            }
+            if (hasKey(c, "encoding")) {
+                const auto ce = toUpper(getStr(c, "encoding"));
+                if (!allChildEncodings.count(ce))
+                    throw SpecValidationError(
+                        "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                        "': Encoding '" + ce +
+                        "' unzulässig (erlaubt: ascii, "
+                        "ebcdic, bcd, binary)",
+                        c["encoding"].id(), smap);
+                if (hasKey(c, "format")) {
+                    const auto cf = toUpper(getStr(c, "format"));
+                    if (textChildFormats.count(cf) &&
+                        ce != "ASCII" && ce != "BCD" && ce != "EBCDIC")
+                        throw SpecValidationError(
+                            "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                            "': Text-Format '" + cf +
+                            "' benötigt ein Encoding ascii, "
+                            "ebcdic oder bcd ('" + ce +
+                            "' ist für Text-Kinder nicht "
+                            "verwendbar)",
+                            c["encoding"].id(), smap);
+                }
+            }
+        }
+    }
+
     static void validateSpecYaml(ryml::ConstNodeRef root, const SourceMap* smap = nullptr) {
         // Läuft auf dem BEREITS PREPROCESSIERTEN YAML – !template, !merge, !use
         // wurden bereits expandiert.
@@ -480,61 +586,10 @@ namespace TNG_NAMESPACE::spec {
                         }());
                 if (isTlvField && hasKey(field, "children")) {
                     const ryml::ConstNodeRef ch = field["children"];
-                    if (ch.is_map()) {
-                        static const std::set<std::string> textChildFormats = {
-                            "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
-                        static const std::set<std::string> allChildFormats = {
-                            "BINARY", "CHAR", "NUMERIC", "NOPAD_CHAR", "AMOUNT" };
-                        static const std::set<std::string> allChildEncodings = {
-                            "ASCII", "BCD", "BINARY", "EBCDIC" };
-                        for (const ryml::ConstNodeRef c : ch.children()) {
-                            const auto seKey = toStdString(c.key());
-                            if (!c.is_map())
-                                throw SpecValidationError(
-                                    "Feld " + key + ", TLV-Kind '" + seKey +
-                                    "': Kind-Deklaration muss eine Map sein "
-                                    "(z.B. { format: binary, "
-                                    "description: ... })",
-                                    c.id(), smap);
-                            if (hasKey(c, "format")) {
-                                const auto cf = toUpper(getStr(c, "format"));
-                                if (!allChildFormats.count(cf))
-                                    throw SpecValidationError(
-                                        "Feld " + key + ", TLV-Kind '" + seKey +
-                                        "': Format '" + cf +
-                                        "' unzulässig - die TLV-Länge liegt im "
-                                        "Length-Feld, L-präfixierte Formate "
-                                        "(llchar, ...), 'bitmap', 'remaining' "
-                                        "und 'nop' sind bei TLV-Kindern nicht "
-                                        "erlaubt (erlaubt: binary, char, "
-                                        "numeric, nopad_char)",
-                                        c["format"].id(), smap);
-                            }
-                            if (hasKey(c, "encoding")) {
-                                const auto ce = toUpper(getStr(c, "encoding"));
-                                if (!allChildEncodings.count(ce))
-                                    throw SpecValidationError(
-                                        "Feld " + key + ", TLV-Kind '" + seKey +
-                                        "': Encoding '" + ce +
-                                        "' unzulässig (erlaubt: ascii, "
-                                        "ebcdic, bcd, binary)",
-                                        c["encoding"].id(), smap);
-                                if (hasKey(c, "format")) {
-                                    const auto cf = toUpper(getStr(c, "format"));
-                                    if (textChildFormats.count(cf) &&
-                                        ce != "ASCII" && ce != "BCD" && ce != "EBCDIC")
-                                        throw SpecValidationError(
-                                            "Feld " + key + ", TLV-Kind '" + seKey +
-                                            "': Text-Format '" + cf +
-                                            "' benötigt ein Encoding ascii, "
-                                            "ebcdic oder bcd ('" + ce +
-                                            "' ist für Text-Kinder nicht "
-                                            "verwendbar)",
-                                            c["encoding"].id(), smap);
-                                }
-                            }
-                        }
-                    }
+                    if (ch.is_map())
+                        // FR-1 (0.5.0, D5) / 0.6.4: Whitelist + Container-Kind-
+                        // Prüfung inkl. Rekursion auf Enkel-Tags (s. Helper).
+                        validateTlvChildMap(ch, key, smap);
                 }
             }
         }
@@ -712,10 +767,13 @@ namespace TNG_NAMESPACE::spec {
             f.sign = sg;
         }
 
-        // Warnung wenn length == 0 bei einem Feld das Daten erwartet
+        // Warnung wenn length == 0 bei einem Feld das Daten erwartet.
+        // 0.6.4: Container-Kinder (eigener 'tlv'-Block, kein 'format' nötig)
+        // erwarten keine Daten — der äußere TLV-Frame trägt die Länge.
+        const bool isContainerNode = f.format.empty() && hasKey(node, "tlv");
         const bool expectsData = (f.format != "NOP" && f.format != "UNUSED" &&
             f.format != "BITMAP" && f.format != "REMAINING" &&
-            f.type == SpecFieldType::SCALAR);
+            f.type == SpecFieldType::SCALAR && !isContainerNode);
         const bool hasVariablePrefix = (f.format.find('L') == 0); // LL, LLL etc.
         if (expectsData && !hasVariablePrefix && f.length == 0)
             TNG_LOG_WARN("[SpecDecoder] Feld '{}' (format={}) hat length=0",
@@ -761,6 +819,34 @@ namespace TNG_NAMESPACE::spec {
                     const auto seKey = toStdString(entry.key());
                     const int  seNum = parseTlvChildKey(seKey, asHex, entry, smap);
                     SpecField child = parseSpecField(entry, seEnc, seKey, smap, depth + 1);
+                    // 0.6.4: Container-Kind (eigener 'tlv'-Block = constructed):
+                    // Fail-closed-Guard auf dem gemeinsamen Pfad (gilt für
+                    // Message-Specs UND Field-only-Specs; bei Message-Specs
+                    // ist validateTlvChildMap der Primärcheck, hier die
+                    // Fail-closed-Doppelprüfung).
+                    if (hasKey(entry, "tlv")) {
+                        const ryml::ConstNodeRef ct = entry["tlv"];
+                        if (!getBool(ct, "ber", false) &&
+                            (!hasKey(ct, "tag_bytes") || !hasKey(ct, "len_bytes")))
+                            throw SpecValidationError(
+                                "TLV-Kind '" + seKey + "': der 'tlv'-Block eines "
+                                "Container-Kinds benötigt 'ber: true' oder "
+                                "'tag_bytes' und 'len_bytes'",
+                                ct.id(), smap);
+                        for (const char* badKey : { "format", "length", "encoding" })
+                            if (hasKey(entry, badKey))
+                                throw SpecValidationError(
+                                    "TLV-Kind '" + seKey + "': ein Container-Kind "
+                                    "(eigener 'tlv'-Block) darf '" +
+                                    std::string(badKey) + "' nicht deklarieren "
+                                    "(das äußere TLV-Frame trägt Tag + Länge)",
+                                    entry[badKey].id(), smap);
+                        // Container-Kinder sind composite: NESTED (damit die
+                        // Introspektion is_nested = true meldet). parseSpecField
+                        // hatte ohne 'children'/'type'/'format' nur SCALAR
+                        // abgeleitet — hier nachkorrigiert.
+                        child.type = SpecFieldType::NESTED;
+                    }
                     // FR-1 (0.5.0, D5): Text-Kinder (char/numeric/nopad_char)
                     // brauchen ein erlaubtes Encoding (explizit deklariert ODER
                     // vererbt) - ansonsten wäre die Codec-Konversion beim
@@ -1105,33 +1191,48 @@ namespace TNG_NAMESPACE::spec {
         tlv_detail::TlvChildMap childMap;
         for (const auto& [tag, child] : f.tlv_children) {
             tlv_detail::TlvChildInfo info;
-            const auto cf = child.format; // bereits Uppercase (parseSpecField)
-            info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR" ||
-                         cf == "AMOUNT");
-            if (info.text) {
-                if (child.encoding == "BCD")
-                    info.enc = codec::Encoder::BCD;
-                else if (child.encoding == "ASCII")
-                    info.enc = codec::Encoder::ASCII;
-                else if (child.encoding == "EBCDIC")
-                    info.enc = codec::Encoder::EBCDIC;
-                else
-                    // Defensive: wird primär von validateSpecYaml abgefangen
-                    // (positioniert). Hier nur als Fail-closed-Doppelcheck.
-                    throw std::runtime_error(
-                        "[SpecDecoder] TLV-Kind " + child.description +
-                        " (Format " + cf + ") benötigt ein Encoding (ascii/ebcdic/bcd), "
-                        "erbt aber '" + child.encoding + "'");
-            }
-            else
-                info.enc = codec::Encoder::BINARY; // rohe Bytes, Encoding ignorieren
             info.description = child.has_explicit_description ? child.description : "";
             // [ISO8583] 3.4 (PCI): pro-Tag Sensitivität (Tag-Deklaration
             // 'sensitive: true' oder Erbgang von einem sensitive Container).
             info.sensitive = child.sensitive || f.sensitive;
-            info.amount = (cf == "AMOUNT");
-            info.sign = child.sign;
-            info.scale = child.scale;   // 0.6.0: in parseSpecField bereits validiert
+            if (child.tlv) {
+                // 0.6.4: Container-Kind (constructed): das Kind ist selbst ein
+                // TLV-Container → rekursiver Sub-Parser (dieselbe Funktion →
+                // identischer Codepfad für BER und fix-TLV). Die Sensitivität
+                // des Elterncontainers wird mitgegeben (Kopie), damit sie auf
+                // den Sub-Baum vererbt wird — analog zum Top-Level-Verhalten
+                // (buildFieldParser: 'sensitive: true' auf einem Container
+                // markiert den kompletten Sub-Baum).
+                info.container = true;
+                SpecField sub = child;
+                sub.sensitive = info.sensitive;
+                info.subParser = buildTlvFieldParser(sub);
+            }
+            else {
+                const auto cf = child.format; // bereits Uppercase (parseSpecField)
+                info.text = (cf == "CHAR" || cf == "NUMERIC" || cf == "NOPAD_CHAR" ||
+                             cf == "AMOUNT");
+                if (info.text) {
+                    if (child.encoding == "BCD")
+                        info.enc = codec::Encoder::BCD;
+                    else if (child.encoding == "ASCII")
+                        info.enc = codec::Encoder::ASCII;
+                    else if (child.encoding == "EBCDIC")
+                        info.enc = codec::Encoder::EBCDIC;
+                    else
+                        // Defensive: wird primär von validateSpecYaml abgefangen
+                        // (positioniert). Hier nur als Fail-closed-Doppelcheck.
+                        throw std::runtime_error(
+                            "[SpecDecoder] TLV-Kind " + child.description +
+                            " (Format " + cf + ") benötigt ein Encoding (ascii/ebcdic/bcd), "
+                            "erbt aber '" + child.encoding + "'");
+                }
+                else
+                    info.enc = codec::Encoder::BINARY; // rohe Bytes, Encoding ignorieren
+                info.amount = (cf == "AMOUNT");
+                info.sign = child.sign;
+                info.scale = child.scale;   // 0.6.0: in parseSpecField bereits validiert
+            }
             childMap[static_cast<std::size_t>(tag)] = std::move(info);
         }
 
