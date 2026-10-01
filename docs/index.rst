@@ -38,6 +38,8 @@ Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
    plans/tlv-typed-children-plan
    plans/remaining-encoding-spec-schema
    plans/fr3-nested-text-container-fix-plan
+   plans/fe1-field-only-spec-plan
+   plans/bertlv-constructed-tlv-children-plan
 
 .. toctree::
    :maxdepth: 1
