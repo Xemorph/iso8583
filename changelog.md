@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.6.4
+
+### `[+](Added)` BERTLV/Fix-TLV: constructed-TLV-Kinder rekursiv dekodieren/kodieren
+
+- Ein TLV-Kind mit eigenem `tlv:`-Block (`tlv: { ber: true }` oder
+  `tlv: { tag_bytes, len_bytes }`) ist jetzt ein *constructed*-Container
+  (ISO/IEC 8825-1, EMV Book 3 — z. B. Tag `69` *Transaction Status
+  Information* mit Tags wie `63`): sein Wert ist selbst eine Folge von
+  TLVs und wird bei der Dekodierung rekursiv über einen eigenen
+  Sub-Parser in eine Sub-`Message` aufgelöst; beim Re-Encode wird die
+  Sub-`Message` byte-identisch zurückkodiert.
+- Die inneren TLVs sind über die bestehende Punkt-Notation adressierbar
+  (z. B. `57.69.63`: DE57 → Tag `69` → Tag `63`); der Sub-Parser wird an
+  die Sub-Nachricht angehängt, sodass sie sich selbst re-serialisieren
+  kann. Beide TLV-Formen (BER **und** fixes TLV) nutzen denselben
+  Codepfad (Policy-agnostisch); die Rekursionstiefe ist durch die
+  bestehende ≤ 200-Ebenen-Begrenzung gedeckt.
+- Ohne eigene `children:` ist das Kind ein *dynamischer* Container
+  (innere Tags werden dynamisch dekodiert); deklarierte `children:`
+  (Enkel-Tags) werden mit denselben Whitelist-Regeln rekursiv validiert.
+- Fail-closed beim Laden (positionierte `SpecValidationError`):
+  - Container-Kinder dürfen kein `format:`/`length:`/`encoding:`
+    deklarieren (das äußere TLV-Frame trägt Tag + Länge);
+  - der `tlv:`-Block des Kinds benötigt `ber: true` **oder**
+    `tag_bytes`/`len_bytes`.
+- Ein constructed-Tag **ohne** `tlv:`-Block bleibt ein dynamischer
+  `BinaryField`-Blob (Rohbytes) wie bisher — keine implizite Erkennung
+  über das Constructed-Bit (`0x20`).
+- PCI: `sensitive: true` auf dem Container-Kind verbreitet sich auf den
+  Sub-Baum (Masking in `dump()`/`operator<<`); der Strict-Modus
+  propagiert auf den Kind-Sub-Parser.
+- Introspektion: constructed-Kinder melden `is_nested = true`,
+  `tlv_is_ber` nach dem eigenen `tlv:`-Block, `tlv_children` rekursiv
+  gefüllt. **Keine** öffentliche API-/ABI-Änderung (`TlvChildInfo` ist
+  privat).
+- Key-Typ: 2-Byte-Sub-Tags (≥ `0x8000`) unterliegen der bestehenden
+  `TNG_KEY_TYPE`-Regel — im Default-Build (int16) Warnung + Überspringen
+  (kein Fehlrouting), mit `ISO8583_BERTLV` (int32) voll unterstützt.
+- Tests: Parser-Ebene + Full-Spec (BERTLV und fixes TLV) + Loader
+  (Fail-closed) + Introspektion + Strict-Propagation + Key-Typ (beide
+  Builds) + Field-only-Specs.
+- Doku: `docs/internals/spec_schema.md` §6, `docs/internals/yaml_format.md`,
+  `include/iso8583/AGENTS.md`, `include/iso8583/ISOSpec.hh`
+  (`SpecFieldInfo::tlv_children`-Doxygen).
+
 ## 0.6.3
 
 ### `[+](Added)` Fix-TLV: `len_bytes` jetzt bis 3 (davor max. 2)
