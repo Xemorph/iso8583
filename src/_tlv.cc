@@ -123,6 +123,11 @@ namespace TNG_NAMESPACE::tlv_detail {
         if (child && child->container && child->subParser) {
             auto subMsg = std::make_shared< ::TNG_NAMESPACE::ISOMessage >(
                 static_cast<TNG_KEY_TYPE>(se_num));
+            // ZUERST den Sub-Parser anhängen: ISOMessage::parser() übernimmt
+            // die Beschreibung des Basis-Parsers ("<tlv>"), erst danach die
+            // deklarierte (Kind-)Beschreibung setzen, damit sie bleibt
+            // (s. ISOMessage::parser, _components.cc).
+            subMsg->parser(child->subParser);
             // `description` zeigt in Parser-langlebigen Speicher (s.
             // ISOTLVParser::description_for_wire) — sichere, nicht
             // kopierende Sicht.
@@ -144,7 +149,6 @@ namespace TNG_NAMESPACE::tlv_detail {
             // die wire_offset seiner eigenen Kinder.
             const std::size_t value_wire = wire_offset + (wire_len - data_len);
             (void)child->subParser->unparse(subMsg, valueBytes, value_wire);
-            subMsg->parser(child->subParser);
             msg->set(subMsg);
             return;
         }
