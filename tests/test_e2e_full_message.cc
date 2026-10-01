@@ -489,3 +489,119 @@ fields:
     // ── Roundtrip: erneutes Serialisieren muss das Original reproduzieren ────
     CHECK(msg->parse(msg) == raw);
 }
+
+// =============================================================================
+// Szenario 6: BMP 48 - fix-TLV mit 3-bytes Langenfeld (len_bytes: 3)
+// =============================================================================
+//
+// Deckt die Erweiterung der fix-TLV-Laufzeit-Distribution auf len_bytes bis
+// 3 ab (davor: max. 2; hoeheres fiel per Warnung auf den Mastercard-Default
+// 2/2 zurueck und dekodiert/serialisiert das Laengenfeld falsch). Der
+// Byte-fuer-Byte-Roundtrip ist der eigentliche Beweis: waere der Laengen-
+// Parser versehentlich auf 2 Bytes instanziiert, liese er aus "004" den Wert
+// 0, verschob den Tag-Offset und die Re-Serialisierung weicht vom Original ab.
+
+TEST_CASE("E2E - Authorization Request with BMP 48 (fixed TLV, len_bytes=3)",
+    "[e2e][tlv][len3]")
+{
+    E2ETempYaml yaml(R"(
+spec: "E2E fixed TLV len_bytes=3 Auth Request"
+encoding: ebcdic
+
+fields:
+  "000": { format: numeric,  length: 4 }
+  "001": { format: bitmap,   length: 8 }
+  "002": { format: llchar,   length: 19, description: "PAN" }
+  "003": { format: numeric,  length: 6,  description: "Processing Code" }
+  "004": { format: numeric,  length: 12, description: "Amount" }
+  "011": { format: numeric,  length: 6,  description: "STAN" }
+  "048":
+    format: lllbinary
+    length: 999
+    description: "Additional Data - Private Use, 3-byte length"
+    tlv:
+      tag_bytes: 2
+      len_bytes: 3
+      tcc: true
+    children:
+      "60":
+        format: binary
+        length: 8
+        description: "SE60 - Three-byte-length Sub-Element"
+      "72":
+        format: binary
+        length: 50
+        description: "SE72 - Three-byte-length Sub-Element"
+  "049": { format: numeric,  length: 3,  description: "Currency Code" }
+)");
+
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    // ── Wire-Buffer aufbauen (alles EBCDIC außer den TLV-Rohdaten) ───────────
+    // SEs im aufsteigenden Tag-Wert (60 vor 72), damit der Byte-Roundtrip die
+    // identische Wire-Reihenfolge reproduziert (parse() emittiert nach
+    // sortierten SE-Keys).
+    std::vector<uint8_t> raw;
+    append(raw, ebcdic_b("0100"));                          // MTI
+    append(raw, makeBitmap({ 2, 3, 4, 11, 48, 49 }));        // Bitmap
+
+    append(raw, ebcdic_b("16"));
+    append(raw, ebcdic_b("5555555555554444"));               // DE2: PAN
+    append(raw, ebcdic_b("000000"));                          // DE3
+    append(raw, ebcdic_b("000000098765"));                    // DE4
+    append(raw, ebcdic_b("000123"));                          // DE11
+
+    // DE48: TCC='P' + SE60 (LEN "003", 3 rohe Bytes) + SE72 (LEN "004",
+    // 4 rohe Bytes). Laenge ist ein 3-bytes EBCDIC-Zahlenfeld.
+    std::vector<uint8_t> de48_payload;
+    append(de48_payload, ebcdic_b("P"));                      // TCC
+    append(de48_payload, ebcdic_b("60"));                     // SE60: TAG
+    append(de48_payload, ebcdic_b("003"));                    // SE60: LEN (3 Bytes)
+    const std::vector<uint8_t> se60_data{ 0x11, 0x22, 0x33 };
+    append(de48_payload, se60_data);
+    append(de48_payload, ebcdic_b("72"));                     // SE72: TAG
+    append(de48_payload, ebcdic_b("004"));                    // SE72: LEN (3 Bytes)
+    const std::vector<uint8_t> se72_data{ 0xDE, 0xAD, 0xBE, 0xEF };
+    append(de48_payload, se72_data);
+    // 1 (TCC) + (2+3+3) (SE60) + (2+3+4) (SE72) = 18 Bytes
+    REQUIRE(de48_payload.size() == 18);
+    append(raw, ebcdic_b("018"));                             // LLL-Prefix (18 Bytes)
+    append(raw, de48_payload);
+
+    append(raw, ebcdic_b("978"));                             // DE49
+
+    // ── Dekodieren ───────────────────────────────────────────────────────────
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    const auto consumed = msg->unparse(msg, raw);
+    REQUIRE(consumed == raw.size());
+
+    CHECK(msg->mti() == "0100");
+    CHECK(msg->isAuthorization());
+
+    CHECK(msg->get<OpaqueField>(2)->value() == "5555555555554444");
+    CHECK(msg->get<OpaqueField>(3)->value() == "000000");
+    CHECK(msg->get<OpaqueField>(4)->value() == "000000098765");
+    CHECK(msg->get<OpaqueField>(11)->value() == "000123");
+    CHECK(msg->get<OpaqueField>(49)->value() == "978");
+
+    auto de48 = msg->get<Message>(48);
+    REQUIRE(de48 != nullptr);
+
+    constexpr TNG_KEY_TYPE TCC_KEY = -2;
+    auto tcc = de48->get<OpaqueField>(TCC_KEY);
+    REQUIRE(tcc != nullptr);
+    CHECK(tcc->value() == "P");
+
+    auto se60 = de48->get<BinaryField>(60);
+    REQUIRE(se60 != nullptr);
+    CHECK(se60->value() == se60_data);
+
+    auto se72 = de48->get<BinaryField>(72);
+    REQUIRE(se72 != nullptr);
+    CHECK(se72->value() == se72_data);
+
+    // ── Roundtrip: erneutes Serialisieren muss das Original reproduzieren ────
+    CHECK(msg->parse(msg) == raw);
+}

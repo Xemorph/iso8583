@@ -1071,6 +1071,39 @@ fields:
     CHECK_FALSE(de2->tlv_is_ber);
 }
 
+TEST_CASE("Loader - fixed TLV with len_bytes=3 loads (fixed SE mode)", "[spec][tlv][len3]") {
+    // 0.6.3: fix-TLV mit len_bytes bis 3 wird angenommen (davor nur bis 2;
+    // hoeheres fiel zur Laufzeit per Warnung auf den Mastercard-Default zurueck
+    // und dekodiert/serialisiert das Laengenfeld falsch — der Byte-Roundtrip
+    // dafuer ist Szenario 6 in test_e2e_full_message.cc). Hier wird die
+    // Lade-Ebene geprüft: len_bytes: 3 wird ohne Validierungsfehler akzeptiert,
+    // meldet den fixen SE-Modus (kein BER) und registriert das Kind.
+    TempYaml yaml(R"(
+spec: "Fixed TLV len_bytes=3 Loader"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap, length: 8 }
+  "048":
+    type: nested
+    format: lllchar
+    length: 999
+    tlv: { tag_bytes: 2, len_bytes: 3 }
+    children:
+      "26": { format: char, length: 10, description: "Auth Code" }
+)");
+
+    auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
+    REQUIRE(parser != nullptr);
+
+    REQUIRE(spec->has(48));
+    const auto de48 = spec->field(48);
+    REQUIRE(de48.has_value());
+    CHECK_FALSE(de48->tlv_is_ber);              // fixer SE-Modus, kein BER-TLV
+    CHECK(de48->tlv_children.count(26) == 1);   // Kind registriert
+    CHECK(de48->tlv_children.at(26).description == "Auth Code");
+}
+
 // =============================================================================
 // Fehlermeldungs-Tests: verifizieren dass Fehler die richtigen
 // Datei/Zeile/Spalte-Angaben enthalten

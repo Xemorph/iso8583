@@ -464,8 +464,8 @@ fields:
     length: 999
     description: "Additional Data"
     tlv:
-      tag_bytes: 2
-      len_bytes: 2
+      tag_bytes: 2        # 1–2
+      len_bytes: 2        # 1–3 (seit 0.6.3, davor max. 2)
     children:
       "26":                 # dezimale SE-Nummer (NICHT hex — hier kein 'ber: true')
         format: char

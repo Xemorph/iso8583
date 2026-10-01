@@ -200,7 +200,7 @@ Encoding-Einstellung:
 
 | Format | Beschreibung |
 |---|---|
-| `tlv` (über `tlv:`-Knoten) | Festes TLV mit `tag_bytes`, `len_bytes`, `tcc` (Mastercard/Visa-SE) |
+| `tlv` (über `tlv:`-Knoten) | Festes TLV mit `tag_bytes` (1–2), `len_bytes` (1–3, seit 0.6.3), `tcc` (Mastercard/Visa-SE) |
 | `...bertlv` (z. B. `lllbertlv`) | Dynamischer BER-TLV/EMV-Tags; das Präfix verhält sich wie `...binary`. Seit 0.5.0 (FR-2) optional mit `children:`-**Map** (HEX-Tag-Keys) für deklarierte/typisierte Kinder; undeclared Tags bleiben dynamisch. Unzulässig bleiben `type: nested`, ein eigener `tlv:`-Block und `children` als Sequence |
 
 Präfix-Zeichen: `L` (max. 9), `LL` (max. 99), `LLL` (max. 999),

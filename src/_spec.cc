@@ -933,6 +933,42 @@ namespace TNG_NAMESPACE::spec {
             "  Prüfe auf Tippfehler im globalen 'encoding'-Schlüssel oder im Feld selbst.");
     }
 
+    // =============================================================================
+    // makeFixedTlv<TB, LB> - fix-TLV-Parser für eine feste (TagBytes,
+    // LenBytes)-Kombination
+    // =============================================================================
+    // Die Policies FixedNumericTag<N>/FixedNumericLength<N> sind
+    // kompilierungszeitige Typen (N ∈ 1..4, s. _tlv_policy.hh) und müssen
+    // deshalb per Template aufgelöst werden (TB, LB). (TCC, Encoding) sind
+    // dagegen Laufzeit-Werte und werden hier für die drei für den
+    // Length-Zähler zulässigen Encodings ASCII/BCD/EBCDIC weitergedispatcht.
+    // Liefert nullptr, wenn 'enc' kein solches Encoding ist (BINARY/
+    // HEX_EBCDIC) — Defensive-Backstop; auf dem aktuellen Pfad unerreichbar,
+    // da makeTlvParser das Encoding vorher prüft.
+    template <std::size_t TB, std::size_t LB>
+    static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
+        makeFixedTlv(bool tcc, codec::Encoder enc,
+            const tlv_detail::TlvChildMap& childMap, bool sensitiveAll)
+    {
+        if (tcc) {
+            if (enc == codec::Encoder::EBCDIC)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::EBCDIC>, FixedNumericLength<LB, codec::Encoder::EBCDIC>, true, codec::Encoder::EBCDIC>>(childMap, sensitiveAll);
+            if (enc == codec::Encoder::BCD)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::BCD>, FixedNumericLength<LB, codec::Encoder::BCD>, true, codec::Encoder::BCD>>(childMap, sensitiveAll);
+            if (enc == codec::Encoder::ASCII)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::ASCII>, FixedNumericLength<LB, codec::Encoder::ASCII>, true, codec::Encoder::ASCII>>(childMap, sensitiveAll);
+        }
+        else {
+            if (enc == codec::Encoder::EBCDIC)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::EBCDIC>, FixedNumericLength<LB, codec::Encoder::EBCDIC>, false, codec::Encoder::EBCDIC>>(childMap, sensitiveAll);
+            if (enc == codec::Encoder::BCD)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::BCD>, FixedNumericLength<LB, codec::Encoder::BCD>, false, codec::Encoder::BCD>>(childMap, sensitiveAll);
+            if (enc == codec::Encoder::ASCII)
+                return std::make_shared<ISOTLVParser<FixedNumericTag<TB, codec::Encoder::ASCII>, FixedNumericLength<LB, codec::Encoder::ASCII>, false, codec::Encoder::ASCII>>(childMap, sensitiveAll);
+        }
+        return nullptr;
+    }
+
     static ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
         makeTlvParser(int tag_bytes, int len_bytes, bool tcc, codec::Encoder enc, bool ber,
             const tlv_detail::TlvChildMap& childMap,
@@ -944,37 +980,38 @@ namespace TNG_NAMESPACE::spec {
         if (ber)
             return std::make_shared<BERTLVParser>(childMap, sensitiveAll);
 
-        // ── Feste Byte-Anzahl (bisheriges Verhalten, jetzt über
-        //    FixedNumericTag/FixedNumericLength statt der ursprünglichen
-        //    4 Template-Parameter TAG_BYTES/LEN_BYTES/TAG_ENC/LEN_ENC) ────────
-#define MAKE_FIXED_TLV(TB, LB, HAS_TCC, ENC) \
-        std::make_shared<ISOTLVParser< \
-            FixedNumericTag<TB, codec::Encoder::ENC>, \
-            FixedNumericLength<LB, codec::Encoder::ENC>, \
-            HAS_TCC, codec::Encoder::ENC>>(childMap, sensitiveAll)
+        // ── Feste Byte-Anzahl ──────────────────────────────────────────────
+        // Über FixedNumericTag/FixedNumericLength (kompilierungszeitige
+        // Policies, N ∈ 1..4). Unterstützt sind TagBytes ∈ {1, 2} und
+        // LenBytes ∈ {1, 2, 3} (0.6.3: LenBytes von max. 2 auf 3 erweitert)
+        // über alle (TCC × Encoding)-Kombinationen für ASCII/BCD/EBCDIC.
+        // (TagBytes, LenBytes) werden per Template instanziiert; (TCC,
+        // Encoding) werden zur Laufzeit in makeFixedTlv<TB, LB> weiter-
+        // dispatcht.
+        const bool encOk =
+            enc == codec::Encoder::ASCII ||
+            enc == codec::Encoder::BCD   ||
+            enc == codec::Encoder::EBCDIC;
+        if (encOk && (tag_bytes == 1 || tag_bytes == 2)
+            && (len_bytes == 1 || len_bytes == 2 || len_bytes == 3))
+        {
+            if (len_bytes == 1) {
+                if (tag_bytes == 1) return makeFixedTlv<1, 1>(tcc, enc, childMap, sensitiveAll);
+                return makeFixedTlv<2, 1>(tcc, enc, childMap, sensitiveAll);
+            }
+            if (len_bytes == 2) {
+                if (tag_bytes == 1) return makeFixedTlv<1, 2>(tcc, enc, childMap, sensitiveAll);
+                return makeFixedTlv<2, 2>(tcc, enc, childMap, sensitiveAll);
+            }
+            // len_bytes == 3
+            if (tag_bytes == 1) return makeFixedTlv<1, 3>(tcc, enc, childMap, sensitiveAll);
+            return makeFixedTlv<2, 3>(tcc, enc, childMap, sensitiveAll);
+        }
 
-        // tag_bytes == 2, len_bytes == 2
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, true, EBCDIC);
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 2, false, EBCDIC);
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 2, true, BCD);
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 2, false, BCD);
-        if (tag_bytes == 2 && len_bytes == 2 && tcc && enc == codec::Encoder::ASCII)  return MAKE_FIXED_TLV(2, 2, true, ASCII);
-        if (tag_bytes == 2 && len_bytes == 2 && !tcc && enc == codec::Encoder::ASCII)  return MAKE_FIXED_TLV(2, 2, false, ASCII);
-        // tag_bytes == 2, len_bytes == 1
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 1, true, EBCDIC);
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(2, 1, false, EBCDIC);
-        if (tag_bytes == 2 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 1, true, BCD);
-        if (tag_bytes == 2 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(2, 1, false, BCD);
-        // tag_bytes == 1, len_bytes == 1
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(1, 1, true, EBCDIC);
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::EBCDIC) return MAKE_FIXED_TLV(1, 1, false, EBCDIC);
-        if (tag_bytes == 1 && len_bytes == 1 && tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(1, 1, true, BCD);
-        if (tag_bytes == 1 && len_bytes == 1 && !tcc && enc == codec::Encoder::BCD)    return MAKE_FIXED_TLV(1, 1, false, BCD);
-
-#undef MAKE_FIXED_TLV
-
-        // Fallback
-        TNG_LOG_WARN("[SpecDecoder] TLV tag_bytes={} len_bytes={} nicht unterstützt – "
+        // Fallback (außerhalb TagBytes ∈ {1, 2} / LenBytes ∈ {1, 2, 3} oder
+        // unzulässiges Encoding): bisheriges Verhalten, Warnung + Default.
+        TNG_LOG_WARN("[SpecDecoder] TLV tag_bytes={} len_bytes={} nicht unterstützt "
+            "(erlaubt: tag_bytes 1-2, len_bytes 1-3) – "
             "Mastercard-Default (2,2,false,EBCDIC)", tag_bytes, len_bytes);
         return std::make_shared<ISOTLVParser<
             FixedNumericTag<2, codec::Encoder::EBCDIC>,

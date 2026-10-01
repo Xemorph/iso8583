@@ -243,6 +243,12 @@ fields:
     "26": { format: char, length: 10, description: "…" }   # dezimale SE-Nummern
 ```
 
+`tag_bytes` akzeptiert 1–2, `len_bytes` 1–3 (seit 0.6.3, davor max. 2) —
+jeweils für `ascii`/`ebcdic`/`bcd` (via `tlv.encoding` oder vererbt) und
+mit/ohne `tcc`. Werte außerhalb (z. B. `len_bytes: 4`) werden zur Laufzeit
+mit Warnung auf den Mastercard-Default (`tag_bytes`/`len_bytes` = 2/2, EBCDIC)
+abgeleitet.
+
 **BER-TLV (EMV), `tlv: { ber: true }`:**
 
 ```yaml

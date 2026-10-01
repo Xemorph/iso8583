@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.3
+
+### `[+](Added)` Fix-TLV: `len_bytes` jetzt bis 3 (davor max. 2)
+
+- `tlv: { tag_bytes, len_bytes }` (fixer TLV, z. B. Mastercard/Visa-SE)
+  unterstützt jetzt `len_bytes` bis **3** (davor nur 1–2); `tag_bytes` bleibt
+  1–2, jeweils für `ascii`/`ebcdic`/`bcd` mit/ohne `tcc`.
+- Zuvor fiel jeder andere Wert (z. B. `len_bytes: 3`) per Warnung auf den
+  Mastercard-Default (`tag_bytes`/`len_bytes` = 2/2, EBCDIC) zurück und
+  dekodiert/serialisiert das Längenfeld falsch. In-Scope-Werte instanzieren
+  jetzt den korrekten `FixedNumericLength<N>`-Parser; außerhalb des Supports
+  (`len_bytes > 3`, `tag_bytes > 2`) bleibt Warnung + Default.
+- Intern: die handverwaltete Dispatch-Tabelle in `makeTlvParser` durch eine
+  kompakte `tag_bytes`×`len_bytes`-Auflösung (Policy-Templates) ersetzt; die
+  Policy-Ebene (`_tlv_policy.hh`) unterstützte bereits N ≤ 4.
+- Tests: E2E-Roundtrip mit 3-bytes EBCDIC-Länge (`test_e2e_full_message.cc`,
+  Tag `[len3]`) + Loader-Introspection (`test_spec_loader.cc`).
+
 ## 0.6.2
 
 ### `[+](Added)` Opt-in `strict_length`: Unterlängen-Prüfung bei Feldern fester Länge (FR-5)
