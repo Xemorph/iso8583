@@ -37,6 +37,8 @@ add_executable(libiso8583_tests
     # (0.6.0, AMOUNT) AmountField: jPOS-ISOAmount-Konvention (Währung+Skala+Betrag)
     test_amount.cc
     test_strict_length.cc
+    # (0.7.0, FR-6) Längenpräfix-Encoding unabhängig vom Nutzdaten-Encoding
+    test_prefix_encoding.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über
