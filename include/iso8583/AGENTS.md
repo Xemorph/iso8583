@@ -285,6 +285,7 @@ for (const auto& f : spec->fields())
 | `amount_scale` | `std::optional<int>` | Deklarierte `scale:` eines `format: amount`-Felds; `std::nullopt` = jPOS-Form (kein `scale:`-Key) und für alle Nicht-`amount`-Felder (seit 0.6.0) |
 | `amount_signed` | `bool` | `true`, wenn ein `format: amount`-Feld `sign: true` deklariert (führendes Vorzeichenzeichen C/D/+/-); sonst `false` (nach 0.6.0) |
 | `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
+| `bcd_pad` | `std::string` | Effektives BCD-Padding bei ungerader Ziffernzahl: `"right_zero"` (Default), `"right_f"`, `"left_zero"` bei Feldern mit BCD-**Nutzdaten** (`numeric`/`amount`/`*char`/`*num`/`remaining`, auch TLV-Kinder), sonst `""` (0.8.0, FR-7) |
 | `prefix_encoding` | `std::string` | Effektives Längenpräfix-Encoding eines variablen Felds: `"ASCII"`, `"EBCDIC"`, `"BCD"`, `"BINARY"` bzw. `""` (encoding-neutrale Formate). Gleicht `encoding`, wenn der YAML-Key `prefix_encoding:` fehlt (Default), sonst der deklarierte Wert (0.7.0, FR-6) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
@@ -307,6 +308,11 @@ for (const auto& f : spec->fields())
 > `AmountForm` und die neuen Mitglieder/den neuen Konstruktor von
 > `AmountField` ändern Layout bzw. Vtable — Shared-Library-Consumer müssen
 > neu kompiliert werden.
+
+> **ABI-Hinweis (0.8.0):** `bcd_pad` (`SpecFieldInfo`) sowie die neuen
+> Mitglieder von `ISOFieldParserPtrBase` (BCD-Padding-Zustand) ändern das
+> Layout — Shared-Library-Consumer müssen gegen die neue Bibliothek neu
+> kompiliert werden.
 
 > **ABI-Hinweis (0.7.0):** `prefix_encoding` (`SpecFieldInfo`) ist ein
 > neues Mitglied desselben per-Wert zurückgegebenen `SpecFieldInfo` —
@@ -585,6 +591,17 @@ fields:
   und ein Root-Key werden Fail-closed beim Laden abgewiesen
   (`SpecValidationError`). Introspektion: `SpecFieldInfo::prefix_encoding`.
   Normative Details: `docs/internals/spec_schema.md` §3.
+- **`bcd_pad:` (Root-Default oder Feld-Key, 0.8.0, FR-7)** — Padding bei
+  gepacktem BCD mit **ungerader** Ziffernzahl: `right_zero` (Default,
+  `123` → `12 30`), `right_f` (`12 3F`), `left_zero` (`01 23`). Nur bei
+  BCD-Nutzdaten (`numeric`/`amount`/`*char`/`*num`/`remaining`, TLV-Kinder),
+  nie am Längenpräfix (`0010` bei LLL bleibt). Ohne Key: Wire byte-identisch
+  zu 0.7.0, Padding-Nibble beim Decode ungeprüft; mit Key: abweichendes
+  Nibble → strict `std::runtime_error`, sonst Warnung. TLV-Kinder mit
+  ungerader `length` nutzen diese als Ziffernzahl. Fail-closed beim Laden
+  (ungültiger Wert, Nicht-BCD-Feld, TLV-Container/constructed-Kind).
+  Introspektion: `SpecFieldInfo::bcd_pad`. Normativ:
+  `docs/internals/spec_schema.md` §3 „BCD-Padding".
 - `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
   (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**. Seit 0.5.0 (FR-2)
   darf zusätzlich eine optionale `children:`-**Map** (HEX-Tag-Keys) bekannte/
@@ -816,6 +833,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | Constructed-Kind (eigener `tlv:`-Block) mit `format:`/`length:`/`encoding:` (0.6.4) | Das äußere TLV-Frame trägt Tag + Länge — diese Keys sind bei Container-Kindern verboten, sonst `SpecValidationError` (Fail-closed); für die rekursive Dekodierung genügt `tlv:` (+ optional `children:`) |
+| `bcd_pad` an Nicht-BCD-Feldern, `*binary`/`bertlv`-Containern oder constructed-Kindern (0.8.0) | Nur bei BCD-**Nutzdaten** gültig (`numeric`/`amount`/`*char`/`*num`/`remaining` mit `encoding: bcd`, TLV-Kinder) und nie am Längenpräfix — sonst `SpecValidationError` beim Laden (Fail-closed); ohne Key gilt `right_zero` ohne Decode-Validierung |
 | `prefix_encoding` an fixen Formaten, `*binary`/`bertlv`, TLV-Kindern oder als Root-Key (0.7.0) | Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix) gültig; bei `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec, bei TLV-Kindern liegt die Länge im Length-Feld des Frames, ein Root-Level-Default existiert nicht — sonst `SpecValidationError` beim Laden (Fail-closed) |
 
 ---

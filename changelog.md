@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### `[+](Added)` Konfigurierbares Padding bei gepacktem BCD mit ungerader Ziffernzahl (FR-7: `bcd_pad:`)
+
+- Neuer optionaler Key `bcd_pad:` (`right_zero` | `right_f` | `left_zero`,
+  Feld-Key oder Root-Default, Feld überschreibt Root): legt fest, wo das
+  übrige Nibble bei **ungerader** BCD-Ziffernzahl steht und womit es gefüllt
+  wird (`123` → `12 30` / `12 3F` / `01 23`). Default `right_zero` = bisheriges
+  Verhalten — ohne den Key bleibt die Wire byte-identisch zu 0.7.0.
+- Scope: BCD-**Nutzdaten** (`numeric`, `amount`, `*char`, `*num`, `remaining`,
+  typisierte TLV-Kinder); nie das Längenpräfix (`0010` bei LLL bleibt),
+  `binary`-Formate oder TLV-Container. **Fail-closed** beim Laden
+  (positionierte `SpecValidationError`): ungültiger Wert; Feld ohne
+  BCD-Nutzdaten; TLV-Container/constructed-Kind.
+- **Decode:** mit deklariertem `bcd_pad` wird das Padding-Nibble validiert
+  (strict: positionierter `std::runtime_error`, nicht-strikt: Warnung); ohne
+  Deklaration bleibt es wie bisher ungeprüft. TLV-Kinder mit ungerader
+  deklarierter `length` (Ziffern) nutzen diese als Ziffernzahl.
+- **Introspektion:** `SpecFieldInfo::bcd_pad` (`""` bei Nicht-BCD-Feldern).
+  **ABI:** neue Mitglieder in `SpecFieldInfo` und `ISOFieldParserPtrBase` —
+  Layout-Änderung, Shared-Library-Consumer müssen neu kompiliert werden.
+  `codec::as<>`/`codec::to<>` erhalten das Default-Argument
+  `codec::BcdPad pad = RIGHT_ZERO` (source-kompatibel).
+- Tests: neue Suite `tests/test_bcd_pad.cc` (Tag `[bcdpad]`).
+
 ## 0.7.0
 
 ### `[+](Added)` Längenpräfix-Encoding unabhängig vom Nutzdaten-Encoding (FR-6: `prefix_encoding:`)
