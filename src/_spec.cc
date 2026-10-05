@@ -246,7 +246,8 @@ namespace TNG_NAMESPACE::spec {
         const SourceMap* smap) {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children",
-            "tlv", "sensitive", "scale", "sign", "strict_length"
+            "tlv", "sensitive", "scale", "sign", "strict_length",
+            "prefix_encoding"   // FR-6 (0.7.0)
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -378,8 +379,11 @@ namespace TNG_NAMESPACE::spec {
                         "'ber: true' oder 'tag_bytes' und 'len_bytes'",
                         ct.id(), smap);
                 // Widersprüchliche Keys: das äußere TLV-Frame trägt Tag +
-                // Länge, ein Container-Kind ist kein Skalar.
-                for (const char* badKey : { "format", "length", "encoding" })
+                // Länge, ein Container-Kind ist kein Skalar. (FR-6:
+                // 'prefix_encoding' ebenfalls — die TLV-Länge liegt im
+                // Length-Feld des Frames, nicht in einem Längenpräfix.)
+                for (const char* badKey : { "format", "length", "encoding",
+                    "prefix_encoding" })
                     if (hasKey(c, badKey))
                         throw SpecValidationError(
                             "Feld " + fieldKey + ", TLV-Kind '" + seKey +
@@ -401,6 +405,17 @@ namespace TNG_NAMESPACE::spec {
                 }
                 continue;
             }
+
+            // FR-6: auch bei Nicht-Container-TLV-Kindern ist
+            // 'prefix_encoding' widersprüchlich (die TLV-Länge liegt im
+            // Length-Feld des Frames) — unabhängig von der
+            // Format/Encoding-Whitelist prüfen.
+            if (hasKey(c, "prefix_encoding"))
+                throw SpecValidationError(
+                    "Feld " + fieldKey + ", TLV-Kind '" + seKey +
+                    "': 'prefix_encoding' ist bei TLV-Kindern unzulässig "
+                    "(die TLV-Länge liegt im Length-Feld des Frames)",
+                    c["prefix_encoding"].id(), smap);
 
             if (hasKey(c, "format")) {
                 const auto cf = toUpper(getStr(c, "format"));
@@ -616,6 +631,14 @@ namespace TNG_NAMESPACE::spec {
                 " Ebenen) - vermutlich eine fehlerhafte 'children'-Struktur in der Spec.");
     }
 
+    // Forward-Deklarationen (Definitionen weiter unten im Dispatch-Abschnitt):
+    // parseSpecField prüft FR-6 ('prefix_encoding')-Kombinationen Fail-closed
+    // gegen die Dispatch-Tabelle.
+    using ParserFactory = std::function<
+        ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr(
+            int len, const std::string& desc)>;
+    static const std::unordered_map<std::string, ParserFactory>& parserTable();
+
     // Forward-Deklaration für rekursiven Aufruf
     static SpecField parseSpecField(ryml::ConstNodeRef node,
         const std::string& defaultEncoding,
@@ -676,6 +699,16 @@ namespace TNG_NAMESPACE::spec {
         // NOP-Felder: nur ein Index-Placeholder wegen des +1-Offsets im Parser.
         // length und description sind bedeutungslos und müssen nicht angegeben werden.
         if (f.format == "NOP" || f.format == "UNUSED") {
+            // FR-6: 'prefix_encoding' auf NOP/UNUSED ist widersprüchlich
+            // (kein Längenpräfix) — Fail-closed statt stilles Verschlingen
+            // durch den frühen Return.
+            if (hasKey(node, "prefix_encoding"))
+                throw SpecValidationError(
+                    "Feld '" + getStr(node, "description", "<unnamed>") +
+                    "': 'prefix_encoding' ist bei 'format: " +
+                    toLower(f.format) + "' nicht gültig (kein Längenpräfix "
+                    "vorhanden)",
+                    node["prefix_encoding"].id(), smap);
             f.length = 0;
             f.description = getStr(node, "description", "<nop>");
             f.encoding = "";
@@ -769,6 +802,65 @@ namespace TNG_NAMESPACE::spec {
                     "(Vorzeichenzeichen ist keine BCD-Ziffer)",
                     node["sign"].id(), smap);
             f.sign = sg;
+        }
+
+        // FR-6 (0.7.0): optionales Feld-Key 'prefix_encoding' — Encoding des
+        // Längenpräfixes, unabhängig vom Nutzdaten-Encoding (VISA BASE-I:
+        // BCD-/Binär-Längenbyte vor ASCII-/EBCDIC-Nutzdaten). Key weggelassen
+        // = Default = encoding (rein additiv, keine Verhaltensänderung für
+        // Bestandsspecs). Fail-closed-Regeln (positionierte
+        // SpecValidationError, nie rohe std-Exceptions):
+        //   (a) Value-Whitelist ascii|ebcdic|bcd|binary
+        //   (b) nur variable *char/*num-Formate (L-präfixiert); NOP/UNUSED
+        //       haben oben bereits früher abgebrochen; bei *binary/bertlv
+        //       (BERTLV-Kurzform ist zu diesem Punkt auf ...BINARY rewritten)
+        //       bestimmt 'encoding' bereits das Präfix-Codec
+        //   (c) die (format, encoding, prefix_encoding)-Kombination muss in
+        //       der Dispatch-Tabelle existieren (3-teiler Key, wenn das
+        //       Präfix-Encoding von encoding abweicht, sonst 2-teiler)
+        if (hasKey(node, "prefix_encoding")) {
+            const auto pe = toUpper(getStr(node, "prefix_encoding"));
+            const std::string label = getStr(node, "description", "<unnamed>");
+            const ryml::id_type pid = node["prefix_encoding"].id();
+            static const std::set<std::string> peAllowed = {
+                "ASCII", "EBCDIC", "BCD", "BINARY" };
+            if (!peAllowed.count(pe))
+                throw SpecValidationError(
+                    "Feld '" + label + "' hat ungültiges prefix_encoding='" +
+                    pe + "' (erlaubt: ascii, ebcdic, bcd, binary)",
+                    pid, smap);
+            // Format-Basis (nach den L-Präfixen) muss CHAR oder NUM sein.
+            std::size_t lp = 0;
+            while (lp < f.format.size() && f.format[lp] == 'L') ++lp;
+            const std::string base = f.format.substr(lp);
+            if (lp == 0 || (base != "CHAR" && base != "NUM")) {
+                // Kontextsensitive Begründung je Format-Familie.
+                std::string reason;
+                if (base == "BINARY")
+                    reason = "'encoding' bestimmt bei " + base +
+                        " bereits das Präfix-Codec";
+                else if (base == "AMOUNT")
+                    reason = "amount hat kein Längenpräfix";
+                else
+                    reason = "kein Längenpräfix vorhanden";
+                throw SpecValidationError(
+                    "Feld '" + label + "': 'prefix_encoding' ist nur für "
+                    "variablen *char/*num-Formate gültig (format=" +
+                    f.format + ": " + reason + ")",
+                    pid, smap);
+            }
+            // Kombinations-Check gegen die Dispatch-Tabelle.
+            std::string dkey = f.format + "|" + f.encoding;
+            if (pe != f.encoding)
+                dkey += "|" + pe;
+            if (!parserTable().contains(dkey))
+                throw SpecValidationError(
+                    "Feld '" + label + "': Kombination format=" + f.format +
+                    ", encoding=" + f.encoding + ", prefix_encoding=" + pe +
+                    " ist nicht verfügbar (s. Format×Encoding-Matrix in "
+                    "spec_schema.md §3)",
+                    pid, smap);
+            f.prefix_encoding = pe;
         }
 
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet.
@@ -891,10 +983,6 @@ namespace TNG_NAMESPACE::spec {
     // =============================================================================
     // SpecField → ISOFieldParser (Parser-Fabrik)
     // =============================================================================
-
-    using ParserFactory = std::function<
-        ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr(
-            int len, const std::string& desc)>;
 
     static const std::unordered_map<std::string, ParserFactory>& parserTable() {
         using F = ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr;
