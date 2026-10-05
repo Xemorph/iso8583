@@ -1,6 +1,6 @@
 # AGENTS.md — libiso8583 (compact entry point)
 
-C++20 library (CMake project `libiso8583`, target `iso8583`, currently **0.7.0**) that decodes/encodes ISO-8583 messages from declarative **YAML specs**. Proprietary, source-available license (not OSS).
+C++20 library (CMake project `libiso8583`, target `iso8583`, currently **0.7.1**) that decodes/encodes ISO-8583 messages from declarative **YAML specs**. Proprietary, source-available license (not OSS).
 Read this file fully; load the deep-dive files below **only when the task touches that topic**.
 
 ## Terminology (inverted on purpose — do not "fix")

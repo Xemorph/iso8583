@@ -36,7 +36,7 @@ in Field-only-Specs wird `fields:` durch `field:` ersetzt, 0.6.0):
 | `encoding` | String | `""` | Globales Encoding: `ascii` \| `bcd` \| `ebcdic` \| `binary`; kann pro Feld überschrieben werden |
 | `strict` | Bool | `true` | Strikte Dekodierung: Bytes außerhalb der Encoding-Whitelist (z. B. EBCDIC-Steuer-/Binär-Bytes) werden mit positioniertem Fehler abgelehnt; `false` = Legacy-Mapping (`.`-bzw. `?`-Füllzeichen) |
 | `strict_length` | Bool | `false` | Opt-in (0.6.2): Unterlängen-Prüfung bei fester Länge — zu kurze Werte werden beim Serialisieren im strict-Modus abgelehnt statt gepaddet; Root-Default, ein Feld-Key `strict_length` überschreibt pro Feld (Details: [spec_schema.md](spec_schema.md) §9) |
-| `bcd_pad` | String | – (Key fehlt = `right_zero`) | Root-Default (0.8.0, FR-7) für das Padding bei gepacktem BCD mit ungerader Ziffernzahl: `right_zero` \| `right_f` \| `left_zero`; ein Feld-Key `bcd_pad` überschreibt. Details: [spec_schema.md](spec_schema.md) §3 „BCD-Padding" |
+| `bcd_pad` | String | – (Key fehlt = `right_zero`) | Root-Default (0.7.1, FR-7) für das Padding bei gepacktem BCD mit ungerader Ziffernzahl: `right_zero` \| `right_f` \| `left_zero`; ein Feld-Key `bcd_pad` überschreibt. Details: [spec_schema.md](spec_schema.md) §3 „BCD-Padding" |
 | `header` | Integer | – (Key fehlt) | Fester Netzwerk-Header von N Bytes **vor** dem ISO-8583-Nachrichtenbody auf der Wire (z. B. proprietärer Frame-Header). Key fehlt → kein Header. Introspektion: `ISOSpec::hasHeader()` (Key definiert?) und `ISOSpec::headerSize()` (Byte-Anzahl, 0 wenn Key fehlt). Hinweis: Der Parser behandelt die Größe `0` wie "kein Header" (keine Wire-Bytes). |
 | `field` | Map | – (Key fehlt) | **Field-only-Form (0.6.0):** die einzige Feld-Deklaration des Dokuments (nicht-leere Map, Grammatik wie `fields:`-Einträge) — exklusiv mit `fields:`; in Field-only-Dokumenten sind `fields:` und `header:` verboten (Fail-closed). |
 
@@ -218,7 +218,7 @@ sonst Fail-closed (`SpecValidationError` beim Laden) — nur auf variablen
 [spec_schema.md](spec_schema.md) §3, Unterabschnitt
 „Längenpräfix-Encoding".
 
-**BCD-Padding `bcd_pad:` (0.8.0, FR-7):** Bei gepacktem BCD mit ungerader
+**BCD-Padding `bcd_pad:` (0.7.1, FR-7):** Bei gepacktem BCD mit ungerader
 Ziffernzahl legt der optionale Key (Feld oder Root-Default) fest, wo das
 Padding-Nibble steht und womit es gefüllt wird (Wert `123`): `right_zero`
 (Default) → `12 30`, `right_f` → `12 3F`, `left_zero` → `01 23`. Nur bei

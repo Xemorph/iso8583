@@ -149,7 +149,7 @@ namespace TNG_NAMESPACE::spec {
         // strict_length_explicit: im Feld deklariert → überschreibt den Root-Default.
         bool                     strict_length = false;
         bool                     strict_length_explicit = false;
-        // FR-7 (0.8.0): 'bcd_pad:' (Feld-Key oder Root-Default) — Padding bei
+        // FR-7 (0.7.1): 'bcd_pad:' (Feld-Key oder Root-Default) — Padding bei
         // gepacktem BCD mit ungerader Ziffernzahl. bcd_pad_explicit = deklariert
         // (Feld oder Root) → Parser validiert das Padding-Nibble beim Decode.
         codec::BcdPad            bcd_pad = codec::BcdPad::RIGHT_ZERO;
@@ -295,7 +295,7 @@ namespace TNG_NAMESPACE::spec {
             "type", "format", "encoding", "length", "description", "children",
             "tlv", "sensitive", "scale", "sign", "strict_length",
             "prefix_encoding",  // FR-6 (0.7.0)
-            "bcd_pad"           // FR-7 (0.8.0)
+            "bcd_pad"           // FR-7 (0.7.1)
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -935,7 +935,7 @@ namespace TNG_NAMESPACE::spec {
             f.prefix_encoding = pe;
         }
 
-        // FR-7 (0.8.0): optionales Feld-Key 'bcd_pad' — Padding-Nibble bei
+        // FR-7 (0.7.1): optionales Feld-Key 'bcd_pad' — Padding-Nibble bei
         // gepacktem BCD mit ungerader Ziffernzahl (right_zero = Default/Legacy,
         // right_f, left_zero). Fail-closed (positionierte SpecValidationError):
         // ungültiger Wert; Feld ohne BCD-Nutzdaten-Encoding (inkl. TLV-Container,
@@ -1625,7 +1625,7 @@ namespace TNG_NAMESPACE::spec {
         // encoding-neutralen Formaten ist encoding "" → hier ebenfalls "").
         // Läuft rekursiv automatisch auf children/tlv_children.
         info.prefix_encoding = f.prefix_encoding.empty() ? f.encoding : f.prefix_encoding;
-        // FR-7 (0.8.0): effektive BCD-Padding-Variante; "" bei Feldern ohne BCD-Nutzdaten.
+        // FR-7 (0.7.1): effektive BCD-Padding-Variante; "" bei Feldern ohne BCD-Nutzdaten.
         info.bcd_pad = hasBcdData(f) ? bcdPadName(f.bcd_pad) : "";
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche

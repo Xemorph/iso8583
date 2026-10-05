@@ -42,7 +42,7 @@ fields:                 # PFLICHT, nicht-leere Map
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | globales Encoding (Auflösung s. §7) |
 | `strict` | bool | nein | Default `true`; `false` = Legacy-`'.'`/`'?'`-Mapping statt positioned Throw (s. §8) |
 | `strict_length` | bool | nein (Default `false`) | Opt-in (0.6.2): Root-Default für die Unterlängen-Prüfung bei fester Länge — Felder ohne eigenen `strict_length`-Key erben diesen Wert (s. §9) |
-| `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.8.0, FR-7): Root-Default für das BCD-Padding bei ungerader Ziffernzahl — gilt für alle Felder mit BCD-Nutzdaten ohne eigenen `bcd_pad`-Key (§3 „BCD-Padding"); andere Felder bleiben unberührt |
+| `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.7.1, FR-7): Root-Default für das BCD-Padding bei ungerader Ziffernzahl — gilt für alle Felder mit BCD-Nutzdaten ohne eigenen `bcd_pad`-Key (§3 „BCD-Padding"); andere Felder bleiben unberührt |
 | `header` | int | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`) |
 | `definitions` | map | nein | benannte Feld-Bausteine für `!use` |
 | `fields` | map | ja | **nicht-leere** Map `DE-Schlüssel → Feld-Deklaration` |
@@ -72,7 +72,7 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 | `length` | int | ja, **außer** `bitmap`/`nop`/`unused`; bei `remaining` **stets** Pflicht (0.6.0) | fixe Länge **oder** Maximum (variablen Formate/`remaining`). **BCD-Felder: `length` = Ziffernzahl** (1 Byte = 2 Ziffern) |
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | feldweises Override über das globale Encoding (§7) |
 | `prefix_encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | (0.7.0, FR-6): Encoding des **Längenpräfixes**, unabhängig vom `encoding` (Nutzdaten). Default = `encoding`. Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix); Breiten-/Zählregeln und die 25 verfügbaren Kombinationen s. §3 |
-| `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.8.0, FR-7): Padding-Nibble bei gepacktem BCD mit **ungerader** Ziffernzahl; nur bei BCD-**Nutzdaten** (`numeric`, `amount`, `*char`, `*num`, `remaining`, TLV-Kinder), nie am Längenpräfix. Default `right_zero` (Legacy); überschreibt den Root-Default. Details: §3 „BCD-Padding" |
+| `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.7.1, FR-7): Padding-Nibble bei gepacktem BCD mit **ungerader** Ziffernzahl; nur bei BCD-**Nutzdaten** (`numeric`, `amount`, `*char`, `*num`, `remaining`, TLV-Kinder), nie am Längenpräfix. Default `right_zero` (Legacy); überschreibt den Root-Default. Details: §3 „BCD-Padding" |
 | `description` | string | nein | Beschreibung (Introspection + Dump); bei `sensitive`-Feldern die einzige sichtbare Info im Dump |
 | `sensitive` | bool | nein (Default `false`) | PCI-Masking: Wert wird in `dump()`/`operator<<` als `***` gerendert; `value()`/`to_json()` bleiben unmasked. Bei Containern: auf alle Kinder/Tags erbt |
 | `scale` | int ≥ 0 | nein | nur `format: amount`: Standard-ISO-8583-Form (nackte Ziffern, deklarierte Skala, keine Währung im Feld); ohne Key jPOS-Form (§3) |
@@ -215,7 +215,7 @@ prefix_encoding: binary }`).
   `""`). **ABI:** Layout-Änderung von `SpecFieldInfo` —
   Shared-Library-Consumer müssen neu kompiliert werden (0.7.0).
 
-### BCD-Padding (`bcd_pad`, 0.8.0, FR-7)
+### BCD-Padding (`bcd_pad`, 0.7.1, FR-7)
 
 Bei gepacktem BCD mit **ungerader** Ziffernzahl bleibt ein Nibble übrig.
 Der optionale Key `bcd_pad:` legt fest, wo es steht und womit es gefüllt
@@ -261,7 +261,7 @@ wird (Beispielwert `123`):
   `"right_f"` | `"left_zero"` bei BCD-Nutzdaten, sonst `""`).
   **ABI:** Layout-Änderung von `SpecFieldInfo` und
   `ISOFieldParserPtrBase` (neue Mitglieder) — Shared-Library-Consumer
-  müssen neu kompiliert werden (0.8.0).
+  müssen neu kompiliert werden (0.7.1).
 - **Codec-API (fortgeschritten):** `codec::BcdPad`; `codec::as<>`/`codec::to<>`
   haben ein zusätzliches Default-Argument `BcdPad pad = RIGHT_ZERO`
   (source-kompatibel).
@@ -489,7 +489,7 @@ Feld-Encoding  >  globales YAML-Encoding  >  "" (nur encoding-neutrale Formate)
   das eigene Feld — es gibt **keinen** Root-Level-Default und keine
   Vererbung von/auf Kinder (nur `encoding` an sich nimmt am
   Ererbungsmodell teil). Fehlt der Key, gilt `prefix_encoding = encoding`.
-- **`bcd_pad` (0.8.0)** folgt dem Ererbungsmodell *nicht* über Container:
+- **`bcd_pad` (0.7.1)** folgt dem Ererbungsmodell *nicht* über Container:
   es gibt einen Root-Default (alle BCD-Nutzdaten-Felder, auch TLV-Kinder),
   den ein Feld-Key überschreibt; Container selbst tragen keinen Key.
 - Details, EBCDIC-Orakel-Pin und Strict-Regeln: [encoding.md](encoding.md).
@@ -513,8 +513,8 @@ Alle Loader-/Validierungsfehler sind **positionierte**
 | `prefix_encoding` an fixbreiten Formaten / `*binary`/`bertlv`/`amount`/`remaining`/`bitmap`/`nop`/`unused` (0.7.0) | `…'prefix_encoding' ist nur für variablen *char/*num-Formate gültig (format=…: …)` — kontextsensitive Begründung je Format-Familie |
 | `prefix_encoding`-Kombination ohne Dispatch-Eintrag (0.7.0) | `Kombination format=…, encoding=…, prefix_encoding=… ist nicht verfügbar (s. Format×Encoding-Matrix in spec_schema.md §3)` |
 | `prefix_encoding` bei TLV-Kindern / constructed-Kindern / Root-Level (0.7.0) | `…'prefix_encoding' ist bei TLV-Kindern unzulässig (die TLV-Länge liegt im Length-Feld des Frames)` bzw. `…darf 'prefix_encoding' nicht deklarieren…` |
-| `bcd_pad` mit unzulässigem Wert (0.8.0) | `… hat ungültiges bcd_pad='…' (erlaubt: right_zero, right_f, left_zero)` |
-| `bcd_pad` an Feld ohne BCD-Nutzdaten / TLV-Container / constructed-Kind (0.8.0) | `…'bcd_pad' ist nur für Felder mit BCD-Nutzdaten gültig (…)` bzw. `…darf 'bcd_pad' nicht deklarieren…` |
+| `bcd_pad` mit unzulässigem Wert (0.7.1) | `… hat ungültiges bcd_pad='…' (erlaubt: right_zero, right_f, left_zero)` |
+| `bcd_pad` an Feld ohne BCD-Nutzdaten / TLV-Container / constructed-Kind (0.7.1) | `…'bcd_pad' ist nur für Felder mit BCD-Nutzdaten gültig (…)` bzw. `…darf 'bcd_pad' nicht deklarieren…` |
 | Datei > `maxSpecBytes` (Default 32 MiB) / > 1024 Includes / oversized Sidecar | positionierter Fehler bzw. Discard+Regenerierung |
 | rapidyaml-Parsefehler | via prozessweit installierten `ryml`-Callbacks in positionierte Exceptions übersetzt (Default wäre `std::abort()`) |
 
@@ -542,7 +542,7 @@ Präfix-Lesung austreten).
 - DE-Zugriff per Punkt-Notation (`"48.72.1"`); `BinaryField`-Werte
   werden als **großgeschriebene Hex-Zeichenketten** gesetzt
   (`msg->set(52, "0102030405060708")`).
-- **BCD-Padding (0.8.0, FR-7):** `bcd_pad: right_zero|right_f|left_zero`
+- **BCD-Padding (0.7.1, FR-7):** `bcd_pad: right_zero|right_f|left_zero`
   (Root-Default oder Feld-Key) konfiguriert Seite und Füll-Nibble bei
   ungerader BCD-Ziffernzahl (§3 „BCD-Padding").
 - `msg->mti()` wirft `std::logic_error`, wenn kein MTI
@@ -565,7 +565,7 @@ Präfix-Lesung austreten).
   Deployment `SpecLoadOptions::allowSmapWrite=false`.
 - Introspection: `ISOSpec::field(de)` liefert
   `SpecFieldInfo{key, description, format{type, prefix_digits,
-  max_length}, encoding, prefix_encoding (0.7.0), bcd_pad (0.8.0), is_nested,
+  max_length}, encoding, prefix_encoding (0.7.0), bcd_pad (0.7.1), is_nested,
   is_bitmap, children, tlv_children (0.5.0), tlv_is_ber (0.6.0)}` —
   bei `remaining` ist `max_length` das deklarierte Maximum
   (0.6.0; vorher immer 0), bei `nop`/`unused` 0. `tlv_is_ber`
@@ -842,7 +842,7 @@ Wire-Vertrag (s. o.) eindeutig zu halten.
     (0.7.0)** → `SpecValidationError` beim Laden (Fail-closed); der
     Key ist nur auf variablen `*char`/`*num`-Formaten gültig
     (§3, §8).
-15. **`bcd_pad` an Nicht-BCD-Feldern oder Containern (0.8.0)** →
+15. **`bcd_pad` an Nicht-BCD-Feldern oder Containern (0.7.1)** →
     `SpecValidationError` beim Laden (Fail-closed); der Key wirkt nur auf
     BCD-**Nutzdaten** bei ungerader Ziffernzahl, nie auf das
     Längenpräfix. Ohne Deklaration bleibt `right_zero` (Legacy) und das

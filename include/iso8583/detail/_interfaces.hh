@@ -278,7 +278,7 @@ namespace TNG_NAMESPACE {
         // mehr still aufgefüllt (strict: Fehler, nicht-strikt: Warnung + Padding).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable bool strict_length_ = false;
-        // FR-7 (0.8.0): Padding-Variante für gepacktes BCD mit ungerader
+        // FR-7 (0.7.1): Padding-Variante für gepacktes BCD mit ungerader
         // Ziffernzahl (YAML 'bcd_pad:'). bcd_pad_explicit_ = vom Loader gesetzt
         // (Feld-Key oder Root-Default) → Decode validiert das Padding-Nibble;
         // ohne Deklaration bleibt das Legacy-Verhalten (RIGHT_ZERO, ungeprüft).
@@ -315,7 +315,7 @@ namespace TNG_NAMESPACE {
         /// @brief Liefert den Status der Unterlängen-Prüfung.
         [[nodiscard]] bool strictLength() const noexcept { return strict_length_; }
 
-        /// @brief Setzt die BCD-Padding-Variante (FR-7, 0.8.0) und markiert sie als deklariert.
+        /// @brief Setzt die BCD-Padding-Variante (FR-7, 0.7.1) und markiert sie als deklariert.
         ///
         /// Wirkt nur bei Feldern mit BCD-Nutzdaten-Encoding und **ungerader**
         /// Ziffernzahl (nie auf das Längenpräfix). Nach dem Setzen validiert der

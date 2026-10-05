@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 ### `[+](Added)` Konfigurierbares Padding bei gepacktem BCD mit ungerader Ziffernzahl (FR-7: `bcd_pad:`)
 

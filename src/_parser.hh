@@ -575,7 +575,7 @@ namespace TNG_NAMESPACE {
                     }
                 }
 
-                // FR-7 (0.8.0): deklariertes 'bcd_pad:' → Padding-Nibble bei ungerader
+                // FR-7 (0.7.1): deklariertes 'bcd_pad:' → Padding-Nibble bei ungerader
                 // Ziffernzahl validieren. strict: positionierter Fehler; nicht-strikt:
                 // Warnung. Ohne Deklaration (Legacy) bleibt das Nibble ungeprüft.
                 if constexpr (codec::Encoder::BCD == e_ && std::is_same_v< T, std::string >)

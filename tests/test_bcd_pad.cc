@@ -1,5 +1,5 @@
 // =============================================================================
-// test_bcd_pad.cc - FR-7 (0.8.0): konfigurierbares Padding bei gepacktem BCD
+// test_bcd_pad.cc - FR-7 (0.7.1): konfigurierbares Padding bei gepacktem BCD
 // mit ungerader Ziffernzahl (YAML-Key 'bcd_pad')
 // =============================================================================
 //
@@ -180,7 +180,7 @@ TEST_CASE("bcd_pad FR-7 - declared pad validates the nibble (strict throws)", "[
 TEST_CASE("bcd_pad FR-7 - undeclared pad keeps legacy (no validation)", "[bcdpad][field][bcd]") {
     IFB_NUMERIC parser(3, "DE22");               // bcdPad nie gesetzt
     auto field = std::make_shared<OpaqueField>(22);
-    CHECK_NOTHROW(parser.unparse(field, Bytes{ 0x05, 0x1F }, 0));   // F-Padding wird toleriert (wie vor 0.8.0)
+    CHECK_NOTHROW(parser.unparse(field, Bytes{ 0x05, 0x1F }, 0));   // F-Padding wird toleriert (wie vor 0.7.1)
     CHECK(field->value() == "051");
     CHECK(parser.parse(field) == Bytes{ 0x05, 0x10 });              // Encode: weiter right_zero
 }

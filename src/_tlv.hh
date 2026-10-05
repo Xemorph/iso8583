@@ -78,7 +78,7 @@ namespace TNG_NAMESPACE {
             // rekursiv in eine Sub-Message dekodiert / zurückkodiert.
             bool                             container = false; ///< true = Container-Kind (constructed)
             std::shared_ptr<ISOParserPtrBase> subParser;         ///< Sub-Parser des Container-Kinds (read-only nach Build; container ⇒ gesetzt)
-            // FR-7 (0.8.0): 'bcd_pad:' für BCD-Text-Kinder (Feld-Key oder Root-Default).
+            // FR-7 (0.7.1): 'bcd_pad:' für BCD-Text-Kinder (Feld-Key oder Root-Default).
             // bcd_pad_explicit = deklariert → Decode validiert das Padding-Nibble und
             // nutzt die deklarierte 'length' (Ziffern, ungerade) als Ziffernzahl.
             codec::BcdPad  bcd_pad = codec::BcdPad::RIGHT_ZERO; ///< Padding-Variante bei ungerader Ziffernzahl

@@ -194,7 +194,7 @@ namespace TNG_NAMESPACE {
             ///       layout — shared-library consumers must be rebuilt (0.7.0).
             std::string prefix_encoding;
 
-            /// @brief Effective BCD padding variant for odd digit counts (FR-7, 0.8.0).
+            /// @brief Effective BCD padding variant for odd digit counts (FR-7, 0.7.1).
             ///
             /// `"right_zero"` (default) | `"right_f"` | `"left_zero"` for fields whose
             /// payload is packed BCD (`numeric`, `amount`, `*char`, `*num`,
@@ -203,7 +203,7 @@ namespace TNG_NAMESPACE {
             /// spec-root default, else `"right_zero"`.
             ///
             /// @note ABI: adding this member changes the `SpecFieldInfo`
-            ///       layout — shared-library consumers must be rebuilt (0.8.0).
+            ///       layout — shared-library consumers must be rebuilt (0.7.1).
             std::string bcd_pad;
         };
 

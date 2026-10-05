@@ -195,7 +195,7 @@ namespace TNG_NAMESPACE::codec {
         HEX_EBCDIC = 4, ///< Hex-Nibbles in EBCDIC-Darstellung
     };
 
-    /// Padding-Variante für gepacktes BCD bei **ungerader** Ziffernzahl (FR-7, 0.8.0).
+    /// Padding-Variante für gepacktes BCD bei **ungerader** Ziffernzahl (FR-7, 0.7.1).
     ///
     /// Betrifft nur das Nutzdaten-Encoding `Encoder::BCD` (nie das Längenpräfix):
     /// - BcdPad::RIGHT_ZERO: Ziffern vorn, ungenutztes Low-Nibble `0` (`123` → `12 30`, Default)
