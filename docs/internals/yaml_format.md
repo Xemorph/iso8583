@@ -184,6 +184,7 @@ Encoding-Einstellung:
 | `numeric` | `IFB_NUMERIC` | BCD-Ziffern (2 Ziffern/Byte) |
 | `amount` (0.6.0) | `IFB_AMOUNT` | jPOS-ISOAmount, BCD (2 Ziffern/Byte) → `AmountField` |
 | `lchar` / `llchar` / `lllchar` | `IFB_LCHAR` … | BCD-Längenpräfix + BCD-Zeichendaten |
+| `lnum` / `llnum` (0.7.0) | `IFB_LNUM` / `IFB_LLNUM` | BCD-Längenpräfix + gepackte BCD-Ziffern (VISA-BASE-I-DE2-artig; Identitätslücke `lnum\|bcd`/`llnum\|bcd`) |
 | `lbinary` … `lllbinary` | `IFB_LBINARY` … | BCD-Längenpräfix + Binärdaten |
 
 ### EBCDIC
@@ -191,7 +192,7 @@ Encoding-Einstellung:
 | Format | Parser | Beschreibung |
 |---|---|---|
 | `binary` / `lbinary` … `llllbinary` | `IFE_BINARY` … | EBCDIC-Längenpräfix + Binärdaten |
-| `numeric` / `lnum` | `IFE_NUMERIC` / `IFE_LNUM` | EBCDIC-Ziffern |
+| `numeric` / `lnum` / `llnum` (0.7.0) | `IFE_NUMERIC` / `IFE_LNUM` / `IFE_LLNUM` | EBCDIC-Ziffern |
 | `amount` (0.6.0) | `IFE_AMOUNT` | jPOS-ISOAmount, EBCDIC → `AmountField` |
 | `char` / `nopad_char` | `IFE_CHAR` / `IFE_NOPAD_CHAR` | EBCDIC-Zeichenketten |
 | `lchar` / `llchar` / `lllchar` | `IFE_LCHAR` … | EBCDIC-Längenpräfix + EBCDIC-Zeichendaten |

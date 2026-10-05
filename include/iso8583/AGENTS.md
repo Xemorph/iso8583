@@ -577,8 +577,8 @@ fields:
   `{ format: llnum, encoding: bcd, prefix_encoding: bcd }` (DE 2) oder
   `{ format: lllchar, encoding: ascii, prefix_encoding: binary }`
   (DE 48). Breitenregeln: BINARY-Präfix = L-Zahl Bytes (L=1, LL=2,
-  LLL=3, LLLL=4, Big-Endian); BCD-Präfix = 1 Byte = zwei Dezimalziffern
-  (`0x16` = sechzehn). Verfügbar sind 25 Kombinationen (16× `l*char`,
+  LLL=3, LLLL=4, Big-Endian); BCD-Präfix = 1 Byte für L/LL, 2 Byte für
+  LLL/LLLL (je 2 BCD-Ziffern/Byte, aufgerundet; `0x16` = sechzehn). Verfügbar sind 25 Kombinationen (16× `l*char`,
   8× `lnum`/`llnum`, 3× Identitätslücken `lnum|bcd`/`llnum|bcd`/
   `llnum|ebcdic`) — jede andere Kombination, fixbreite Formate,
   `*binary`/`bertlv` (dort bestimmt `encoding:` das Präfix), TLV-Kinder

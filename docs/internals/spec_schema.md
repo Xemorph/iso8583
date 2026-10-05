@@ -110,10 +110,10 @@ Default-Auswahl.
 | `char` | ✔ | ✘ | ✔ | ✘ |
 | `nopad_char` | ✔ | ✘ | ✔ | ✘ |
 | `l*`-Varianten (`lchar`, `llchar`, `lllchar`; `ascii` zusätzlich `llllchar`) | `lchar`–`llllchar` ✔ | `lchar`–`lllchar` ✔ | `lchar`–`lllchar` ✔ | ✘ (s. Hinweis unten) |
-| `lnum`/`llnum` | ✔ | ✘ | `lnum` ✔ (kein `llnum`) | ✘ |
+| `lnum` / `llnum` | ✔ | ✔ (0.7.0: `IFB_LNUM`/`IFB_LLNUM`) | ✔ (`IFE_LNUM`/`IFE_LLNUM`) | ✘ |
 | `binary` (fix) | ✘ | ✘ | ✔ (HEX_EBCDIC, s. Hinweis) | ✔ (roh) |
 | `lbinary`/`llbinary`/`lllbinary` | ✔ (Prefix ASCII-Ziffern) | ✔ (Prefix BCD) | ✔ (Prefix EBCDIC) | ✔ (Prefix Big-Endian-Bytes, **nicht** neutral!) |
-| `llllbinary` | ✘ | ✘ | ✔ | ✘ |
+| `llllbinary` | ✔ (0.6.0, FR-3: `IFA_LLLLBINARY`) | ✘ | ✔ (0.6.0: `IFE_LLLLBINARY`) | ✘ |
 | `bitmap` | encoding-neutral (roh) | — | — | — |
 | `nop` / `unused` | encoding-neutral (roh) | — | — | — |
 | `remaining` | ✔ (0.6.0, OpaqueField) | ✔ (0.6.0, OpaqueField) | ✔ (0.6.0, OpaqueField, Text!) | ✔ (roh, BinaryField) — s. §4 |
@@ -157,7 +157,10 @@ Default-Auswahl.
   **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
   *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als
   `:`/`;` abgebildet (nicht validiert, auch nicht im strict-Modus —
-  BCD-Daten sollten nur Ziffern enthalten).
+  BCD-Daten sollten nur Ziffern enthalten). Bei **ungerader** Ziffernzahl
+  wird das letzte, ungenutzte Low-Nibble des abschließenden Bytes mit **`0`**
+  gefüllt (nicht `F`): der Wert `123` wird zu BCD `12 30`; beim Decode mappt
+  dieses Nibble wieder auf `0`.
 - `type: scalar` + `bertlv`-Format erzeugt zur Laufzeit eine
   `Message`, deren Kind-Schlüssel die rohen BER-Tag-Werte sind
   (z. B. `0x9F26` → Key `9F26` bei int32-Keys).
@@ -180,7 +183,7 @@ prefix_encoding: binary }`).
   | Präfix-Encoding | Breite | Zählung |
   |---|---|---|
   | `ascii` | `L`-Zahl = 1 Byte (L=1, LL=2, LLL=3, LLLL=4) | ASCII-Ziffern = Bytes |
-  | `bcd` | immer **1 Byte** (zwei BCD-Ziffern, unabhängig von L/LL/…) | *Ziffern* (1 Byte = 2 Ziffern); BCD-Zeichen sind Dezimalziffern: `0x16` = sechzehn, `0x10` = zehn |
+  | `bcd` | **1 Byte für L/LL, 2 Byte für LLL/LLLL** (je 2 BCD-Ziffern/Byte, aufgerundet: `parsed_length = (L + 1) >> 1`) | *Ziffern* (1 Byte = 2 Ziffern); BCD-Zeichen sind Dezimalziffern: `0x16` = sechzehn, `0x10` = zehn |
   | `ebcdic` | `L`-Zahl = Bytes | EBCDIC-Ziffern (IBM-1047, orakelgepinnt) |
   | `binary` | `L`-Zahl = **Bytes** (L=1, LL=2, LLL=3, LLLL=4), Big-Endian | Bytes |
 
