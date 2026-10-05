@@ -508,6 +508,22 @@ namespace TNG_NAMESPACE {
                 }
                 
                 std::size_t l = 0u;
+                const std::size_t ll = codec::parsed_length<pe_, l_>();
+
+                // [ISO8583] B6: Längenprefix-Vorguard (beide Modi - Sicherheit):
+                // Der Prefix selbst muss vollständig im Puffer liegen, sonst
+                // wären die Decode-Lesungen (decode_length) unterhalb des
+                // Pufferendes ein OOB-Read. Zwingend VOR decode_length():
+                // die decode_length-Lesungen (b.at) werfen andernfalls eine
+                // rohe std-Exception (out_of_range) statt dieses
+                // positionierten Fehlers — die Guard würde sonst nie greifen.
+                // (Für UNKNOWN/CONSUME ist ll == 0 → Guard ist ein No-Op.)
+                if (ll > 0 && (o > b.size() || o + ll > b.size()))
+                    throw std::runtime_error(
+                        "Längenprefix am Pufferende abgeschnitten: benötigt " + std::to_string(ll) +
+                        " Prefix-Bytes ab Offset " + std::to_string(o) + ", im Puffer vorhanden " +
+                        std::to_string(o < b.size() ? b.size() - o : 0) + " Bytes");
+
                 if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME) {
                     l /* remaining */ = b.size() - o;
                     // (0.6.0) remaining + BCD: b.size() - o ist die Byte-Zahl,
@@ -524,18 +540,6 @@ namespace TNG_NAMESPACE {
                 if constexpr (l_ != codec::Length::CONSUME)
                     if (l == 0 || l > de_l_)
                         l = de_l_;
-
-                const std::size_t ll = codec::parsed_length<pe_, l_>();
-
-                // [ISO8583] B6: Längenprefix-Vorguard (beide Modi - Sicherheit):
-                // Der Prefix selbst muss vollständig im Puffer liegen, sonst
-                // wären die Decode-Lesungen (decode_length) unterhalb des
-                // Pufferendes ein OOB-Read.
-                if (ll > 0 && (o > b.size() || o + ll > b.size()))
-                    throw std::runtime_error(
-                        "Längenprefix am Pufferende abgeschnitten: benötigt " + std::to_string(ll) +
-                        " Prefix-Bytes ab Offset " + std::to_string(o) + ", im Puffer vorhanden " +
-                        std::to_string(o < b.size() ? b.size() - o : 0) + " Bytes");
 
                 // Truncation:
                 // -----------
