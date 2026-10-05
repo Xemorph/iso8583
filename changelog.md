@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.7.0
+
+### `[+](Added)` Längenpräfix-Encoding unabhängig vom Nutzdaten-Encoding (FR-6: `prefix_encoding:`)
+
+- Neuer optionaler Feld-Key `prefix_encoding:` (`ascii`/`bcd`/`ebcdic`/
+  `binary`, Default = `encoding`): das Codec des **Längenpräfixes** wird
+  vom Codec der **Nutzdaten** entkoppelt — VISA-BASE-I-Situation, z. B.
+  DE 2 `{ format: llnum, encoding: bcd, prefix_encoding: bcd }` (BCD-
+  Längenbyte + gepackte Ziffern) oder DE 48 `{ format: lllchar,
+  encoding: ascii, prefix_encoding: binary }` (Binär-Längenbytes +
+  ASCII-Text). Ohne den Key gilt `prefix_encoding = encoding` (rein
+  additiv — Bestandsspecs ändern sich nicht); der Key ist feldlokal
+  (kein Root-Default, keine Vererbung).
+- 25 Dispatch-Kombinationen (3-teiler Dispatch-Key `Format|Encoding|
+  PrefixEncoding`, additiv zur bestehenden 2-teiler-Tabelle):
+  16× `l*char` (L/LL/LLL, ascii zusätzlich LLLL) × `ascii`/`ebcdic`-
+  Nutzdaten × `bcd`/`binary`-Präfix, 8× `lnum`/`llnum` ×
+  `ascii`/`ebcdic` × `bcd`/`binary`, plus 3 native Identitätslücken
+  (`lnum|bcd`, `llnum|bcd` → `IFB_LNUM`/`IFB_LLNUM`, `llnum|ebcdic` →
+  `IFE_LLNUM`).
+- **Fail-closed** beim Laden (positionierte `SpecValidationError`):
+  Value-Whitelist; nur variable `*char`/`*num`-Formate (bei
+  `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec;
+  `amount`/`remaining`/fixbreite Formate haben kein Längenpräfix);
+  nicht verfügbare Kombinationen; TLV-Kinder (fix/BERTLV/constructed)
+  und ein Root-Level-Key sind unzulässig.
+- **Introspektion:** `SpecFieldInfo::prefix_encoding` (effektives
+  Präfix-Encoding; Key weggelassen → `encoding`, encoding-neutrale
+  Formate → `""`; rekursiv auf `children`/`tlv_children`).
+  **ABI:** neues `SpecFieldInfo`-Mitglied — Layout-Änderung,
+  Shared-Library-Consumer müssen gegen die neue Bibliothek neu
+  kompiliert werden (0.7.0).
+- **Decode-Korrektur (B6):** Ein am Pufferende abgeschnittenes
+  Längenpräfix wirft jetzt in beiden Modi garantiert den
+  positionierten Fehler `Längenpräfix am Pufferende abgeschnitten: …`
+  **vor** der Präfix-Lesung (davor konnte hier eine rohe STL-Exception
+  aus der Präfix-Lesung austreten).
+- Tests: neue Suite `tests/test_prefix_encoding.cc` (Tag `[prefix]`:
+  Codec-Roundtrips, Strict-Fehlerpfade, VISA-BASE-I-artige Voll-Spec
+  mit handgebautem Frame, Fail-closed-Validierung, Field-only-Specs,
+  `!merge`-Komposition).
+- Doku: `spec_schema.md` §2/§3/§7/§8/§9/§12, `yaml_format.md`
+  (Format-Referenz), `include/iso8583/AGENTS.md` (SpecFieldInfo-Mitglieder,
+  ABI-Hinweis, Format/Encoding-Kombinationen, Typische Fehler),
+  `.agents/yaml-spec.md` (Loader-Verhalten + `src/`-Map).
+
 ## 0.6.4
 
 ### `[+](Added)` BERTLV/Fix-TLV: constructed-TLV-Kinder rekursiv dekodieren/kodieren

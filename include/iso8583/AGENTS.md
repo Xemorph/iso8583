@@ -266,7 +266,7 @@ for (const auto& f : spec->fields())
 
 | Mitglied | Typ | Bedeutung |
 |---|---|---|
-| `type` | `std::string` | Basisformat: `"CHAR"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"`, `"AMOUNT"` (0.6.0) |
+| `type` | `std::string` | Basisformat: `"CHAR"`, `"NUM"`, `"NUMERIC"`, `"BINARY"`, `"BITMAP"`, `"NOP"`, `"REMAINING"`, `"AMOUNT"` (0.6.0) — bei L-präfixierten Formaten der Basisname **nach** den L-Präfixen (`llnum` → `"NUM"`, `numeric` → `"NUMERIC"`) |
 | `prefix_digits` | `int` | `0`=fix, `1`=L, `2`=LL, `3`=LLL, `4`=LLLL |
 | `max_length` | `int` | Maximale Nutzdatenlänge in logischen Einheiten (Zeichen, Ziffern oder Bytes); bei `REMAINING` das deklarierte Maximum (0.6.0, `length`-Pflicht), bei `NOP`/`UNUSED` 0 |
 
@@ -285,6 +285,7 @@ for (const auto& f : spec->fields())
 | `amount_scale` | `std::optional<int>` | Deklarierte `scale:` eines `format: amount`-Felds; `std::nullopt` = jPOS-Form (kein `scale:`-Key) und für alle Nicht-`amount`-Felder (seit 0.6.0) |
 | `amount_signed` | `bool` | `true`, wenn ein `format: amount`-Feld `sign: true` deklariert (führendes Vorzeichenzeichen C/D/+/-); sonst `false` (nach 0.6.0) |
 | `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
+| `prefix_encoding` | `std::string` | Effektives Längenpräfix-Encoding eines variablen Felds: `"ASCII"`, `"EBCDIC"`, `"BCD"`, `"BINARY"` bzw. `""` (encoding-neutrale Formate). Gleicht `encoding`, wenn der YAML-Key `prefix_encoding:` fehlt (Default), sonst der deklarierte Wert (0.7.0, FR-6) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
 > per-Wert zurückgegebenen `SpecFieldInfo` — das Layout ändert sich, und
@@ -306,6 +307,11 @@ for (const auto& f : spec->fields())
 > `AmountForm` und die neuen Mitglieder/den neuen Konstruktor von
 > `AmountField` ändern Layout bzw. Vtable — Shared-Library-Consumer müssen
 > neu kompiliert werden.
+
+> **ABI-Hinweis (0.7.0):** `prefix_encoding` (`SpecFieldInfo`) ist ein
+> neues Mitglied desselben per-Wert zurückgegebenen `SpecFieldInfo` —
+> das Layout ändert sich, und Shared-Library-Consumer müssen gegen die
+> neue Bibliothek neu kompiliert werden (analog zu `tlv_is_ber` in 0.6.0).
 
 ### Wann loadFromYaml vs. loadBothFromYaml
 
@@ -564,6 +570,21 @@ fields:
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
   `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)
+- **`prefix_encoding:` (Feld-Key, 0.7.0, FR-6)** — Encoding des
+  **Längenpräfixes** unabhängig vom Nutzdaten-`encoding`
+  (`ascii`/`bcd`/`ebcdic`/`binary`; Default = `encoding`), nur auf
+  variablen `*char`/`*num`-Formaten. VISA-BASE-I-artig:
+  `{ format: llnum, encoding: bcd, prefix_encoding: bcd }` (DE 2) oder
+  `{ format: lllchar, encoding: ascii, prefix_encoding: binary }`
+  (DE 48). Breitenregeln: BINARY-Präfix = L-Zahl Bytes (L=1, LL=2,
+  LLL=3, LLLL=4, Big-Endian); BCD-Präfix = 1 Byte = zwei Dezimalziffern
+  (`0x16` = sechzehn). Verfügbar sind 25 Kombinationen (16× `l*char`,
+  8× `lnum`/`llnum`, 3× Identitätslücken `lnum|bcd`/`llnum|bcd`/
+  `llnum|ebcdic`) — jede andere Kombination, fixbreite Formate,
+  `*binary`/`bertlv` (dort bestimmt `encoding:` das Präfix), TLV-Kinder
+  und ein Root-Key werden Fail-closed beim Laden abgewiesen
+  (`SpecValidationError`). Introspektion: `SpecFieldInfo::prefix_encoding`.
+  Normative Details: `docs/internals/spec_schema.md` §3.
 - `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
   (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**. Seit 0.5.0 (FR-2)
   darf zusätzlich eine optionale `children:`-**Map** (HEX-Tag-Keys) bekannte/
@@ -795,6 +816,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | Constructed-Kind (eigener `tlv:`-Block) mit `format:`/`length:`/`encoding:` (0.6.4) | Das äußere TLV-Frame trägt Tag + Länge — diese Keys sind bei Container-Kindern verboten, sonst `SpecValidationError` (Fail-closed); für die rekursive Dekodierung genügt `tlv:` (+ optional `children:`) |
+| `prefix_encoding` an fixen Formaten, `*binary`/`bertlv`, TLV-Kindern oder als Root-Key (0.7.0) | Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix) gültig; bei `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec, bei TLV-Kindern liegt die Länge im Length-Feld des Frames, ein Root-Level-Default existiert nicht — sonst `SpecValidationError` beim Laden (Fail-closed) |
 
 ---
 

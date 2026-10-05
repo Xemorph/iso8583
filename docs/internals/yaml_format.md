@@ -206,6 +206,16 @@ Encoding-Einstellung:
 Präfix-Zeichen: `L` (max. 9), `LL` (max. 99), `LLL` (max. 999),
 `LLLL` (max. 9999).
 
+**Längenpräfix-Encoding `prefix_encoding:` (0.7.0, FR-6):** Der
+optionale Feld-Key trennt das Codec des Längenpräfixes vom Codec der
+Nutzdaten (z. B. VISA BASE-I: `llnum|bcd` + BCD-Präfix, `lllchar|ascii`
++ BINARY-Präfix). Default = `encoding`; verfügbar sind 25 Kombinationen,
+sonst Fail-closed (`SpecValidationError` beim Laden) — nur auf variablen
+`*char`/`*num`-Formaten, nicht bei TLV-Kindern. Normative Details
+(Breiten-/Zählregeln, Kombinationen, `!merge`):
+[spec_schema.md](spec_schema.md) §3, Unterabschnitt
+„Längenpräfix-Encoding".
+
 #### Typisierte TLV-Kinder (seit 0.5.0)
 
 Deklarierte `children` (sowohl `tlv:`-Block als auch `...bertlv`-Kurzform)

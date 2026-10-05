@@ -70,6 +70,7 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 | `format` | string | ja (außer `nested` ohne `children`… siehe §6) | eine der Formate aus §3 |
 | `length` | int | ja, **außer** `bitmap`/`nop`/`unused`; bei `remaining` **stets** Pflicht (0.6.0) | fixe Länge **oder** Maximum (variablen Formate/`remaining`). **BCD-Felder: `length` = Ziffernzahl** (1 Byte = 2 Ziffern) |
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | feldweises Override über das globale Encoding (§7) |
+| `prefix_encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | (0.7.0, FR-6): Encoding des **Längenpräfixes**, unabhängig vom `encoding` (Nutzdaten). Default = `encoding`. Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix); Breiten-/Zählregeln und die 25 verfügbaren Kombinationen s. §3 |
 | `description` | string | nein | Beschreibung (Introspection + Dump); bei `sensitive`-Feldern die einzige sichtbare Info im Dump |
 | `sensitive` | bool | nein (Default `false`) | PCI-Masking: Wert wird in `dump()`/`operator<<` als `***` gerendert; `value()`/`to_json()` bleiben unmasked. Bei Containern: auf alle Kinder/Tags erbt |
 | `scale` | int ≥ 0 | nein | nur `format: amount`: Standard-ISO-8583-Form (nackte Ziffern, deklarierte Skala, keine Währung im Feld); ohne Key jPOS-Form (§3) |
@@ -160,6 +161,54 @@ Default-Auswahl.
 - `type: scalar` + `bertlv`-Format erzeugt zur Laufzeit eine
   `Message`, deren Kind-Schlüssel die rohen BER-Tag-Werte sind
   (z. B. `0x9F26` → Key `9F26` bei int32-Keys).
+
+### Längenpräfix-Encoding (`prefix_encoding`, 0.7.0, FR-6)
+
+Der optionale Feld-Key `prefix_encoding:` entkoppelt das Codec des
+**Längenpräfixes** vom Codec der **Nutzdaten** (`encoding:`).
+VISA-BASE-I-Situation: BCD-/Binär-Längenbytes vor ASCII-/EBCDIC-
+Nutzdaten (z. B. DE 2: `{ format: llnum, encoding: bcd,
+prefix_encoding: bcd }`; DE 48: `{ format: lllchar, encoding: ascii,
+prefix_encoding: binary }`).
+
+- **Default = `encoding`:** ohne den Key ist das Präfix im Encoding
+  der Nutzdaten codiert (reine Additivität — Bestandsspecs ändern
+  sich nicht). Bei encoding-neutralen Formaten ist das Präfix-Encoding
+  `""`.
+- **Breiten-/Zählregeln je Präfix-Encoding:**
+
+  | Präfix-Encoding | Breite | Zählung |
+  |---|---|---|
+  | `ascii` | `L`-Zahl = 1 Byte (L=1, LL=2, LLL=3, LLLL=4) | ASCII-Ziffern = Bytes |
+  | `bcd` | immer **1 Byte** (zwei BCD-Ziffern, unabhängig von L/LL/…) | *Ziffern* (1 Byte = 2 Ziffern); BCD-Zeichen sind Dezimalziffern: `0x16` = sechzehn, `0x10` = zehn |
+  | `ebcdic` | `L`-Zahl = Bytes | EBCDIC-Ziffern (IBM-1047, orakelgepinnt) |
+  | `binary` | `L`-Zahl = **Bytes** (L=1, LL=2, LLL=3, LLLL=4), Big-Endian | Bytes |
+
+- **Verfügbare Kombinationen (25, Fail-closed beim Laden):**
+  - 16× `l*char`: L/LL/LLL(/LLLL)/× `ascii`/`ebcdic`-Nutzdaten ×
+    `bcd`/`binary`-Präfix (LLLL nur bei `ascii`)
+  - 8× `lnum`/`llnum` × `ascii`/`ebcdic`-Nutzdaten × `bcd`/`binary`-Präfix
+  - 3× **Identitätslücken** (Präfix == Nutzdaten-Encoding, 2-teiler
+    Dispatch-Key): `lnum`/`llnum` mit `bcd` (`IFB_LNUM`/`IFB_LLNUM`)
+    und `llnum` mit `ebcdic` (`IFE_LLNUM`)
+- **Fail-closed-Regeln** (positionierte `SpecValidationError`, s. §8):
+  - Value-Whitelist `ascii`/`ebcdic`/`bcd`/`binary`
+  - nur variable `*char`/`*num`-Formate; bei `*binary`/`bertlv`
+    bestimmt `encoding:` bereits das Präfix-Codec, `amount`/`remaining`/
+    fixbreit Formate haben kein Längenpräfix
+  - die (format, encoding, prefix_encoding)-Kombination muss in der
+    Dispatch-Tabelle existieren (z. B. `llchar|ascii` + `ebcdic`-Präfix
+    ist bewusst nicht verfügbar)
+  - **nicht** bei TLV-Kindern (fix, BERTLV oder constructed) und nicht
+    als Root-Key
+- **`!template` bleibt 2-argumentig** (`P(F, N)`); ein anderes
+  Präfix-Encoding wird über `!merge` gesetzt:
+  `{ !merge [ !template LL(CHAR, 37), { encoding: ebcdic,
+  prefix_encoding: bcd } ] }`.
+- **Introspektion:** `SpecFieldInfo::prefix_encoding` (effektives
+  Präfix-Encoding; Key weggelassen → `encoding`, encoding-neutral →
+  `""`). **ABI:** Layout-Änderung von `SpecFieldInfo` —
+  Shared-Library-Consumer müssen neu kompiliert werden (0.7.0).
 
 ## 4. `remaining` (0.6.0: encoding-aware)
 
@@ -380,6 +429,10 @@ Feld-Encoding  >  globales YAML-Encoding  >  "" (nur encoding-neutrale Formate)
   **globale** Encoding an ihre Kinder weiter; encoding-bewusste
   Felder ihr eigenes aufgelöstes Encoding. So bleibt eine EBCDIC-Spec
   mit `binary`-Containern in der Mitte konsistent.
+- **`prefix_encoding` ist feldlokal (0.7.0):** Der Key wirkt nur auf
+  das eigene Feld — es gibt **keinen** Root-Level-Default und keine
+  Vererbung von/auf Kinder (nur `encoding` an sich nimmt am
+  Ererbungsmodell teil). Fehlt der Key, gilt `prefix_encoding = encoding`.
 - Details, EBCDIC-Orakel-Pin und Strict-Regeln: [encoding.md](encoding.md).
 
 ## 8. Validierung und Fehlersemantik (fail-closed)
@@ -397,6 +450,10 @@ Alle Loader-/Validierungsfehler sind **positionierte**
 | `!include_files` außerhalb der Sandbox-Roots | `[ISO8583] Sandbox: …` (fail-closed) |
 | zirkuläres `!use` / Rekursionstiefe > 200 | `std::runtime_error` (kein Stack-Overflow) |
 | TLV-Kind außerhalb der Whitelist (§6) | `TLV-Kind '…' (Format …) … verworfen` |
+| `prefix_encoding` mit unzulässigem Wert (0.7.0) | `Feld … hat ungültiges prefix_encoding='…' (erlaubt: ascii, ebcdic, bcd, binary)` |
+| `prefix_encoding` an fixbreiten Formaten / `*binary`/`bertlv`/`amount`/`remaining`/`bitmap`/`nop`/`unused` (0.7.0) | `…'prefix_encoding' ist nur für variablen *char/*num-Formate gültig (format=…: …)` — kontextsensitive Begründung je Format-Familie |
+| `prefix_encoding`-Kombination ohne Dispatch-Eintrag (0.7.0) | `Kombination format=…, encoding=…, prefix_encoding=… ist nicht verfügbar (s. Format×Encoding-Matrix in spec_schema.md §3)` |
+| `prefix_encoding` bei TLV-Kindern / constructed-Kindern / Root-Level (0.7.0) | `…'prefix_encoding' ist bei TLV-Kindern unzulässig (die TLV-Länge liegt im Length-Feld des Frames)` bzw. `…darf 'prefix_encoding' nicht deklarieren…` |
 | Datei > `maxSpecBytes` (Default 32 MiB) / > 1024 Includes / oversized Sidecar | positionierter Fehler bzw. Discard+Regenerierung |
 | rapidyaml-Parsefehler | via prozessweit installierten `ryml`-Callbacks in positionierte Exceptions übersetzt (Default wäre `std::abort()`) |
 
@@ -405,8 +462,13 @@ Alle Loader-/Validierungsfehler sind **positionierte**
 (EBCDIC: 85-Byte-IBM-1047-Whitelist; A2E: 84 Zeichen + `'?'`-
 Ausnahme). `strict: false` = Legacy: E2A → `'.'` (`0x2E`),
 A2E → `'?'` (`0x6F`). Längenpräfixe werden immer roh gelesen
-(`constexpr` kann nicht werfen) — korrupte Präfixe fallen an den
-nachgelagerten Checks auf.
+(`constexpr` kann nicht werfen) — korrupte Präfixwerte fallen an den
+nachgelagerten Checks auf. Ein am Pufferende **abgeschnittenes**
+Präfix (nicht alle Präfix-Bytes vorhanden) wirft dagegen **vor**
+der Präfis-Lesung in beiden Modi einen positionierten Fehler
+(`Längenpräfix am Pufferende abgeschnitten: …`), seit 0.7.0
+garantiert (davor konnte hier eine rohe STL-Exception durch die
+Präfix-Lesung austreten).
 
 ## 9. Laufzeitverhalten (für die Interpretation von Specs)
 
@@ -439,8 +501,8 @@ nachgelagerten Checks auf.
   Deployment `SpecLoadOptions::allowSmapWrite=false`.
 - Introspection: `ISOSpec::field(de)` liefert
   `SpecFieldInfo{key, description, format{type, prefix_digits,
-  max_length}, encoding, is_nested, is_bitmap, children,
-  tlv_children (0.5.0), tlv_is_ber (0.6.0)}` —
+  max_length}, encoding, prefix_encoding (0.7.0), is_nested,
+  is_bitmap, children, tlv_children (0.5.0), tlv_is_ber (0.6.0)}` —
   bei `remaining` ist `max_length` das deklarierte Maximum
   (0.6.0; vorher immer 0), bei `nop`/`unused` 0. `tlv_is_ber`
   ist `true` im BER-TLV-Modus (beide Schreibweisen) und `false`
@@ -706,3 +768,13 @@ Wire-Vertrag (s. o.) eindeutig zu halten.
 12. **Kommazeichen/Unicode-Dash in YAML-Strings** sind unproblematisch;
     Strings mit `:` müssen nicht quotiert werden, *schlüsselartige*
     DE-Keys („000") aber immer.
+13. **BCD-Längenpräfix als Binärbyte interpretieren (0.7.0):** Ein
+    BCD-Präfixbyte trägt zwei *Dezimalziffern* — `0x16` = sechzehn,
+    `0x10` = zehn (nicht 16). Generatoren müssen die gewünschte
+    Ziffernzahl als BCD packen; BINARY-Präfixe sind dagegen
+    Big-Endian-Bytes mit Breite = L-Zahl (L=1, LL=2, LLL=3, LLLL=4)
+    (§3).
+14. **`prefix_encoding` an fixbreiten Formaten oder TLV-Kindern
+    (0.7.0)** → `SpecValidationError` beim Laden (Fail-closed); der
+    Key ist nur auf variablen `*char`/`*num`-Formaten gültig
+    (§3, §8).
