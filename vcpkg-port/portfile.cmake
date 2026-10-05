@@ -2,7 +2,7 @@ vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO            Xemorph/iso8583
     REF             v${VERSION}
-    SHA512          cd3fdb4a921cfe87813d3612c6a5152946e33223997bf4a92a6b7f587dbf75d37b7274a10abe242853c2cea1e63bd3953930df8a06ffb476e30c6596b8681225
+    SHA512          58e5e7f5d92a8192d2e130b423237d995f84879d44c3584f1e7b0cc66fed1249fc531b8a36f87243f9bcaacecbba78891eb674b51e113b25c1b0c208df4dac65
     HEAD_REF        main
 )
 
