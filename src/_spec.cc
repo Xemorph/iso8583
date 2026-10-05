@@ -1520,6 +1520,10 @@ namespace TNG_NAMESPACE::spec {
         info.is_bitmap = (f.format == "BITMAP");
         info.amount_scale = f.scale;   // 0.6.0: nullopt = jPOS-Form
         info.amount_signed = f.sign;
+        // FR-6 (0.7.0): effektives Präfix-Encoding (Default = encoding; bei
+        // encoding-neutralen Formaten ist encoding "" → hier ebenfalls "").
+        // Läuft rekursiv automatisch auf children/tlv_children.
+        info.prefix_encoding = f.prefix_encoding.empty() ? f.encoding : f.prefix_encoding;
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.

@@ -181,6 +181,18 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.x).
             bool amount_signed = false;
+
+            /// @brief Effective length-prefix encoding of a variable-length field (FR-6, 0.7.0).
+            ///
+            /// `"ASCII"` | `"EBCDIC"` | `"BCD"` | `"BINARY"` | `""` (encoding-neutral
+            /// formats).  Equals `encoding` when the YAML `prefix_encoding:` key is
+            /// absent (the default); carries the declared value otherwise, so a
+            /// field like `format: llchar, encoding: ebcdic, prefix_encoding: bcd`
+            /// reports `"BCD"` here while `encoding` stays `"EBCDIC"`.
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.7.0).
+            std::string prefix_encoding;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────
