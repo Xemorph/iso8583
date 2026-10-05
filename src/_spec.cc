@@ -297,6 +297,18 @@ namespace TNG_NAMESPACE::spec {
                 "(ein isoliertes Feld hat keinen MTI/Bitmap-Header)",
                 root["header"].id(), smap);
 
+        // FR-6 (0.7.0): Root-Level-'prefix_encoding' ist widersprüchlich
+        // (ein Root-Default existiert nicht, D1) — unbekannte Root-Keys
+        // werden andernfalls still ignoriert, was exakt die
+        // Stille-Auswahl wäre, die FR-6 verbietet. Fail-closed.
+        if (hasKey(root, "prefix_encoding"))
+            throw SpecValidationError(
+                "Root-Key 'prefix_encoding' ist unzulässig (0.7.0, FR-6): "
+                "ein Root-Level-Default existiert nicht — der Key ist ein "
+                "Feld-Key (pro Feld auf variablen *char/*num-Formaten "
+                "setzen, s. spec_schema.md §3)",
+                root["prefix_encoding"].id(), smap);
+
         const ryml::ConstNodeRef block = root["field"];
 
         // (4) Feld-Level-Key-Whitelist auf dem Block (gleiche Regeln wie
@@ -471,6 +483,18 @@ namespace TNG_NAMESPACE::spec {
                 "Konflikt: Message-Specs verwenden fields:, field: ist nur "
                 "in Field-only-Dokumenten erlaubt",
                 root["field"].id(), smap);
+
+        // FR-6 (0.7.0): Root-Level-'prefix_encoding' ist widersprüchlich
+        // (ein Root-Default existiert nicht, D1) — unbekannte Root-Keys
+        // werden andernfalls still ignoriert, was exakt die
+        // Stille-Auswahl wäre, die FR-6 verbietet. Fail-closed.
+        if (hasKey(root, "prefix_encoding"))
+            throw SpecValidationError(
+                "Root-Key 'prefix_encoding' ist unzulässig (0.7.0, FR-6): "
+                "ein Root-Level-Default existiert nicht — der Key ist ein "
+                "Feld-Key (pro Feld auf variablen *char/*num-Formaten "
+                "setzen, s. spec_schema.md §3)",
+                root["prefix_encoding"].id(), smap);
 
         // [ISO8583] E3 (Sicherheits-Audit): Leeres 'fields' verwerfen -
         // sonst baut buildParser() aus einem leeren Feld-Map einen Parser

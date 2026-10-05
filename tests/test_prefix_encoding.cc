@@ -418,6 +418,32 @@ fields:
         ContainsSubstring("nicht deklarieren"));
 }
 
+TEST_CASE("prefix FR-6 - rejected at root level (message spec)",
+    "[prefix][spec][error]") {
+    // Root-Level-'prefix_encoding' ist ein Stille-Auswahl-Falle (es gibt
+    // keinen Root-Default, D1) -> Fail-closed statt stiller Ignorierung.
+    TempYaml y("spec: \"FR-6 root\"\nencoding: ebcdic\nprefix_encoding: bcd\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, length: 4 }\n"
+        "  \"001\": { format: bitmap,  length: 8 }\n");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(y.str()),
+        ContainsSubstring("Root-Key"));
+}
+
+TEST_CASE("prefix FR-6 - rejected at root level (field-only document)",
+    "[prefix][field][error]") {
+    TempYaml y(R"YAML(
+spec: "FR-6 root field"
+encoding: ascii
+prefix_encoding: bcd
+field:
+  format: llchar
+  length: 20
+)YAML");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFieldFromYaml(y.str()),
+        ContainsSubstring("Root-Key"));
+}
+
 // =============================================================================
 // C5) Field-only-Dokument (FE-1-Pfad) mit prefix_encoding
 // =============================================================================
