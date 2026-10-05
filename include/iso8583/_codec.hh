@@ -195,6 +195,18 @@ namespace TNG_NAMESPACE::codec {
         HEX_EBCDIC = 4, ///< Hex-Nibbles in EBCDIC-Darstellung
     };
 
+    /// Padding-Variante für gepacktes BCD bei **ungerader** Ziffernzahl (FR-7, 0.8.0).
+    ///
+    /// Betrifft nur das Nutzdaten-Encoding `Encoder::BCD` (nie das Längenpräfix):
+    /// - BcdPad::RIGHT_ZERO: Ziffern vorn, ungenutztes Low-Nibble `0` (`123` → `12 30`, Default)
+    /// - BcdPad::RIGHT_F:    Ziffern vorn, ungenutztes Low-Nibble `F` (`123` → `12 3F`)
+    /// - BcdPad::LEFT_ZERO:  führende `0`, Ziffern rechtsbündig (`123` → `01 23`)
+    enum class TNG_EXPORT BcdPad : int {
+        RIGHT_ZERO = 0, ///< Ziffern vorn, Padding-Nibble `0` hinten (Default)
+        RIGHT_F    = 1, ///< Ziffern vorn, Padding-Nibble `F` hinten
+        LEFT_ZERO  = 2, ///< Padding-Nibble `0` vorn, Ziffern rechtsbündig
+    };
+
     /* -- Prefixer : Declarations ----------------------------------------------- */
 
 
@@ -243,11 +255,13 @@ namespace TNG_NAMESPACE::codec {
     //       std::runtime_error statt das Legacy-'.'-Mapping (0x2E) anzuwenden.
     //       Der EBCDIC-Pfad ist voll tabellenbasiert (Phase 2) – das
     //       Verhalten ist auf jedem Toolchain identisch deterministisch.
+    // \param pad (FR-7) nur für Encoder::BCD mit std::string: Lage des Padding-
+    //       Nibbles bei ungerader Ziffernzahl (`length`); sonst ohne Wirkung.
     template <typename T, Encoder e>
-    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid = false);
+    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid = false, BcdPad pad = BcdPad::RIGHT_ZERO);
 
     template <Encoder e, typename T>
-    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid = false);
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid = false, BcdPad pad = BcdPad::RIGHT_ZERO);
 
     // Returns the number of bytes required to convert a std::vector<uint8_t>
     // Mainly used in cooperation with function 'as<T, Encoder>()'
@@ -256,6 +270,20 @@ namespace TNG_NAMESPACE::codec {
 
     // -- Interne Hilfsfunktionen (nicht Teil der öffentlichen API) -------------
     namespace detail {
+        /// FR-7: Prüft das Padding-Nibble eines gepackten BCD-Werts mit `digits`
+        /// Ziffern ab `offset` gegen die konfigurierte Variante. Bei gerader
+        /// Ziffernzahl gibt es kein Padding (immer `true`). Der Aufrufer
+        /// garantiert, dass `(digits + 1) / 2` Bytes ab `offset` im Puffer liegen.
+        static inline bool bcd_pad_nibble_ok(const std::vector<uint8_t>& b, std::size_t offset,
+            std::size_t digits, BcdPad pad) noexcept {
+            if ((digits & 1u) == 0u) return true;
+            const std::size_t bytes = (digits + 1) / 2;
+            if (pad == BcdPad::LEFT_ZERO)
+                return ((b[offset] >> 4) & 0x0F) == 0x00;
+            const uint8_t want = (pad == BcdPad::RIGHT_F) ? 0x0F : 0x00;
+            return (b[offset + bytes - 1] & 0x0F) == want;
+        }
+
         /// Kompakte Hex-Darstellung eines Bytes (z.B. "0x24").
         static inline std::string hex_byte(unsigned char c) {
             static const char* digits = "0123456789abcdef";

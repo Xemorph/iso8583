@@ -39,6 +39,8 @@ add_executable(libiso8583_tests
     test_strict_length.cc
     # (0.7.0, FR-6) Längenpräfix-Encoding unabhängig vom Nutzdaten-Encoding
     test_prefix_encoding.cc
+    # (0.8.0, FR-7) konfigurierbares BCD-Padding bei ungerader Ziffernzahl
+    test_bcd_pad.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über

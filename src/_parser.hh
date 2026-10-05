@@ -378,7 +378,7 @@ namespace TNG_NAMESPACE {
                 codec::pad<p_>(data, de_l_); // Padding data
                 std::vector<uint8_t> b_img(codec::parsed_length<pe_, l_>() + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
-                codec::to<e_>(data, b_img, codec::parsed_length<pe_, l_>(), strict_);
+                codec::to<e_>(data, b_img, codec::parsed_length<pe_, l_>(), strict_, bcd_pad_);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
@@ -575,13 +575,28 @@ namespace TNG_NAMESPACE {
                     }
                 }
 
+                // FR-7 (0.8.0): deklariertes 'bcd_pad:' → Padding-Nibble bei ungerader
+                // Ziffernzahl validieren. strict: positionierter Fehler; nicht-strikt:
+                // Warnung. Ohne Deklaration (Legacy) bleibt das Nibble ungeprüft.
+                if constexpr (codec::Encoder::BCD == e_ && std::is_same_v< T, std::string >)
+                    if (bcd_pad_explicit_ && !codec::detail::bcd_pad_nibble_ok(b, o + ll, l, bcd_pad_)) {
+                        if (strict_)
+                            throw std::runtime_error(
+                                "BCD-Padding-Nibble weicht von 'bcd_pad' ab (Feld " + d_ +
+                                ", Offset " + std::to_string(o + ll) + ", " + std::to_string(l) +
+                                " Ziffern, erwartet " + (bcd_pad_ == codec::BcdPad::RIGHT_F ? "F hinten"
+                                    : bcd_pad_ == codec::BcdPad::LEFT_ZERO ? "0 vorn" : "0 hinten") + ")");
+                        TNG_LOG_WARN("[codec] BCD-Padding-Nibble weicht von 'bcd_pad' ab (nicht-strikt): Feld {}, Offset {}, {} Ziffern",
+                            d_, o + ll, l);
+                    }
+
                 // Skip allocation of temporary function stack variable
                 if constexpr (l_ != codec::Length::CONSUME)
                     if constexpr (std::is_same_v< T, std::string >)
                         // [ISO8583] Q4: strict-Modus gilt auch fuer die Codec-
                         // Dekodierung (EBCDIC-Whitelist-Pruefung); nicht-strikt
                         // bleibt die Legacy-Sentinel-Mapping (0x2E '.') erhalten.
-                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l, strict_));
+                        (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l, strict_, bcd_pad_));
                     else if constexpr (std::is_same_v< T, std::vector<uint8_t> >)
                         (void)std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value(::TNG_NAMESPACE::codec::as< T, e_ >(b, o + ll, l, strict_));
 

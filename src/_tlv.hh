@@ -78,6 +78,12 @@ namespace TNG_NAMESPACE {
             // rekursiv in eine Sub-Message dekodiert / zurückkodiert.
             bool                             container = false; ///< true = Container-Kind (constructed)
             std::shared_ptr<ISOParserPtrBase> subParser;         ///< Sub-Parser des Container-Kinds (read-only nach Build; container ⇒ gesetzt)
+            // FR-7 (0.8.0): 'bcd_pad:' für BCD-Text-Kinder (Feld-Key oder Root-Default).
+            // bcd_pad_explicit = deklariert → Decode validiert das Padding-Nibble und
+            // nutzt die deklarierte 'length' (Ziffern, ungerade) als Ziffernzahl.
+            codec::BcdPad  bcd_pad = codec::BcdPad::RIGHT_ZERO; ///< Padding-Variante bei ungerader Ziffernzahl
+            bool           bcd_pad_explicit = false;            ///< true = 'bcd_pad' deklariert (validieren)
+            std::size_t    digits = 0;                          ///< deklarierte 'length' (Ziffern; 0 = unbekannt); nur mit bcd_pad_explicit
         };
 
         /// @brief Tag (bzw. SE-Nummer) → TlvChildInfo.
@@ -88,8 +94,21 @@ namespace TNG_NAMESPACE {
         /// ist erst zur Laufzeit bekannt.
         /// @note BINARY wird manuell behandelt (rohe Byte-Kopie), da
         ///       `codec::to<BINARY, std::string>` keine gültige Instanzierung ist.
-        inline std::string child_as_string(codec::Encoder enc, const std::vector<uint8_t>& buf,
+        /// FR-7: Ziffernzahl eines BCD-Text-Kinds aus der TLV-Byte-Länge. Ohne
+        /// 'bcd_pad' (Legacy) = 2 Ziffern/Byte. Mit 'bcd_pad' und einer deklarierten
+        /// **ungeraden** 'length' (Ziffern), die zur Byte-Länge passt
+        /// (`(length + 1) / 2 == bytes`), wird die deklarierte Ziffernzahl benutzt —
+        /// nur so lässt sich das Padding-Nibble von einer Ziffer unterscheiden.
+        inline std::size_t child_bcd_digits(const TlvChildInfo& child, std::size_t bytes) noexcept {
+            if (child.bcd_pad_explicit && (child.digits & 1u) != 0u &&
+                (child.digits + 1) / 2 == bytes)
+                return child.digits;
+            return bytes * 2;
+        }
+
+        inline std::string child_as_string(const TlvChildInfo& child, const std::vector<uint8_t>& buf,
             std::size_t offset, std::size_t length, bool strict) {
+            const codec::Encoder enc = child.enc;
             switch (enc) {
                 case codec::Encoder::ASCII:  return codec::as< std::string, codec::Encoder::ASCII >(buf, offset, length, strict);
                 case codec::Encoder::EBCDIC: return codec::as< std::string, codec::Encoder::EBCDIC >(buf, offset, length, strict);
@@ -97,7 +116,8 @@ namespace TNG_NAMESPACE {
                     // BCD: TLV-Länge ist in BYTES, codec::as<...,BCD> zählt
                     // ZIFFERN (2 pro Byte) -> Factor 2 (gerade Byte-Zahl,
                     // da BCD immer 2 Ziffern pro Byte packt).
-                    return codec::as< std::string, codec::Encoder::BCD >(buf, offset, length * 2, strict);
+                    return codec::as< std::string, codec::Encoder::BCD >(buf, offset,
+                        child_bcd_digits(child, length), strict, child.bcd_pad);
                 case codec::Encoder::BINARY: // Fall-through – rohe Bytes
                 default:
                     return std::string(buf.begin() + static_cast<std::ptrdiff_t>(offset),
@@ -105,12 +125,13 @@ namespace TNG_NAMESPACE {
             }
         }
 
-        inline void child_to_string(codec::Encoder enc, const std::string& value,
+        inline void child_to_string(const TlvChildInfo& child, const std::string& value,
             std::vector<uint8_t>& out, std::size_t offset, bool strict) {
+            const codec::Encoder enc = child.enc;
             switch (enc) {
                 case codec::Encoder::ASCII:  codec::to< codec::Encoder::ASCII >(value, out, offset, strict); break;
                 case codec::Encoder::EBCDIC: codec::to< codec::Encoder::EBCDIC >(value, out, offset, strict); break;
-                case codec::Encoder::BCD:    codec::to< codec::Encoder::BCD >(value, out, offset, strict); break;
+                case codec::Encoder::BCD:    codec::to< codec::Encoder::BCD >(value, out, offset, strict, child.bcd_pad); break;
                 case codec::Encoder::BINARY: // Fall-through – rohe Byte-Kopie
                 default:
                     for (std::size_t i = 0; i < value.size(); ++i)
@@ -342,7 +363,7 @@ namespace TNG_NAMESPACE {
                         continue;
                     }
                     data.resize(tlv_detail::child_required_sz(child->enc, of->value().size()));
-                    tlv_detail::child_to_string(child->enc, of->value(), data, 0, strict_);
+                    tlv_detail::child_to_string(*child, of->value(), data, 0, strict_);
                 }
                 else {
                     const auto se = msg->get< ::TNG_NAMESPACE::BinaryField >(se_key);

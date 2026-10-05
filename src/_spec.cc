@@ -149,6 +149,11 @@ namespace TNG_NAMESPACE::spec {
         // strict_length_explicit: im Feld deklariert → überschreibt den Root-Default.
         bool                     strict_length = false;
         bool                     strict_length_explicit = false;
+        // FR-7 (0.8.0): 'bcd_pad:' (Feld-Key oder Root-Default) — Padding bei
+        // gepacktem BCD mit ungerader Ziffernzahl. bcd_pad_explicit = deklariert
+        // (Feld oder Root) → Parser validiert das Padding-Nibble beim Decode.
+        codec::BcdPad            bcd_pad = codec::BcdPad::RIGHT_ZERO;
+        bool                     bcd_pad_explicit = false;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -238,6 +243,48 @@ namespace TNG_NAMESPACE::spec {
         return toUpper(getStr(node, "encoding", defaultEncoding));
     }
 
+    /// FR-7: Hat das Feld BCD-**Nutzdaten** (numeric/amount/*char/*num/remaining
+    /// im Encoding BCD, skalar, kein TLV-Container)? Nur dann ist 'bcd_pad'
+    /// sinnvoll — das Längenpräfix und `binary`-Formate sind nie betroffen.
+    static bool hasBcdData(const std::string& format, const std::string& encoding,
+        SpecFieldType type, bool tlvContainer)
+    {
+        if (encoding != "BCD" || type != SpecFieldType::SCALAR || tlvContainer)
+            return false;
+        std::size_t lp = 0;
+        while (lp < format.size() && format[lp] == 'L') ++lp;
+        const std::string base = format.substr(lp);
+        return base == "NUMERIC" || base == "AMOUNT" || base == "CHAR" ||
+               base == "NOPAD_CHAR" || base == "NUM" || base == "REMAINING";
+    }
+
+    static bool hasBcdData(const SpecField& f) {
+        return hasBcdData(f.format, f.encoding, f.type, f.tlv.has_value());
+    }
+
+    /// FR-7: 'bcd_pad'-Wert (case-insensitive) → Enum; sonst positioniertes
+    /// SpecValidationError (Fail-closed).
+    static codec::BcdPad parseBcdPadValue(const std::string& raw, const std::string& where,
+        ryml::id_type id, const SourceMap* smap)
+    {
+        const std::string v = toLower(raw);
+        if (v == "right_zero") return codec::BcdPad::RIGHT_ZERO;
+        if (v == "right_f")    return codec::BcdPad::RIGHT_F;
+        if (v == "left_zero")  return codec::BcdPad::LEFT_ZERO;
+        throw SpecValidationError(
+            where + " hat ungültiges bcd_pad='" + raw +
+            "' (erlaubt: right_zero, right_f, left_zero)",
+            id, smap);
+    }
+
+    static const char* bcdPadName(codec::BcdPad p) {
+        switch (p) {
+        case codec::BcdPad::RIGHT_F:   return "right_f";
+        case codec::BcdPad::LEFT_ZERO: return "left_zero";
+        default:                       return "right_zero";
+        }
+    }
+
     // =============================================================================
     // Validierung
     // =============================================================================
@@ -247,7 +294,8 @@ namespace TNG_NAMESPACE::spec {
         static const std::set<std::string> allowed = {
             "type", "format", "encoding", "length", "description", "children",
             "tlv", "sensitive", "scale", "sign", "strict_length",
-            "prefix_encoding"   // FR-6 (0.7.0)
+            "prefix_encoding",  // FR-6 (0.7.0)
+            "bcd_pad"           // FR-7 (0.8.0)
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -395,7 +443,7 @@ namespace TNG_NAMESPACE::spec {
                 // 'prefix_encoding' ebenfalls — die TLV-Länge liegt im
                 // Length-Feld des Frames, nicht in einem Längenpräfix.)
                 for (const char* badKey : { "format", "length", "encoding",
-                    "prefix_encoding" })
+                    "prefix_encoding", "bcd_pad" })
                     if (hasKey(c, badKey))
                         throw SpecValidationError(
                             "Feld " + fieldKey + ", TLV-Kind '" + seKey +
@@ -887,6 +935,25 @@ namespace TNG_NAMESPACE::spec {
             f.prefix_encoding = pe;
         }
 
+        // FR-7 (0.8.0): optionales Feld-Key 'bcd_pad' — Padding-Nibble bei
+        // gepacktem BCD mit ungerader Ziffernzahl (right_zero = Default/Legacy,
+        // right_f, left_zero). Fail-closed (positionierte SpecValidationError):
+        // ungültiger Wert; Feld ohne BCD-Nutzdaten-Encoding (inkl. TLV-Container,
+        // *binary, Längenpräfix-only-BCD); der Key wirkt nie auf das Längenpräfix.
+        if (hasKey(node, "bcd_pad")) {
+            const std::string label = "Feld '" + getStr(node, "description", "<unnamed>") + "'";
+            const ryml::id_type bid = node["bcd_pad"].id();
+            f.bcd_pad = parseBcdPadValue(getStr(node, "bcd_pad"), label, bid, smap);
+            if (!hasBcdData(f.format, f.encoding, f.type, hasKey(node, "tlv")))
+                throw SpecValidationError(
+                    label + ": 'bcd_pad' ist nur für Felder mit BCD-Nutzdaten gültig "
+                    "(numeric/amount/*char/*num/remaining mit encoding bcd; format=" +
+                    f.format + ", encoding=" + f.encoding + ") — nicht für das "
+                    "Längenpräfix, binary-Formate oder TLV-Container",
+                    bid, smap);
+            f.bcd_pad_explicit = true;
+        }
+
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet.
         // 0.6.4: Container-Kinder (eigener 'tlv'-Block, kein 'format' nötig)
         // erwarten keine Daten — der äußere TLV-Frame trägt die Länge.
@@ -953,7 +1020,7 @@ namespace TNG_NAMESPACE::spec {
                                 "Container-Kinds benötigt 'ber: true' oder "
                                 "'tag_bytes' und 'len_bytes'",
                                 ct.id(), smap);
-                        for (const char* badKey : { "format", "length", "encoding" })
+                        for (const char* badKey : { "format", "length", "encoding", "bcd_pad" })
                             if (hasKey(entry, badKey))
                                 throw SpecValidationError(
                                     "TLV-Kind '" + seKey + "': ein Container-Kind "
@@ -1165,6 +1232,10 @@ namespace TNG_NAMESPACE::spec {
             if (f.strict_length)
                 if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
                     fp->strictLength(true);
+            // FR-7: deklariertes 'bcd_pad' (Feld-Key oder Root-Default).
+            if (f.bcd_pad_explicit)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
+                    fp->bcdPad(f.bcd_pad);
             // 0.6.0: 'format: amount' trägt die Wire-Form (jPOS vs. plain) über
             // die optionale 'scale'-Key. Für alle anderen Formate ist der Setter
             // ein no-op (s. ISOFieldParserPtrBase).
@@ -1404,6 +1475,12 @@ namespace TNG_NAMESPACE::spec {
                 info.amount = (cf == "AMOUNT");
                 info.sign = child.sign;
                 info.scale = child.scale;   // 0.6.0: in parseSpecField bereits validiert
+                // FR-7: 'bcd_pad' (nur BCD-Text-Kinder; Loader hat Anwendbarkeit geprüft)
+                if (child.bcd_pad_explicit && info.text && info.enc == codec::Encoder::BCD) {
+                    info.bcd_pad = child.bcd_pad;
+                    info.bcd_pad_explicit = true;
+                    info.digits = child.length;
+                }
             }
             childMap[static_cast<std::size_t>(tag)] = std::move(info);
         }
@@ -1548,6 +1625,8 @@ namespace TNG_NAMESPACE::spec {
         // encoding-neutralen Formaten ist encoding "" → hier ebenfalls "").
         // Läuft rekursiv automatisch auf children/tlv_children.
         info.prefix_encoding = f.prefix_encoding.empty() ? f.encoding : f.prefix_encoding;
+        // FR-7 (0.8.0): effektive BCD-Padding-Variante; "" bei Feldern ohne BCD-Nutzdaten.
+        info.bcd_pad = hasBcdData(f) ? bcdPadName(f.bcd_pad) : "";
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.
@@ -1585,6 +1664,27 @@ namespace TNG_NAMESPACE::spec {
             applyStrictLengthDefault(c, def);
     }
 
+    // FR-7: Root-Default 'bcd_pad:' rekursiv auf alle Felder mit BCD-Nutzdaten
+    // anwenden, die den Key nicht selbst deklarieren (Feld-Deklaration gewinnt).
+    // Felder ohne BCD-Nutzdaten (Container, binary, Nicht-BCD) bleiben unberührt.
+    static void applyBcdPadDefault(SpecField& f, codec::BcdPad def) {
+        if (!f.bcd_pad_explicit && hasBcdData(f)) {
+            f.bcd_pad = def;
+            f.bcd_pad_explicit = true;
+        }
+        for (auto& c : f.children)
+            applyBcdPadDefault(c, def);
+        for (auto& [tag, c] : f.tlv_children)
+            applyBcdPadDefault(c, def);
+    }
+
+    // FR-7: optionalen Root-Key 'bcd_pad' lesen (nullopt = nicht deklariert).
+    static std::optional<codec::BcdPad> readRootBcdPad(ryml::ConstNodeRef yaml, const SourceMap* smap) {
+        if (!hasKey(yaml, "bcd_pad"))
+            return std::nullopt;
+        return parseBcdPadValue(getStr(yaml, "bcd_pad"), "Root-Key", yaml["bcd_pad"].id(), smap);
+    }
+
     struct LoadedSpec {
         std::string              desc;
         std::string              defaultEncoding;
@@ -1620,6 +1720,7 @@ namespace TNG_NAMESPACE::spec {
         result.strict = getBool(yaml, "strict", true);
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
         const bool rootStrictLength = getBool(yaml, "strict_length", false);
+        const auto rootBcdPad = readRootBcdPad(yaml, &pr.source_map);
 
         for (ryml::ConstNodeRef entry : yaml["fields"].children()) {
             const auto de = toStdString(entry.key());
@@ -1628,6 +1729,8 @@ namespace TNG_NAMESPACE::spec {
                 entry, result.defaultEncoding, de, &pr.source_map);
             if (rootStrictLength)
                 applyStrictLengthDefault(result.fields[deNum], true);
+            if (rootBcdPad)
+                applyBcdPadDefault(result.fields[deNum], *rootBcdPad);
         }
         // Content-Snapshot (Dateimenge + Hash): SourceMap::finalise() lief
         // unbedingt (unabhaengig von trackSourceMap) im Preprocessor.
@@ -1656,6 +1759,8 @@ namespace TNG_NAMESPACE::spec {
             yaml["field"], result.defaultEncoding, "0", &pr.source_map);
         if (getBool(yaml, "strict_length", false))
             applyStrictLengthDefault(result.fields[0], true);
+        if (const auto rootBcdPad = readRootBcdPad(yaml, &pr.source_map))
+            applyBcdPadDefault(result.fields[0], *rootBcdPad);
         result.sourceFiles = std::move(pr.sourceFiles);
         result.contentHash = pr.source_map.hash();
         return result;

@@ -170,7 +170,21 @@ namespace TNG_NAMESPACE::tlv_detail {
             else
                 of = std::make_shared< ::TNG_NAMESPACE::OpaqueField >(
                     static_cast<TNG_KEY_TYPE>(se_num));
-            (void)of->value(child_as_string(child->enc, buf, data_offset, data_len, strict));
+            // FR-7: deklariertes 'bcd_pad' → Padding-Nibble validieren (strict:
+            // Fehler, sonst Warnung); ohne Deklaration bleibt das Nibble ungeprüft.
+            if (child->enc == ::TNG_NAMESPACE::codec::Encoder::BCD && child->bcd_pad_explicit) {
+                const std::size_t digits = child_bcd_digits(*child, data_len);
+                if (!::TNG_NAMESPACE::codec::detail::bcd_pad_nibble_ok(buf, data_offset, digits, child->bcd_pad)) {
+                    if (strict)
+                        throw std::runtime_error(
+                            "[ISO8583] TLV-Kind SE" + std::to_string(se_num) +
+                            ": BCD-Padding-Nibble weicht von 'bcd_pad' ab (Offset " +
+                            std::to_string(data_offset) + ", " + std::to_string(digits) + " Ziffern)");
+                    TNG_LOG_WARN("[ISOTLVParser] SE{} BCD-Padding-Nibble weicht von 'bcd_pad' ab (nicht-strikt, Offset {})",
+                        se_num, data_offset);
+                }
+            }
+            (void)of->value(child_as_string(*child, buf, data_offset, data_len, strict));
             se = of;
         }
         else {

@@ -2,6 +2,7 @@
 
 // [iso8583]
 #include "../config.h"
+#include "../_codec.hh"
 // [stdc++]
 #include <memory>
 #include <vector>
@@ -277,6 +278,13 @@ namespace TNG_NAMESPACE {
         // mehr still aufgefüllt (strict: Fehler, nicht-strikt: Warnung + Padding).
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable bool strict_length_ = false;
+        // FR-7 (0.8.0): Padding-Variante für gepacktes BCD mit ungerader
+        // Ziffernzahl (YAML 'bcd_pad:'). bcd_pad_explicit_ = vom Loader gesetzt
+        // (Feld-Key oder Root-Default) → Decode validiert das Padding-Nibble;
+        // ohne Deklaration bleibt das Legacy-Verhalten (RIGHT_ZERO, ungeprüft).
+        // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
+        mutable ::TNG_NAMESPACE::codec::BcdPad bcd_pad_ = ::TNG_NAMESPACE::codec::BcdPad::RIGHT_ZERO;
+        mutable bool bcd_pad_explicit_ = false;
     public:
         /// @brief Shared-pointer alias.
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
@@ -306,6 +314,20 @@ namespace TNG_NAMESPACE {
 
         /// @brief Liefert den Status der Unterlängen-Prüfung.
         [[nodiscard]] bool strictLength() const noexcept { return strict_length_; }
+
+        /// @brief Setzt die BCD-Padding-Variante (FR-7, 0.8.0) und markiert sie als deklariert.
+        ///
+        /// Wirkt nur bei Feldern mit BCD-Nutzdaten-Encoding und **ungerader**
+        /// Ziffernzahl (nie auf das Längenpräfix). Nach dem Setzen validiert der
+        /// Decode das Padding-Nibble (strict: `std::runtime_error`, sonst Warnung).
+        /// Ohne Aufruf gilt das Legacy-Verhalten `RIGHT_ZERO` ohne Validierung.
+        void bcdPad(::TNG_NAMESPACE::codec::BcdPad v) const noexcept { bcd_pad_ = v; bcd_pad_explicit_ = true; }
+
+        /// @brief Liefert die BCD-Padding-Variante (Default `RIGHT_ZERO`).
+        [[nodiscard]] ::TNG_NAMESPACE::codec::BcdPad bcdPad() const noexcept { return bcd_pad_; }
+
+        /// @brief `true`, wenn die BCD-Padding-Variante explizit deklariert wurde.
+        [[nodiscard]] bool bcdPadExplicit() const noexcept { return bcd_pad_explicit_; }
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;

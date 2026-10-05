@@ -115,7 +115,8 @@ namespace TNG_NAMESPACE::codec {
     // as<T, e>
     // -------------------------------------------------------------------------
     template <typename T, Encoder e>
-    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid) {
+    static constexpr T as(const std::vector<uint8_t>& text, std::size_t offset, std::size_t length, bool rejectInvalid, BcdPad pad) {
+        (void)pad; // nur im BCD-String-Pfad relevant (FR-7)
         if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
             // -- Binärer Rückgabepfad -----------------------------------------
             if constexpr (Encoder::HEX_EBCDIC == e) {
@@ -152,9 +153,13 @@ namespace TNG_NAMESPACE::codec {
             else if constexpr (Encoder::BCD == e) {
                 std::string data;
                 data.reserve(length);
+                // FR-7: LEFT_ZERO + ungerade Ziffernzahl → das erste Nibble ist
+                // Padding, die Ziffern beginnen am zweiten Nibble.
+                const std::size_t skip = (BcdPad::LEFT_ZERO == pad && (length & 1u)) ? 1u : 0u;
                 for (std::size_t i = 0; i < length; ++i) {
-                    const int shift = (i & 1) == 1 ? 0 : 4;
-                    char c = (char)(((text.at(offset + (i >> 1)) >> shift) & 0x0F) + '0');
+                    const std::size_t n = i + skip;
+                    const int shift = (n & 1) == 1 ? 0 : 4;
+                    char c = (char)(((text.at(offset + (n >> 1)) >> shift) & 0x0F) + '0');
                     data.push_back(c);
                 }
                 return data;
@@ -176,7 +181,8 @@ namespace TNG_NAMESPACE::codec {
     // b must already be sized; only the bytes at [offset, offset+required) are written.
     // -------------------------------------------------------------------------
     template <Encoder e, typename T>
-    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid) {
+    static constexpr void to(const T& value, std::vector<uint8_t>& b, std::size_t offset, bool rejectInvalid, BcdPad pad) {
+        (void)pad; // nur im BCD-String-Pfad relevant (FR-7)
 
         if constexpr (std::is_same_v<T, std::string>) {
             // ── String-Encoding ───────────────────────────────────────────────
@@ -209,11 +215,18 @@ namespace TNG_NAMESPACE::codec {
                 const std::size_t bytes = required_sz_for_as<e>(value.size());
                 for (std::size_t i = 0; i < bytes; ++i)
                     b[offset + i] = 0x00;
+                // FR-7: Padding-Nibble bei ungerader Ziffernzahl je nach `pad`
+                // (RIGHT_ZERO = Default/Legacy: unbeschriebenes Low-Nibble bleibt 0).
+                const bool odd = (value.size() & 1u) != 0u;
+                const std::size_t skip = (BcdPad::LEFT_ZERO == pad && odd) ? 1u : 0u;
                 for (std::size_t i = 0; i < value.size(); ++i) {
                     const uint8_t digit = static_cast<uint8_t>(value[i] - '0');
-                    const int shift = (i & 1) == 0 ? 4 : 0; // MSN first (mirrors as<>)
-                    b[offset + (i >> 1)] |= static_cast<uint8_t>(digit << shift);
+                    const std::size_t n = i + skip;
+                    const int shift = (n & 1) == 0 ? 4 : 0; // MSN first (mirrors as<>)
+                    b[offset + (n >> 1)] |= static_cast<uint8_t>(digit << shift);
                 }
+                if (BcdPad::RIGHT_F == pad && odd)
+                    b[offset + bytes - 1] |= 0x0F;
             }
             else static_assert(dependent_false<decltype(e)>::value,
                 "to<E, string>: unsupported encoder");
