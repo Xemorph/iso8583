@@ -141,6 +141,10 @@ namespace TNG_NAMESPACE::spec {
         // Nach 0.6.0: 'sign: true' — Standardform mit führendem Vorzeichenzeichen
         // (C/D/+/-, z. B. DE28-31 "x+n 8"); nur zusammen mit 'scale', nicht mit bcd.
         bool                     sign = false;
+        // FR-6 (0.7.0): optionales 'prefix_encoding' (Feld-Key) — Encoding des
+        // Längenpräfixes, unabhängig vom Nutzdaten-Encoding. Leer = nicht
+        // deklariert (effektiv = encoding).
+        std::string              prefix_encoding;
         // FR-5 (0.6.2): Opt-in 'strict_length: true' (Feld-Key oder Root-Default).
         // strict_length_explicit: im Feld deklariert → überschreibt den Root-Default.
         bool                     strict_length = false;
@@ -896,9 +900,16 @@ namespace TNG_NAMESPACE::spec {
         using F = ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr;
 #define MAKE(T)     [](int len, const std::string& d) -> F { return std::make_shared<T>(len, d); }
 #define MAKE_NOP()  [](int,     const std::string&  ) -> F { return std::make_shared<IF_NOP>(); }
+// FR-6: Dreiwege-Kombinationen (gemischtes Präfix-/Nutzdaten-Encoding).
+// Bewusst 3 einfache Makro-Parameter statt MAKE(ISOOpaqueFieldParser<l,pe,e>):
+// MSVCs Preprozessor verliert die Template-Argumente hinter dem ersten Komma,
+// wenn sie in EINER Makro-Parameter ankommen (Nachweis: /EP-Dump).
+#define MAKE_MIX(l, pe, e) [](int len, const std::string& d) -> F { return std::make_shared<ISOOpaqueFieldParser<l, pe, e>>(len, d); }
 
         // Prozess-lebenslange, unveraenderliche Dispatch-Tabelle
-        // (Key = "Format|Encoding"). Bewusst als LEAKY SINGLETON: wird NIE
+        // (Key = "Format|Encoding", ab FR-6/0.7.0 zusaetzlich die
+        // 3-teile-Form "Format|Encoding|PrefixEncoding" fuer gemischte
+        // Praefix-/Nutzdaten-Encoding). Bewusst als LEAKY SINGLETON: wird NIE
         // dealloziert. Grund: der STL-Container-Destruktor (unordered_map ->
         // _Container_base12::_Orphan_all) wuerde sonst bei Prozess-Exit via
         // atexit aufgerufen und faellt unter MSVC-ASan (statische CRT) mit
@@ -966,11 +977,48 @@ namespace TNG_NAMESPACE::spec {
             { "LCHAR|EBCDIC",      MAKE(IFE_LCHAR)       },
             { "LLCHAR|EBCDIC",     MAKE(IFE_LLCHAR)      },
             { "LLLCHAR|EBCDIC",    MAKE(IFE_LLLCHAR)     },
+            // ── Identitätslücken (FR-6, 0.7.0) ────────────────────────────────
+            // Zweigeteilte Keys: Präfix- und Nutzdaten-Encoding identisch.
+            // (lnum|bcd / llnum|bcd: gepackte Ziffern + BCD-Längenpräfix,
+            // VISA BASE-I DE2-artig; llnum|ebcdic analog mit EBCDIC.)
+            { "LNUM|BCD",          MAKE(IFB_LNUM)        },
+            { "LLNUM|BCD",         MAKE(IFB_LLNUM)       },
+            { "LLNUM|EBCDIC",      MAKE(IFE_LLNUM)       },
+            // ── FR-6 (0.7.0): gemischte Präfix-/Nutzdaten-Encoding (3-teile) ──
+            // Dreiwege-Keys "Format|Encoding|PrefixEncoding" (YAML-Key
+            // 'prefix_encoding'): BCD- oder BINARY-Längenpräfix vor
+            // ASCII-/EBCDIC-Nutzdaten (VISA BASE-I: DE35/DE48-artig).
+            // Keine benannten Aliase — MAKE_MIX(l, pe, e) hält die
+            // Template-Argumente als einfache Makro-Parameter (private
+            // Datei, keine öffentliche API).
+            { "LCHAR|ASCII|BCD",     MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LLCHAR|ASCII|BCD",    MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LLLCHAR|ASCII|BCD",   MAKE_MIX(codec::Length::LLL,  codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LLLLCHAR|ASCII|BCD",  MAKE_MIX(codec::Length::LLLL, codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LCHAR|ASCII|BINARY",  MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LLCHAR|ASCII|BINARY", MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LLLCHAR|ASCII|BINARY", MAKE_MIX(codec::Length::LLL, codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LLLLCHAR|ASCII|BINARY", MAKE_MIX(codec::Length::LLLL, codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LCHAR|EBCDIC|BCD",    MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
+            { "LLCHAR|EBCDIC|BCD",   MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
+            { "LLLCHAR|EBCDIC|BCD",  MAKE_MIX(codec::Length::LLL,  codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
+            { "LCHAR|EBCDIC|BINARY", MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
+            { "LLCHAR|EBCDIC|BINARY", MAKE_MIX(codec::Length::LL,  codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
+            { "LLLCHAR|EBCDIC|BINARY", MAKE_MIX(codec::Length::LLL, codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
+            { "LNUM|ASCII|BCD",      MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LLNUM|ASCII|BCD",     MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BCD,    codec::Encoder::ASCII) },
+            { "LNUM|ASCII|BINARY",   MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LLNUM|ASCII|BINARY",  MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::ASCII) },
+            { "LNUM|EBCDIC|BCD",     MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
+            { "LLNUM|EBCDIC|BCD",    MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
+            { "LNUM|EBCDIC|BINARY",  MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
+            { "LLNUM|EBCDIC|BINARY", MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
                 };
                 return t;
             }();
 #undef MAKE
 #undef MAKE_NOP
+#undef MAKE_MIX
         return *table;
     }
 
@@ -978,7 +1026,13 @@ namespace TNG_NAMESPACE::spec {
         createScalarParser(const SpecField& f)
     {
         const auto& table = parserTable();
-        const std::string key = f.format + "|" + f.encoding;
+        // FR-6 (0.7.0): 3-teiler Dispatch-Key nur bei deklariertem, von
+        // 'encoding' abweichendem 'prefix_encoding' — sonst unveränderter
+        // 2-teiler Key (Additivitäts-Garantie: Specs ohne den Key verhalten
+        // sich byte-identisch wie vor 0.7.0).
+        std::string key = f.format + "|" + f.encoding;
+        if (!f.prefix_encoding.empty() && f.prefix_encoding != f.encoding)
+            key += "|" + f.prefix_encoding;
 
         auto it = table.find(key);
         auto p = it != table.end()
@@ -1010,10 +1064,16 @@ namespace TNG_NAMESPACE::spec {
             return p;
         }
 
-        throw std::runtime_error(
+        // Backstop: primär wirft parseSpecField() bereits beim Laden einen
+        // positionierten Fehler (Fail-closed); dieser Pfad ist nur relevant
+        // für programmatisch konstruierte Specs.
+        std::string msg =
             "Unbekannte Format/Encoding-Kombination in der Spec:\n"
             "  format:      '" + f.format + "'\n"
-            "  encoding:    '" + f.encoding + "'\n"
+            "  encoding:    '" + f.encoding + "'\n";
+        if (!f.prefix_encoding.empty())
+            msg += "  prefix:    '" + f.prefix_encoding + "'\n";
+        throw std::runtime_error(msg +
             "  description: '" + f.description + "'\n"
             "  Erlaubte Encodings: ASCII | BCD | BINARY | EBCDIC\n"
             "  Prüfe auf Tippfehler im globalen 'encoding'-Schlüssel oder im Feld selbst.");

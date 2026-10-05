@@ -61,6 +61,11 @@ namespace TNG_NAMESPACE {
     using IFB_LCHAR      = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
     using IFB_LLCHAR     = ISOOpaqueFieldParser< codec::Length::LL, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
     using IFB_LLLCHAR    = ISOOpaqueFieldParser< codec::Length::LLL, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
+    // Numerisch variable Länge (BCD Length-Prefix) — FR-6 (0.7.0): schließt
+    // die Identitätslücken lnum|bcd / llnum|bcd (gepackte Ziffern + BCD-Präfix,
+    // VISA BASE-I DE2-artig).
+    using IFB_LNUM       = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
+    using IFB_LLNUM      = ISOOpaqueFieldParser< codec::Length::LL, codec::PrefixEncoder::BCD, codec::Encoder::BCD >;
     // Binary variable Länge (BCD Length-Prefix)
     using IFB_LBINARY    = ISOBinaryFieldParser< codec::Length::L, codec::PrefixEncoder::BCD, codec::Encoder::BINARY >;
     using IFB_LLBINARY   = ISOBinaryFieldParser< codec::Length::LL, codec::PrefixEncoder::BCD, codec::Encoder::BINARY >;
@@ -76,6 +81,8 @@ namespace TNG_NAMESPACE {
     // Monetär (Währung + Skala + Betrag, jPOS-ISOAmount-Konvention)
     using IFE_AMOUNT     = AmountFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC, codec::Padder::LEFT_ZERO >;
     using IFE_LNUM       = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::EBCDIC, codec::Encoder::EBCDIC >;
+    // FR-6 (0.7.0): Identitätslücke llnum|ebcdic.
+    using IFE_LLNUM      = ISOOpaqueFieldParser< codec::Length::LL, codec::PrefixEncoder::EBCDIC, codec::Encoder::EBCDIC >;
     using IFE_CHAR       = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC, codec::Padder::RIGHT_T_SPACE >;
     using IFE_NOPAD_CHAR = ISOOpaqueFieldParser< codec::Length::FIX, codec::PrefixEncoder::NONE, codec::Encoder::EBCDIC >;
     using IFE_LCHAR      = ISOOpaqueFieldParser< codec::Length::L, codec::PrefixEncoder::EBCDIC, codec::Encoder::EBCDIC >;
