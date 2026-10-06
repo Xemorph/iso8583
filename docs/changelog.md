@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### `[~](Changed)` Sekundär-Bitmap: `bitmap length` fail-closed + `secondary: always` (FR-9)
+
+- **Verhaltensänderung (strict, Default) — FR-9b:** Mit `bitmap … length: 8`
+  las der Decoder die Sekundär-Bitmap **nicht**, auch bei gesetztem Bit 1 —
+  alle Folgefelder waren stillschweigend um 8 Byte verschoben (Fehler traten
+  erst später und irreführend auf), und die eigene Ausgabe des Builders (der die
+  Sekundär-Bitmap unabhängig von `length` schreibt) war nicht rückdekodierbar.
+  Jetzt wirft der **Decoder** bei Bit 1 + `length < 16` und der **Builder** bei
+  Feldern, die mehr Bitmap-Bytes erfordern als `length` (z. B. `length: 8` und
+  DE 70), einen positionierten `std::runtime_error`
+  (`Bitmap @ Offset N: Bit 1 (Sekundär-Bitmap) ist gesetzt … 'length: 16'
+  setzen`). Nicht-strikt (`strict: false`) bleibt das Legacy-Verhalten mit
+  Warnung. **Migration:** Specs mit Feldern > 64 bzw. Nachrichten mit Bit 1
+  brauchen `length: 16`. Die IFB_BITMAP-Feldparser-Ebene ist unverändert.
+  Fünf Test-Fixtures (`test_spec_loader.cc`, `test_incompatible_input.cc`)
+  hatten Bit 1 versehentlich bei `length: 8` gesetzt und wurden korrigiert.
+- **Neu — FR-9a:** Feld-Key `secondary: auto|always` am `bitmap`-Feld.
+  `always` erzwingt beim Bauen die Sekundär-Bitmap (Bit 1 + 16 Byte), auch ohne
+  Feld > 64 (VISA BASE I: Primär-Bitmap mit Bit 1 + leere Sekundär-Bitmap);
+  erfordert `length >= 16`. Default `auto` = unverändert (byte-identisch zu
+  0.7.1). Fail-closed beim Laden (positionierte `SpecValidationError`):
+  ungültiger Wert, Key an Nicht-Bitmap-Feld, `always` mit `length < 16`.
+  Der Bitset-Zugriff des Bitmap-Encoders ist gegen kleinere Bitsets
+  abgesichert (erzwungene 16 Byte).
+- **Introspektion/ABI:** `SpecFieldInfo::secondary_bitmap` (`"always"` |
+  `"auto"` | `""`); neues Mitglied in `SpecFieldInfo` und
+  `ISOFieldParserPtrBase` (`secondaryAlways`) — Layout-Änderung,
+  Shared-Library-Consumer müssen neu kompiliert werden.
+- Doku: `spec_schema.md` §2/§3 „Bitmap-Felder“/§8/§9/§12 (zuvor war die
+  Bedeutung von `bitmap length` nirgends beschrieben), `yaml_format.md`,
+  `include/iso8583/AGENTS.md`, `.agents/yaml-spec.md`, `.agents/pitfalls.md` (45).
+- Tests: neue Suite `tests/test_bitmap_secondary.cc` (Tag `[fr9]`, 18 Cases).
+
 ### `[+](Added)` Binäres Längenpräfix (Einheit Ziffern) vor gepackten BCD-Ziffern (FR-8)
 
 - Neue Kombinationen `lchar`/`llchar`/`lllchar`/`lnum`/`llnum` mit

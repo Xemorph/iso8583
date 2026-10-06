@@ -69,7 +69,8 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 |---|---|---|---|
 | `type` | `scalar` \| `nested` | nein (Default `scalar`) | `nested` = Sub-Nachricht (`Message`), benötigt `children` |
 | `format` | string | ja (außer `nested` ohne `children`… siehe §6) | eine der Formate aus §3 |
-| `length` | int | ja, **außer** `bitmap`/`nop`/`unused`; bei `remaining` **stets** Pflicht (0.6.0) | fixe Länge **oder** Maximum (variablen Formate/`remaining`). **BCD-Felder: `length` = Ziffernzahl** (1 Byte = 2 Ziffern) |
+| `length` | int | ja, **außer** `bitmap`/`nop`/`unused`; bei `remaining` **stets** Pflicht (0.6.0) | fixe Länge **oder** Maximum (variablen Formate/`remaining`). **BCD-Felder: `length` = Ziffernzahl** (1 Byte = 2 Ziffern). **`bitmap`: `length` = Bitmap-Größe in Bytes** (`8` = nur Primär, `16` = Primär + Sekundär, `24` = + Tertiär) — sie bestimmt, ob die Sekundär-Bitmap gelesen wird, s. §3 „Bitmap-Felder" (0.8.0, FR-9) |
+| `secondary` | `auto` \| `always` | nein (Default `auto`) | (0.8.0, FR-9a): nur `format: bitmap` — `always` schreibt beim Bauen **immer** die Sekundär-Bitmap (Bit 1 + 16 Byte), auch ohne Feld > 64; erfordert `length >= 16`. Details: §3 „Bitmap-Felder" |
 | `encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | feldweises Override über das globale Encoding (§7) |
 | `prefix_encoding` | `ascii` \| `bcd` \| `ebcdic` \| `binary` | nein | (0.7.0, FR-6): Encoding des **Längenpräfixes**, unabhängig vom `encoding` (Nutzdaten). Default = `encoding`. Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix); Breiten-/Zählregeln und die 25 verfügbaren Kombinationen s. §3 |
 | `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.7.1, FR-7): Padding-Nibble bei gepacktem BCD mit **ungerader** Ziffernzahl; nur bei BCD-**Nutzdaten** (`numeric`, `amount`, `*char`, `*num`, `remaining`, TLV-Kinder), nie am Längenpräfix. Default `right_zero` (Legacy); überschreibt den Root-Default. Details: §3 „BCD-Padding" |
@@ -292,6 +293,58 @@ wird (Beispielwert `123`):
 - **Codec-API (fortgeschritten):** `codec::BcdPad`; `codec::as<>`/`codec::to<>`
   haben ein zusätzliches Default-Argument `BcdPad pad = RIGHT_ZERO`
   (source-kompatibel).
+
+### Bitmap-Felder (`length`, `secondary`, 0.8.0, FR-9)
+
+Das Bitmap-Feld (`"001": { format: bitmap, length: N }`) ist
+encoding-neutral (roh) und wird **nie** manuell gesetzt — die Bibliothek
+berechnet es aus den gesetzten Feldern. Seine `length` ist die **Größe der
+Bitmap in Bytes** und legt fest, welche Bitmap-Teile der **Decoder** liest:
+
+| `length` | Decoder liest | Typischer Einsatz |
+|---|---|---|
+| `8` | nur die **Primär-Bitmap** (DE 1–64) | Nachrichten ohne Felder > 64 |
+| `16` | Primär-Bitmap + (bei **Bit 1**) die **Sekundär-Bitmap** (DE 65–128) | Standardfall mit Sekundärfeldern |
+| `24` | zusätzlich die Tertiär-Bitmap (DE 129–192) | selten |
+
+- **Bit 1 + `length: 8` ist Fail-closed (strict, Default).** Zeigt Bit 1 eine
+  Sekundär-Bitmap an, das Bitmap-Feld deklariert aber nur 8 Byte, werden die
+  Folgefelder sonst um 8 Byte verschoben und fallen erst später mit
+  irreführenden Fehlern auf (z. B. „BCD-Padding-Nibble weicht ab“,
+  „Unverbrauchte Bytes am Pufferende“). Seit 0.8.0 wirft der Decoder
+  stattdessen sofort einen positionierten `std::runtime_error`
+  (`Bitmap @ Offset N: Bit 1 (Sekundär-Bitmap) ist gesetzt, … 'length: 16'
+  setzen`); nicht-strikt (`strict: false`) bleibt die Legacy-Dekodierung mit
+  Warnung.
+- **Bauen:** die Bitmap-Größe folgt den gesetzten Feldern, **nicht** `length`
+  (Felder ≤ 64 → 8 Byte ohne Bit 1; ein Feld > 64 → 16 Byte mit Bit 1). Ist
+  `length` kleiner als das Gebaute (z. B. `length: 8` und DE 70 gesetzt), ist
+  die Ausgabe mit derselben Spec nicht rückdekodierbar — seit 0.8.0 wirft
+  `parse()` dafür im strict-Modus einen positionierten `std::runtime_error`
+  (nicht-strikt: Warnung, Legacy-Ausgabe). **Regel:** `length` so wählen,
+  dass sie alle Felder der Spec abdeckt (`16` sobald Felder > 64 vorkommen).
+- **`secondary: always`** (nur auf `format: bitmap`, 0.8.0, FR-9a): erzwingt
+  beim **Bauen** die Sekundär-Bitmap — Bit 1 gesetzt und 8 weitere Bytes,
+  auch wenn **kein** Feld > 64 gesetzt ist (VISA BASE I: Primär-Bitmap mit
+  Bit 1 + **leere** Sekundär-Bitmap `00 00 00 00 00 00 00 00`). Default
+  `auto` = bisheriges Verhalten (byte-identisch zu 0.7.1; `length: 16`
+  allein erzwingt **nichts**). Fail-closed beim Laden (positionierte
+  `SpecValidationError`): ungültiger Wert, Key an einem Nicht-Bitmap-Feld,
+  `always` mit `length < 16`.
+
+  ```yaml
+  "001": { format: bitmap, length: 16, secondary: always, description: "Bitmap (VISA)" }
+  ```
+
+- **Zusammenspiel mit dem Decode-Roundtrip:** Ein dekodiertes Message-Objekt
+  trägt die Bitmap aus der Wire. `parser->parse(msg)` (Expert-API) schreibt
+  sie 1:1 zurück; `msg->parse(msg)` **rekalkuliert** sie aus den gesetzten
+  Feldern — eine leere Sekundär-Bitmap bleibt dabei nur mit
+  `secondary: always` erhalten.
+- Introspektion: `SpecFieldInfo::secondary_bitmap` (`"always"` | `"auto"` bei
+  Bitmap-Feldern, sonst `""`). **ABI:** neues Mitglied in `SpecFieldInfo` und
+  `ISOFieldParserPtrBase` (Layout-Änderung) — Shared-Library-Consumer müssen
+  neu kompiliert werden (0.8.0).
 
 ## 4. `remaining` (0.6.0: encoding-aware)
 
@@ -553,6 +606,9 @@ Alle Loader-/Validierungsfehler sind **positionierte**
 | `prefix_encoding` bei TLV-Kindern / constructed-Kindern / Root-Level (0.7.0) | `…'prefix_encoding' ist bei TLV-Kindern unzulässig (die TLV-Länge liegt im Length-Feld des Frames)` bzw. `…darf 'prefix_encoding' nicht deklarieren…` |
 | `bcd_pad` mit unzulässigem Wert (0.7.1) | `… hat ungültiges bcd_pad='…' (erlaubt: right_zero, right_f, left_zero)` |
 | `bcd_pad` an Feld ohne BCD-Nutzdaten / TLV-Container / constructed-Kind (0.7.1) | `…'bcd_pad' ist nur für Felder mit BCD-Nutzdaten gültig (…)` bzw. `…darf 'bcd_pad' nicht deklarieren…` |
+| `secondary` mit unzulässigem Wert / an Nicht-Bitmap-Feld / `always` mit `length < 16` (0.8.0) | `… hat ungültiges secondary='…' (erlaubt: auto, always)` bzw. `…'secondary' ist nur für 'format: bitmap' gültig…` bzw. `…'secondary: always' erfordert 'length: 16' (oder mehr)…` |
+| Decode: Bit 1 gesetzt, aber `bitmap length` < 16 (0.8.0, strict) | `[ISO8583] Bitmap @ Offset N: Bit 1 (Sekundär-Bitmap) ist gesetzt, die Spec deklariert … nur 8 Byte … 'length: 16' setzen (FR-9)` |
+| Bauen: gesetzte Felder erfordern mehr Bitmap-Bytes als `length` (0.8.0, strict) | `[ISO8583] Bitmap: gesetzte Felder erfordern 16 Byte Bitmap, die Spec deklariert aber nur 'length: 8' …` |
 | Datei > `maxSpecBytes` (Default 32 MiB) / > 1024 Includes / oversized Sidecar | positionierter Fehler bzw. Discard+Regenerierung |
 | rapidyaml-Parsefehler | via prozessweit installierten `ryml`-Callbacks in positionierte Exceptions übersetzt (Default wäre `std::abort()`) |
 
@@ -576,7 +632,8 @@ Präfix-Lesung austreten).
 - **Bitmap-Felder werden nie manuell gesetzt** — der Parser
   berechnet sie (bei `msg->parse(msg)` automatisch via
   `recalcBitmap_locked()`; die Expert-API `parser->parse(msg)`
-  erwartet eine vorhandene Bitmap).
+  erwartet eine vorhandene Bitmap). `bitmap length` bestimmt, ob der
+  Decoder die Sekundär-Bitmap liest (§3 „Bitmap-Felder“).
 - DE-Zugriff per Punkt-Notation (`"48.72.1"`); `BinaryField`-Werte
   werden als **großgeschriebene Hex-Zeichenketten** gesetzt
   (`msg->set(52, "0102030405060708")`).
@@ -856,6 +913,10 @@ Wire-Vertrag (s. o.) eindeutig zu halten.
    Text in EBCDIC-Specs: `char`/`numeric` (encoding vererbt `ebcdic`).
 6. **`bitmap`/`nop`/`unused` mit `length > 0` bzw. `remaining` als
    TLV-Kind** → semantischer Widerspruch (Validierung/Warnung).
+   *Ausnahme `bitmap`:* dort ist `length` die Bitmap-Größe in Bytes
+   (`8` nur Primär, `16` mit Sekundär) und **muss** zu den Feldern der Spec
+   passen — mit `length: 8` und Bit 1 bzw. Feldern > 64 wirft die Bibliothek
+   seit 0.8.0 (strict) einen positionierten Fehler (§3 „Bitmap-Felder“).
 7. **Nicht-numerische DE-Keys** (z. B. `pan:` statt `"002":`) →
    Ladefehler.
 8. **Zirkuläres `!use`** → Ladefehler (Rekursionsschutz).

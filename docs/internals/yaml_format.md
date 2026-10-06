@@ -227,6 +227,17 @@ BCD-Nutzdaten (`numeric`, `amount`, `*char`, `*num`, `remaining`, TLV-Kinder),
 nie am Längenpräfix; sonst Fail-closed beim Laden. Normative Details:
 [spec_schema.md](spec_schema.md) §3, Unterabschnitt „BCD-Padding".
 
+**Bitmap `length` und `secondary:` (0.8.0, FR-9):** Beim `bitmap`-Feld ist
+`length` die Bitmap-Größe in **Bytes** — `8` = nur Primär-Bitmap, `16` =
+Primär + Sekundär (bei gesetztem Bit 1), `24` = + Tertiär. Mit `length: 8`
+wird die Sekundär-Bitmap beim Decode **nicht** gelesen; Bit 1 bzw. Felder > 64
+sind dann im strict-Modus ein positionierter Fehler (sonst stille
+Verschiebung der Folgefelder). Der optionale Key `secondary: always` (nur
+`format: bitmap`, `length >= 16`) erzwingt beim Bauen die Sekundär-Bitmap
+auch ohne Feld > 64 (VISA BASE I: Bit 1 + leere Sekundär-Bitmap); Default
+`auto` = bisheriges Verhalten. Normative Details:
+[spec_schema.md](spec_schema.md) §3, Unterabschnitt „Bitmap-Felder".
+
 #### Typisierte TLV-Kinder (seit 0.5.0)
 
 Deklarierte `children` (sowohl `tlv:`-Block als auch `...bertlv`-Kurzform)

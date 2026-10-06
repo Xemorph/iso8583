@@ -286,6 +286,7 @@ for (const auto& f : spec->fields())
 | `amount_signed` | `bool` | `true`, wenn ein `format: amount`-Feld `sign: true` deklariert (führendes Vorzeichenzeichen C/D/+/-); sonst `false` (nach 0.6.0) |
 | `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
 | `bcd_pad` | `std::string` | Effektives BCD-Padding bei ungerader Ziffernzahl: `"right_zero"` (Default), `"right_f"`, `"left_zero"` bei Feldern mit BCD-**Nutzdaten** (`numeric`/`amount`/`*char`/`*num`/`remaining`, auch TLV-Kinder), sonst `""` (0.7.1, FR-7) |
+| `secondary_bitmap` | `std::string` | Sekundär-Bitmap-Modus eines Bitmap-Felds: `"always"` (YAML `secondary: always`) oder `"auto"` (Default), bei Nicht-Bitmap-Feldern `""` (0.8.0, FR-9a) |
 | `prefix_encoding` | `std::string` | Effektives Längenpräfix-Encoding eines variablen Felds: `"ASCII"`, `"EBCDIC"`, `"BCD"`, `"BINARY"` bzw. `""` (encoding-neutrale Formate). Gleicht `encoding`, wenn der YAML-Key `prefix_encoding:` fehlt (Default), sonst der deklarierte Wert (0.7.0, FR-6) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
@@ -311,6 +312,11 @@ for (const auto& f : spec->fields())
 
 > **ABI-Hinweis (0.7.1):** `bcd_pad` (`SpecFieldInfo`) sowie die neuen
 > Mitglieder von `ISOFieldParserPtrBase` (BCD-Padding-Zustand) ändern das
+> Layout — Shared-Library-Consumer müssen gegen die neue Bibliothek neu
+> kompiliert werden.
+
+> **ABI-Hinweis (0.8.0):** `secondary_bitmap` (`SpecFieldInfo`) sowie das
+> neue Mitglied von `ISOFieldParserPtrBase` (`secondaryAlways`) ändern das
 > Layout — Shared-Library-Consumer müssen gegen die neue Bibliothek neu
 > kompiliert werden.
 
@@ -573,6 +579,18 @@ fields:
   `amount()` sind dann vorzeichenbehaftet, `readable_value()` trägt ein
   führendes `-`, zusätzlich `hasSign()`/`isNegative()`; `to_json()` ergänzt
   `negative`. Beispiel: `"028": { format: amount, length: 9, scale: 2, sign: true }`
+- **`bitmap` — `length` = Bitmap-Größe in Bytes (0.8.0, FR-9):** `8` = nur
+  Primär-Bitmap, `16` = Primär + Sekundär (bei Bit 1), `24` = + Tertiär.
+  Mit `length: 8` liest der Decoder die Sekundär-Bitmap **nicht**: Bit 1 bzw.
+  Felder > 64 sind dann im strict-Modus ein positionierter
+  `std::runtime_error` (Decode **und** Bauen; sonst stille 8-Byte-
+  Verschiebung bzw. nicht rückdekodierbare Eigenausgabe) — `length: 16`
+  setzen, sobald Felder > 64 vorkommen. Der Feld-Key
+  **`secondary: always`** (nur `format: bitmap`, `length >= 16`,
+  Default `auto`) erzwingt beim Bauen die Sekundär-Bitmap (Bit 1 + 16 Byte)
+  auch ohne Feld > 64 (VISA BASE I: leere Sekundär-Bitmap); Introspektion:
+  `SpecFieldInfo::secondary_bitmap`. Normativ: `docs/internals/spec_schema.md`
+  §3 „Bitmap-Felder".
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
   `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum;
@@ -840,6 +858,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | `sign: true` ohne `scale:`, mit `encoding: bcd` oder an einem Nicht-`amount`-Feld (nach 0.6.0) | Nur `format: amount` in Standardform (`scale:`) mit `ascii`/`ebcdic` — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | `remaining` ohne `length` (0.6.0) | Immer `length` (Maximum) deklariert — sonst `SpecValidationError` beim Laden (Fail-closed) |
 | Constructed-Kind (eigener `tlv:`-Block) mit `format:`/`length:`/`encoding:` (0.6.4) | Das äußere TLV-Frame trägt Tag + Länge — diese Keys sind bei Container-Kindern verboten, sonst `SpecValidationError` (Fail-closed); für die rekursive Dekodierung genügt `tlv:` (+ optional `children:`) |
+| Bitmap mit `length: 8`, obwohl Bit 1 gesetzt ist bzw. Felder > 64 vorkommen (0.8.0) | `length: 16` (Primär + Sekundär) deklarieren — strict wirft sonst positioniert (Decode **und** Bauen); `secondary: always` nur mit `length >= 16` und nur auf `format: bitmap` |
 | `bcd_pad` an Nicht-BCD-Feldern, `*binary`/`bertlv`-Containern oder constructed-Kindern (0.7.1) | Nur bei BCD-**Nutzdaten** gültig (`numeric`/`amount`/`*char`/`*num`/`remaining` mit `encoding: bcd`, TLV-Kinder) und nie am Längenpräfix — sonst `SpecValidationError` beim Laden (Fail-closed); ohne Key gilt `right_zero` ohne Decode-Validierung |
 | `prefix_encoding` an fixen Formaten, `*binary`/`bertlv`, TLV-Kindern oder als Root-Key (0.7.0) | Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix) gültig; bei `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec, bei TLV-Kindern liegt die Länge im Length-Feld des Frames, ein Root-Level-Default existiert nicht — sonst `SpecValidationError` beim Laden (Fail-closed) |
 
