@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 ### `[~](Updated)` TLV mit festen Kopfbytes (VISA-DE55): dokumentiertes Rezept statt Feature (FR-10b)
 
