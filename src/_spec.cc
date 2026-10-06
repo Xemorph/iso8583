@@ -1192,6 +1192,16 @@ namespace TNG_NAMESPACE::spec {
             { "LLNUM|EBCDIC|BCD",    MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BCD,    codec::Encoder::EBCDIC) },
             { "LNUM|EBCDIC|BINARY",  MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
             { "LLNUM|EBCDIC|BINARY", MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::EBCDIC) },
+            // ── FR-8 (0.8.0): BINARY-Längenpräfix vor gepackten BCD-Ziffern ────
+            // VISA BASE-I: das Präfix ist ein Binärwert in Einheit ZIFFERN
+            // (DE2 '10' + 8 Byte = 16 Ziffern; DE35 '25' = 37 Ziffern → 19
+            // Byte). Spiegelt die Familien mit BCD-Identität (LCHAR..LLLCHAR,
+            // LNUM, LLNUM); LLLLCHAR|BCD/LLLNUM existieren nicht.
+            { "LCHAR|BCD|BINARY",    MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::BCD) },
+            { "LLCHAR|BCD|BINARY",   MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::BCD) },
+            { "LLLCHAR|BCD|BINARY",  MAKE_MIX(codec::Length::LLL,  codec::PrefixEncoder::BINARY, codec::Encoder::BCD) },
+            { "LNUM|BCD|BINARY",     MAKE_MIX(codec::Length::L,    codec::PrefixEncoder::BINARY, codec::Encoder::BCD) },
+            { "LLNUM|BCD|BINARY",    MAKE_MIX(codec::Length::LL,   codec::PrefixEncoder::BINARY, codec::Encoder::BCD) },
                 };
                 return t;
             }();

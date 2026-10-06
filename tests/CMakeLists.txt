@@ -39,6 +39,8 @@ add_executable(libiso8583_tests
     test_strict_length.cc
     # (0.7.0, FR-6) Längenpräfix-Encoding unabhängig vom Nutzdaten-Encoding
     test_prefix_encoding.cc
+    # (0.8.0, FR-8) BINAERES Laengenpraefix (Einheit Ziffern) vor gepacktem BCD
+    test_prefix_bcd_binary.cc
     # (0.7.1, FR-7) konfigurierbares BCD-Padding bei ungerader Ziffernzahl
     test_bcd_pad.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
