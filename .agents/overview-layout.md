@@ -67,7 +67,7 @@ every release (procedure: §14.2):
 3. `version` in root `vcpkg.json`
 4. `version` in `vcpkg-port/vcpkg.json`
 
-Currently all four say **0.8.0** (synced). If you ever observe skew, the
+Currently all four say **0.9.0** (synced). If you ever observe skew, the
 release that introduced it missed a spot — fix it, don't normalize to the
 wrong value.
 
