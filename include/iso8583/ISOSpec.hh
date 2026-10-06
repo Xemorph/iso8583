@@ -216,6 +216,28 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.8.0).
             std::string secondary_bitmap;
+
+            /// @brief Bitmap size in bytes of a bitmap-driven `nested` container (FR-12, 0.9.0).
+            ///
+            /// `N` (1..16) when the field declares `bitmap: { length: N }`: the
+            /// container payload starts with an N-byte bitmap and the `children`
+            /// (whose `key` is the **bit number**, bit 1 = MSB of the first byte)
+            /// are present only if their bit is set — bit 1 is a normal child there,
+            /// not a secondary-bitmap indicator.  `0` for all other fields (default).
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.9.0).
+            int container_bitmap_bytes = 0;
+
+            /// @brief Nibble-packing mode of a `nested` container (FR-13, 0.9.0).
+            ///
+            /// `"nibble"` when the field declares `pack: nibble`: its BCD `children`
+            /// form one dense digit stream (1 digit = 1 nibble, no byte boundary
+            /// between children); `""` otherwise (default).
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt (0.9.0).
+            std::string pack;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────

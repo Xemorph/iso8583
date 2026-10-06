@@ -158,6 +158,15 @@ namespace TNG_NAMESPACE::spec {
         // Encoder schreibt immer die Sekundär-Bitmap (Bit 1 + 16 Byte), auch
         // wenn kein Feld > 64 gesetzt ist. Default (false = 'auto') = Legacy.
         bool                     secondary_always = false;
+        // FR-12 (0.9.0): 'bitmap: { length: N }' an einem nested-Container —
+        // Bitmap-Kopf von N Byte, Kinder per Bit-Nummer (children = Map).
+        // 0 = kein Bitmap-Container (positionelle Kinder, Default).
+        // child_keys[i] = Bit-Nummer von children[i] (nur Bitmap-Container).
+        std::size_t              bitmap_bytes = 0;
+        std::vector<int>         child_keys;
+        // FR-13 (0.9.0): 'pack: nibble' an einem nested-Container — die BCD-
+        // Kinder bilden einen dichten Ziffern-Strom. "" = aus (Default).
+        std::string              pack;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -300,7 +309,9 @@ namespace TNG_NAMESPACE::spec {
             "tlv", "sensitive", "scale", "sign", "strict_length",
             "prefix_encoding",  // FR-6 (0.7.0)
             "bcd_pad",          // FR-7 (0.7.1)
-            "secondary"         // FR-9a (0.8.0)
+            "secondary",        // FR-9a (0.8.0)
+            "bitmap",           // FR-12 (0.9.0)
+            "pack"              // FR-13 (0.9.0)
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -949,7 +960,10 @@ namespace TNG_NAMESPACE::spec {
             const std::string label = "Feld '" + getStr(node, "description", "<unnamed>") + "'";
             const ryml::id_type bid = node["bcd_pad"].id();
             f.bcd_pad = parseBcdPadValue(getStr(node, "bcd_pad"), label, bid, smap);
-            if (!hasBcdData(f.format, f.encoding, f.type, hasKey(node, "tlv")))
+            // FR-13 (0.9.0): ein 'pack: nibble'-Container trägt das Padding des
+            // dichten Ziffern-Stroms selbst (die Kinder dürfen es nicht deklarieren).
+            const bool packContainer = f.type == SpecFieldType::NESTED && hasKey(node, "pack");
+            if (!packContainer && !hasBcdData(f.format, f.encoding, f.type, hasKey(node, "tlv")))
                 throw SpecValidationError(
                     label + ": 'bcd_pad' ist nur für Felder mit BCD-Nutzdaten gültig "
                     "(numeric/amount/*char/*num/remaining mit encoding bcd; format=" +
@@ -1025,12 +1039,111 @@ namespace TNG_NAMESPACE::spec {
             f.tlv = opts;
         }
 
+        // ── FR-12/FR-13 (0.9.0): Container-Modi 'bitmap:' / 'pack:' ──────────────
+        // Beide gelten nur für nicht-TLV nested-Container und schließen sich
+        // gegenseitig aus. Fail-closed (positionierte SpecValidationError).
+        const std::string cmLabel = "Feld '" + getStr(node, "description", "<unnamed>") + "'";
+        const bool isBitmapContainer = hasKey(node, "bitmap");
+        const bool isPackContainer = hasKey(node, "pack");
+        if (isBitmapContainer || isPackContainer) {
+            const char* which = isBitmapContainer ? "bitmap" : "pack";
+            const ryml::id_type wid = node[which].id();
+            if (f.type != SpecFieldType::NESTED || !hasKey(node, "children"))
+                throw SpecValidationError(
+                    cmLabel + ": '" + which + "' ist nur an einem nested-Container mit "
+                    "'children' gültig", wid, smap);
+            if (f.tlv)
+                throw SpecValidationError(
+                    cmLabel + ": '" + which + "' ist bei TLV-/BER-TLV-Containern nicht "
+                    "gültig (die Kinder werden dort über Tags adressiert)", wid, smap);
+            if (isBitmapContainer && isPackContainer)
+                throw SpecValidationError(
+                    cmLabel + ": 'bitmap' und 'pack' schließen sich gegenseitig aus", wid, smap);
+        }
+        if (isBitmapContainer) {
+            const ryml::ConstNodeRef bn = node["bitmap"];
+            if (!bn.is_map() || !hasKey(bn, "length"))
+                throw SpecValidationError(
+                    cmLabel + ": 'bitmap' muss eine Map mit 'length' (Bitmap-Größe in Byte) "
+                    "sein, z.B. 'bitmap: { length: 8 }'", bn.id(), smap);
+            for (ryml::ConstNodeRef bc : bn.children()) {
+                const auto bk = toStdString(bc.key());
+                if (bk != "length")
+                    throw SpecValidationError(
+                        cmLabel + ": unbekannter Schlüssel '" + bk + "' in 'bitmap' "
+                        "(erlaubt: length; Bit 1 ist hier ein normales Kind, "
+                        "'secondary' gibt es im Container nicht)", bc.id(), smap);
+            }
+            const int bl = getInt(bn, "length", 0);
+            if (bl < 1 || bl > 16)
+                throw SpecValidationError(
+                    cmLabel + ": 'bitmap.length' muss 1..16 (Byte) sein, ist aber " +
+                    std::to_string(bl), bn["length"].id(), smap);
+            f.bitmap_bytes = static_cast<std::size_t>(bl);
+            const ryml::ConstNodeRef ch = node["children"];
+            if (!ch.is_map() || !ch.has_children())
+                throw SpecValidationError(
+                    cmLabel + ": ein Bitmap-Container braucht 'children' als nicht-leere "
+                    "Map (Bit-Nummer → Kind-Deklaration)", ch.id(), smap);
+        }
+        if (isPackContainer) {
+            if (toLower(getStr(node, "pack")) != "nibble")
+                throw SpecValidationError(
+                    cmLabel + " hat ungültiges pack='" + getStr(node, "pack") +
+                    "' (erlaubt: nibble)", node["pack"].id(), smap);
+            const ryml::ConstNodeRef ch = node["children"];
+            if (!ch.is_seq() || !ch.has_children())
+                throw SpecValidationError(
+                    cmLabel + ": ein 'pack: nibble'-Container braucht 'children' als "
+                    "nicht-leere Liste (Position = Kind-Schlüssel)", ch.id(), smap);
+            f.pack = "nibble";
+        }
+
         // ── Children ─────────────────────────────────────────────────────────────
         if (hasKey(node, "children")) {
             const std::string& seEnc = f.tlv ? f.tlv->encoding : childEnc;
             ryml::ConstNodeRef children = node["children"];
 
-            if (children.is_map()) {
+            if (isBitmapContainer) {
+                // Bitmap-Container: Key = Bit-Nummer (dezimal, 1..8*length), Wert
+                // = Kind-Deklaration. Sortiert nach Bit-Nummer abgelegt.
+                std::map<int, SpecField> byBit;
+                for (ryml::ConstNodeRef entry : children.children()) {
+                    const auto bk = toStdString(entry.key());
+                    if (bk.empty() || bk.size() > 4 || !std::all_of(bk.begin(), bk.end(), ::isdigit))
+                        throw SpecValidationError(
+                            cmLabel + ": ungültige Bit-Nummer '" + bk + "' in 'children' "
+                            "(erwartet eine Dezimalzahl 1.." + std::to_string(f.bitmap_bytes * 8) + ")",
+                            entry.id(), smap);
+                    const int bit = std::stoi(bk);
+                    if (bit < 1 || static_cast<std::size_t>(bit) > f.bitmap_bytes * 8)
+                        throw SpecValidationError(
+                            cmLabel + ": Bit-Nummer " + bk + " liegt außerhalb der " +
+                            std::to_string(f.bitmap_bytes) + "-Byte-Bitmap (erlaubt 1.." +
+                            std::to_string(f.bitmap_bytes * 8) + ")", entry.id(), smap);
+                    if (byBit.count(bit))
+                        throw SpecValidationError(
+                            cmLabel + ": doppelte Bit-Nummer " + std::to_string(bit) +
+                            " in 'children'", entry.id(), smap);
+                    if (!entry.is_map())
+                        throw SpecValidationError(
+                            cmLabel + ", Bit " + bk + ": Kind-Deklaration muss eine Map sein",
+                            entry.id(), smap);
+                    SpecField child = parseSpecField(entry, childEnc, bk, smap, depth + 1);
+                    if (child.format == "BITMAP" || child.format == "NOP" || child.format == "UNUSED")
+                        throw SpecValidationError(
+                            cmLabel + ", Bit " + bk + ": Format '" + child.format +
+                            "' ist als Kind eines Bitmap-Containers nicht sinnvoll "
+                            "(die Bitmap steht im Container-Kopf, nicht gesetzte Bits "
+                            "braucht man nicht zu deklarieren)", entry.id(), smap);
+                    byBit.emplace(bit, std::move(child));
+                }
+                for (auto& [bit, child] : byBit) {
+                    f.child_keys.push_back(bit);
+                    f.children.push_back(std::move(child));
+                }
+            }
+            else if (children.is_map()) {
                 // TLV-Modus: Key = SE-Nummer (dezimal) oder EMV-Tag (hex, bei
                 // ber:true) - siehe parseTlvChildKey().
                 const bool asHex = f.tlv && f.tlv->ber;
@@ -1095,8 +1208,32 @@ namespace TNG_NAMESPACE::spec {
             else {
                 // Normal-Modus: Sequence mit Index-Feldern
                 // Kinder rekursiv parsen – parseSpecField löst Encoding korrekt auf
-                for (ryml::ConstNodeRef child : children.children())
+                int childIdx = 0;
+                for (ryml::ConstNodeRef child : children.children()) {
                     f.children.push_back(parseSpecField(child, childEnc, "", smap, depth + 1));
+                    if (isPackContainer) {
+                        // FR-13: nur BCD-numeric-Kinder fester Länge (Ziffern) oder
+                        // 'nop'-Platzhalter (halten die Schlüsselnummer frei).
+                        const SpecField& c = f.children.back();
+                        const std::string cl = cmLabel + ", Kind " + std::to_string(childIdx);
+                        if (c.format != "NOP") {
+                            if (c.format != "NUMERIC" || c.encoding != "BCD" || c.length < 1 ||
+                                c.type != SpecFieldType::SCALAR)
+                                throw SpecValidationError(
+                                    cl + ": in einem 'pack: nibble'-Container sind nur "
+                                    "'format: numeric' mit 'encoding: bcd' und fester 'length' "
+                                    "(Ziffern >= 1) oder 'format: nop' (Platzhalter) erlaubt "
+                                    "(hier format=" + c.format + ", encoding=" + c.encoding + ")",
+                                    child.id(), smap);
+                            if (hasKey(child, "bcd_pad"))
+                                throw SpecValidationError(
+                                    cl + ": 'bcd_pad' gehört an den 'pack: nibble'-Container "
+                                    "(dichter Ziffern-Strom), nicht an das Kind",
+                                    child["bcd_pad"].id(), smap);
+                        }
+                    }
+                    ++childIdx;
+                }
             }
         }
 
@@ -1548,6 +1685,32 @@ namespace TNG_NAMESPACE::spec {
         // die Doppel-Serialisierung eines einzelnen Kind-Felds
         // durch die Slot-0/MTI-Semantik von ISOBaseParser.
         sub->container(true);
+        // FR-12 (0.9.0): Bitmap-Container - Slot n = Bit n; Slot 0 und nicht
+        // deklarierte Bits sind UNUSED-Platzhalter (wie Top-Level).
+        if (f.bitmap_bytes > 0) {
+            sub->bitmapContainer(f.bitmap_bytes);
+            std::size_t nextSlot = 0;
+            for (std::size_t i = 0; i < f.children.size(); ++i) {
+                const auto slot = static_cast<std::size_t>(f.child_keys[i]);
+                for (; nextSlot < slot; ++nextSlot)
+                    sub->add(std::make_shared<IF_NOP>());
+                const auto& child = f.children[i];
+                auto childP = createScalarParser(child);
+                if (child.sensitive || f.sensitive)
+                    if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
+                        fp->sensitive(true);
+                sub->add(childP);
+                nextSlot = slot + 1;
+            }
+            return sub;
+        }
+        // FR-13 (0.9.0): Nibble-Packing - Ziffern je Kind-Slot (0 = nop).
+        if (!f.pack.empty()) {
+            std::vector<std::size_t> digits;
+            for (const auto& child : f.children)
+                digits.push_back(child.format == "NOP" ? 0u : child.length);
+            sub->nibblePack(std::move(digits), f.bcd_pad, f.bcd_pad_explicit);
+        }
         for (const auto& child : f.children) {
             auto childP = createScalarParser(child);
             // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang
@@ -1680,10 +1843,16 @@ namespace TNG_NAMESPACE::spec {
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.
         info.tlv_is_ber = f.tlv.has_value() && f.tlv->ber;
+        // FR-12/FR-13 (0.9.0): Container-Modi (Bitmap-Größe / Nibble-Packing).
+        info.container_bitmap_bytes = static_cast<int>(f.bitmap_bytes);
+        info.pack = f.pack;
 
         TNG_KEY_TYPE childKey = 0;
-        for (const auto& child : f.children)
-            info.children.push_back(makeSpecFieldInfo(childKey++, child));
+        for (std::size_t i = 0; i < f.children.size(); ++i)
+            // Bitmap-Container: der Kind-Key ist die Bit-Nummer, sonst die Position.
+            info.children.push_back(makeSpecFieldInfo(
+                f.child_keys.empty() ? childKey++ : static_cast<TNG_KEY_TYPE>(f.child_keys[i]),
+                f.children[i]));
 
         // FR-2 (0.5.0): deklarierte TLV-Kinder (tlv:-Block- und bertlv-Felder
         // identisch) in die Introspektion übernehmen (schließt die Lücke, dass
@@ -1717,7 +1886,8 @@ namespace TNG_NAMESPACE::spec {
     // anwenden, die den Key nicht selbst deklarieren (Feld-Deklaration gewinnt).
     // Felder ohne BCD-Nutzdaten (Container, binary, Nicht-BCD) bleiben unberührt.
     static void applyBcdPadDefault(SpecField& f, codec::BcdPad def) {
-        if (!f.bcd_pad_explicit && hasBcdData(f)) {
+        // FR-13: ein 'pack: nibble'-Container trägt das Padding seines Ziffern-Stroms.
+        if (!f.bcd_pad_explicit && (hasBcdData(f) || !f.pack.empty())) {
             f.bcd_pad = def;
             f.bcd_pad_explicit = true;
         }

@@ -47,6 +47,27 @@ namespace TNG_NAMESPACE {
         // Encode-Pfad doppelt serialisieren (MTI-Block UND Daten-Loop;
         // verkerrtes Längen-Prefix).
         mutable bool container_ = false;
+        // [ISO8583] FR-12 (0.9.0): Bitmap-Container (nur mit container_) - der
+        // Sub-Payload beginnt mit einer Bitmap von bitmap_container_ Byte;
+        // Slot n = Bit n (Bit 1 ist ein NORMALES Kind, keine Sekundaer-
+        // Bitmap), Slot 0 bleibt UNUSED. 0 = aus (Default, positionelle Kinder).
+        mutable std::size_t bitmap_container_ = 0;
+        // [ISO8583] FR-13 (0.9.0): Nibble-Packing (nur mit container_) - die
+        // BCD-Kinder teilen sich ein Ziffern-Strom (1 Ziffer = 1 Nibble).
+        // pack_digits_[slot] = Ziffernzahl des Kinds (0 = nop-Platzhalter);
+        // pack_pad_/pack_pad_explicit_ = Padding bei ungerader Gesamtziffernzahl.
+        mutable bool nibble_pack_ = false;
+        mutable std::vector<std::size_t> pack_digits_;
+        mutable ::TNG_NAMESPACE::codec::BcdPad pack_pad_ = ::TNG_NAMESPACE::codec::BcdPad::RIGHT_ZERO;
+        mutable bool pack_pad_explicit_ = false;
+
+        // Spezial-Pfade der Container-Modi (src/_parser.cc)
+        std::vector<uint8_t> parseBitmapContainer(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const;
+        std::size_t unparseBitmapContainer(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+            const std::vector<uint8_t>& b, std::size_t base_offset);
+        std::vector<uint8_t> parseNibblePack(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const;
+        std::size_t unparseNibblePack(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+            const std::vector<uint8_t>& b, std::size_t base_offset);
     public:
         // Smart Pointer conceppt
         using ISOBaseParserSmartPtr = std::shared_ptr<ISOBaseParser>;
@@ -74,6 +95,22 @@ namespace TNG_NAMESPACE {
         // betrifft ausschließlich dieses Parser-Objekt (Container-Sub-Parser).
         void container(bool v) const noexcept { container_ = v; }
         bool container() const noexcept { return container_; }
+
+        // [ISO8583] FR-12 (0.9.0): Bitmap-Container-Modus (Bitmap-Groesse in Byte,
+        // 0 = aus). Setzt zugleich den Container-Modus voraus (Loader).
+        void bitmapContainer(std::size_t bytes) const noexcept { bitmap_container_ = bytes; }
+        std::size_t bitmapContainer() const noexcept { return bitmap_container_; }
+
+        // [ISO8583] FR-13 (0.9.0): Nibble-Packing-Modus. `digits[slot]` = Ziffern
+        // je Kind-Slot (0 = nop-Platzhalter); `pad`/`padExplicit` = BCD-Padding.
+        void nibblePack(std::vector<std::size_t> digits, ::TNG_NAMESPACE::codec::BcdPad pad,
+            bool padExplicit) const {
+            nibble_pack_ = true;
+            pack_digits_ = std::move(digits);
+            pack_pad_ = pad;
+            pack_pad_explicit_ = padExplicit;
+        }
+        bool nibblePack() const noexcept { return nibble_pack_; }
 
         // [ISO8583] Strikter Modus (Default: true, s. ISOParserPtrBase::strict_).
         // Setzt den eigenen Modus UND propagiert ihn rekursiv auf alle

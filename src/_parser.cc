@@ -75,6 +75,13 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
         throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
     }
 
+    // FR-12/FR-13 (0.9.0): Container-Sondermodi (eigene Encode-Pfade, kein
+    // MTI/Header/Top-Level-Bitmap).
+    if (container_ && bitmap_container_ > 0)
+        return parseBitmapContainer(m);
+    if (container_ && nibble_pack_)
+        return parseNibblePack(m);
+
     std::vector<uint8_t> out;
 
     // ── 1. Header ────────────────────────────────────────────────────────────
@@ -230,6 +237,12 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         // [ISO8583] B4: struktureller Fehler -> Fail-closed.
         throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
     }
+
+    // FR-12/FR-13 (0.9.0): Container-Sondermodi (eigene Decode-Pfade).
+    if (container_ && bitmap_container_ > 0)
+        return unparseBitmapContainer(m, b, base_offset);
+    if (container_ && nibble_pack_)
+        return unparseNibblePack(m, b, base_offset);
 
     std::size_t consumed = 0u;
 
@@ -427,4 +440,309 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     }
 
     return consumed;
+}
+
+
+// ─── FR-12 (0.9.0): Bitmap-Container ─────────────────────────────────────────
+// Sub-Payload = Bitmap (bitmap_container_ Byte) + die Kinder, deren Bit
+// gesetzt ist. Bit n (1-indiziert, MSB des ersten Bytes = Bit 1) gehoert zu
+// Slot n; Bit 1 ist ein NORMALES Kind (die Sekundaer-Bitmap-Semantik des
+// Top-Level-Parsers gilt hier nicht). Die Bitmap-Komponente liegt wie bei
+// Top-Level-Nachrichten unter Message::BITMAP_KEY (-1) - Kind-Key 1 bleibt frei.
+std::size_t TNG_NAMESPACE::ISOBaseParser::unparseBitmapContainer(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+    const std::vector<uint8_t>& b,
+    std::size_t base_offset)
+{
+    const std::size_t n_bytes = bitmap_container_;
+    if (b.size() < n_bytes) {
+        const std::string msg = "Bitmap-Container @ Offset " + std::to_string(base_offset) +
+            ": Bitmap am Pufferende abgeschnitten: benoetigt " + std::to_string(n_bytes) +
+            " Byte, vorhanden " + std::to_string(b.size()) + " Byte";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Container bleibt leer)", msg);
+        return 0u;
+    }
+
+    dynamic_bitset<> bmp(n_bytes * 8 + 1); // Index 0 ungenutzt (wie ueberall)
+    for (std::size_t i = 0; i < n_bytes * 8; ++i)
+        if (b[i >> 3] & (0x80u >> (i & 7u)))
+            bmp.set(i + 1);
+
+    auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
+    bitmap->description("Bitmap");
+    bitmap->wire_offset(base_offset);
+    bitmap->wire_length(n_bytes);
+    bitmap->value(bmp);
+    if (!m->set(bitmap))
+        throw std::runtime_error("[ISO8583] Bitmap-Container: Bitmap ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+
+    std::size_t consumed = n_bytes;
+    for (std::size_t bit = 1; bit <= n_bytes * 8; ++bit) {
+        if (!bmp[bit])
+            continue;
+        const auto ptr = (bit < l_.size()) ? l_[bit] : nullptr;
+        if (!ptr || ptr->type() == ::TNG_NAMESPACE::ISOFieldParserType::UNUSED) {
+            // Ohne Kind-Definition ist die Laenge der Folgebytes unbekannt -
+            // ein stilles Weiterlesen waere eine Fehlinterpretation.
+            const std::string msg = "Bitmap-Container @ Offset " + std::to_string(base_offset) +
+                ": Bit " + std::to_string(bit) + " ist gesetzt, die Spec deklariert dafuer "
+                "kein Kind - Folgebytes sind nicht dekodierbar";
+            if (strict_)
+                throw std::runtime_error("[ISO8583] " + msg);
+            TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Dekodierung wird abgebrochen)", msg);
+            break;
+        }
+
+        TNG_LOG_DEBUG("[ISOBaseParser] Bit{:03d} '{}' offset={} buf_size={}",
+            bit, nonstd::to_string(ptr->description()), base_offset + consumed, b.size());
+
+        const auto key = static_cast<TNG_KEY_TYPE>(bit);
+        auto de = ptr->create_component(key);
+        de->description(ptr->description());
+        de->set_sensitive(ptr->sensitive());
+        de->wire_offset(base_offset + consumed);
+        std::size_t de_bytes;
+        try {
+            de_bytes = ptr->unparse(de, b, consumed);
+        } catch (const std::exception& e) {
+            char de_key[16];
+            std::snprintf(de_key, sizeof(de_key), "DE%03d", static_cast<int>(bit));
+            throw std::runtime_error(
+                std::string("[ISO8583] ") + de_key + " '" +
+                std::string(ptr->description()) + "' @ Offset " +
+                std::to_string(base_offset + consumed) + ": " + e.what());
+        }
+        de->wire_length(de_bytes);
+        consumed += de_bytes;
+        if (!m->set(de))
+            throw std::runtime_error("[ISO8583] DE" + std::to_string(bit) +
+                ": ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+    }
+
+    if (consumed != b.size()) {
+        if (strict_)
+            throw std::runtime_error("[ISO8583] Unverbrauchte Bytes am Pufferende: " +
+                std::to_string(b.size() - consumed) + " von " + std::to_string(b.size()) +
+                " Bytes nicht konvertiert (Nachrichtenstruktur deckt das Byte-Image nicht vollstaendig ab)");
+        TNG_LOG_ERROR("[ISOBaseParser] Byte consumption mismatch: expected={} actual={}",
+            b.size(), consumed);
+    }
+    return consumed;
+}
+
+std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parseBitmapContainer(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const
+{
+    const std::size_t n_bytes = bitmap_container_;
+
+    // Kinder ohne deklarierten Slot waeren auf dem Wire nicht adressierbar
+    // (kein Bit): strict -> positionierter Fehler, sonst Warnung + auslassen.
+    for (const auto k : m->keys()) {
+        const bool declared = k >= 1 && static_cast<std::size_t>(k) < l_.size() &&
+            static_cast<std::size_t>(k) <= n_bytes * 8 && l_[static_cast<std::size_t>(k)] &&
+            l_[static_cast<std::size_t>(k)]->type() != ::TNG_NAMESPACE::ISOFieldParserType::UNUSED;
+        if (declared)
+            continue;
+        const std::string msg = "Bitmap-Container: Kind " + std::to_string(k) +
+            " ist in der Spec nicht deklariert (kein Bit in der " +
+            std::to_string(n_bytes) + "-Byte-Bitmap)";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Kind wird ausgelassen)", msg);
+    }
+
+    std::vector<uint8_t> out(n_bytes, 0x00);
+    const std::size_t last = std::min(l_.size(), n_bytes * 8 + 1);
+    for (std::size_t slot = 1; slot < last; ++slot) {
+        const auto& ptr = l_[slot];
+        if (!ptr || ptr->type() == ::TNG_NAMESPACE::ISOFieldParserType::UNUSED)
+            continue;
+        const auto key = static_cast<TNG_KEY_TYPE>(slot);
+        if (!m->has(key))
+            continue;
+        auto comp = m->get<ISOComponentPtrBase>(key);
+        if (!comp)
+            continue;
+        const auto bytes = ptr->parse(comp);
+        out[(slot - 1) >> 3] |= static_cast<uint8_t>(0x80u >> ((slot - 1) & 7u));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+    TNG_LOG_INFO("[ISOBaseParser::parseBitmapContainer] Fertig: {} bytes", out.size());
+    return out;
+}
+
+// ─── FR-13 (0.9.0): Nibble-Packing ───────────────────────────────────────────
+// Die BCD-Kinder (je pack_digits_[slot] Ziffern) bilden einen Ziffern-Strom
+// ohne Byte-Grenzen dazwischen: Container = ceil(Summe/2) Byte, Padding bei
+// ungerader Gesamtziffernzahl nach 'bcd_pad'. Ein kuerzerer Container (Kinder
+// am Ende fehlen) bleibt erlaubt; ein Kind darf nicht mittendrin abgeschnitten sein.
+std::size_t TNG_NAMESPACE::ISOBaseParser::unparseNibblePack(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+    const std::vector<uint8_t>& b,
+    std::size_t base_offset)
+{
+    using ::TNG_NAMESPACE::codec::Encoder;
+    std::size_t total = 0;
+    for (const auto d : pack_digits_)
+        total += d;
+    const std::size_t full_bytes = (total + 1) / 2;
+
+    // Mehr Bytes als der volle Container braucht: Rest-Bytes (strict: Fehler).
+    const std::size_t usable = std::min(b.size(), full_bytes);
+    const std::size_t digits_avail = std::min(total, usable * 2);
+
+    if (pack_pad_explicit_ && digits_avail == total && (total & 1u) != 0u &&
+        usable == full_bytes &&
+        !::TNG_NAMESPACE::codec::detail::bcd_pad_nibble_ok(b, 0, digits_avail, pack_pad_)) {
+        const std::string msg = "Nibble-Container @ Offset " + std::to_string(base_offset) +
+            ": BCD-Padding-Nibble weicht von 'bcd_pad' ab (" + std::to_string(digits_avail) +
+            " Ziffern)";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt)", msg);
+    }
+
+    const std::string digits = ::TNG_NAMESPACE::codec::as<std::string, Encoder::BCD>(
+        b, 0, digits_avail, strict_, pack_pad_);
+
+    std::size_t off = 0;
+    for (std::size_t slot = 0; slot < pack_digits_.size(); ++slot) {
+        const std::size_t dig = pack_digits_[slot];
+        if (dig == 0)
+            continue; // nop-Platzhalter
+        if (off >= digits.size())
+            break;    // verkuerzter Container: Rest-Kinder fehlen
+        if (off + dig > digits.size()) {
+            const std::string msg = "Nibble-Container @ Offset " + std::to_string(base_offset) +
+                ": Kind " + std::to_string(slot) + " ist abgeschnitten (benoetigt " +
+                std::to_string(dig) + " Ziffern, vorhanden " +
+                std::to_string(digits.size() - off) + ")";
+            if (strict_)
+                throw std::runtime_error("[ISO8583] " + msg);
+            TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Kind wird ausgelassen)", msg);
+            break;
+        }
+        const auto& ptr = l_[slot];
+        auto de = ptr->create_component(static_cast<TNG_KEY_TYPE>(slot));
+        auto opq = std::dynamic_pointer_cast< ::TNG_NAMESPACE::OpaqueField >(de);
+        if (!opq)
+            throw std::runtime_error("[ISO8583] Nibble-Container: Kind " + std::to_string(slot) +
+                " ist kein Textfeld (Loader-Invariante verletzt)");
+        opq->value(digits.substr(off, dig));
+        opq->description(ptr->description());
+        opq->set_sensitive(ptr->sensitive());
+        // Byte-Naeherung (E4): Offset = Startbyte, Laenge = beruehrte Bytes.
+        opq->wire_offset(base_offset + off / 2);
+        opq->wire_length((off + dig + 1) / 2 - off / 2);
+        if (!m->set(opq))
+            throw std::runtime_error("[ISO8583] DE" + std::to_string(slot) +
+                ": ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+        off += dig;
+    }
+
+    if (b.size() > full_bytes) {
+        if (strict_)
+            throw std::runtime_error("[ISO8583] Unverbrauchte Bytes am Pufferende: " +
+                std::to_string(b.size() - full_bytes) + " von " + std::to_string(b.size()) +
+                " Bytes nicht konvertiert (Nibble-Container deckt hoechstens " +
+                std::to_string(full_bytes) + " Byte ab)");
+        TNG_LOG_ERROR("[ISOBaseParser] Byte consumption mismatch: expected={} actual={}",
+            b.size(), full_bytes);
+    }
+    return usable;
+}
+
+std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parseNibblePack(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const
+{
+    using ::TNG_NAMESPACE::codec::Encoder;
+    std::size_t total = 0;
+    for (const auto d : pack_digits_)
+        total += d;
+
+    // Nicht deklarierte Kinder (kein Ziffern-Slot) sind nicht abbildbar.
+    for (const auto k : m->keys()) {
+        const bool declared = k >= 0 && static_cast<std::size_t>(k) < pack_digits_.size() &&
+            pack_digits_[static_cast<std::size_t>(k)] > 0;
+        if (declared)
+            continue;
+        const std::string msg = "Nibble-Container: Kind " + std::to_string(k) +
+            " ist in der Spec nicht deklariert";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Kind wird ausgelassen)", msg);
+    }
+
+    // Letztes gesetztes Kind bestimmen; davor duerfen keine Luecken liegen.
+    std::size_t last_set = 0;
+    bool any = false;
+    for (std::size_t slot = 0; slot < pack_digits_.size(); ++slot)
+        if (pack_digits_[slot] > 0 && m->has(static_cast<TNG_KEY_TYPE>(slot))) {
+            last_set = slot;
+            any = true;
+        }
+
+    std::string digits;
+    if (any) {
+        for (std::size_t slot = 0; slot <= last_set; ++slot) {
+            const std::size_t dig = pack_digits_[slot];
+            if (dig == 0)
+                continue;
+            std::string v;
+            const auto key = static_cast<TNG_KEY_TYPE>(slot);
+            if (m->has(key)) {
+                auto opq = m->get< ::TNG_NAMESPACE::OpaqueField >(key);
+                if (!opq)
+                    throw std::runtime_error("[ISO8583] Nibble-Container: Kind " +
+                        std::to_string(slot) + " ist kein OpaqueField (Parser erwartet Ziffern)");
+                v = opq->value();
+            }
+            else {
+                const std::string msg = "Nibble-Container: Kind " + std::to_string(slot) +
+                    " fehlt, obwohl ein spaeteres Kind gesetzt ist (Luecke im Ziffern-Strom)";
+                if (strict_)
+                    throw std::runtime_error("[ISO8583] " + msg);
+                TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: mit Nullen aufgefuellt)", msg);
+            }
+            if (v.size() != dig) {
+                const std::string msg = "Nibble-Container: Kind " + std::to_string(slot) +
+                    " hat " + std::to_string(v.size()) + " Ziffern, erwartet " + std::to_string(dig);
+                if (strict_ && !v.empty())
+                    throw std::runtime_error("[ISO8583] " + msg);
+                if (!v.empty())
+                    TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: links mit Nullen aufgefuellt/gekuerzt)", msg);
+                if (v.size() > dig)
+                    v.resize(dig);
+                else
+                    v.insert(0, dig - v.size(), '0');
+            }
+            if (std::any_of(v.begin(), v.end(), [](char c) { return c < '0' || c > '9'; })) {
+                const std::string msg = "Nibble-Container: Kind " + std::to_string(slot) +
+                    " enthaelt Nicht-Ziffern (BCD)";
+                if (strict_)
+                    throw std::runtime_error("[ISO8583] " + msg);
+                TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt)", msg);
+            }
+            digits += v;
+        }
+    }
+
+    // Ungerade Ziffernzahl eines VERKUERZTEN Containers: das Padding-Nibble
+    // wuerde beim Decode wie eine echte Ziffer des Folgekinds aussehen.
+    if ((digits.size() & 1u) != 0u && digits.size() != total) {
+        const std::string msg = "Nibble-Container: verkuerzter Container mit ungerader Ziffernzahl (" +
+            std::to_string(digits.size()) + ") endet mitten im Byte - das Padding-Nibble waere beim "
+            "Decode nicht von einer Ziffer unterscheidbar";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt)", msg);
+    }
+
+    std::vector<uint8_t> out(::TNG_NAMESPACE::codec::required_sz_for_as<Encoder::BCD>(digits.size()), 0);
+    if (!digits.empty())
+        ::TNG_NAMESPACE::codec::to<Encoder::BCD>(digits, out, 0, strict_, pack_pad_);
+    TNG_LOG_INFO("[ISOBaseParser::parseNibblePack] Fertig: {} bytes", out.size());
+    return out;
 }
