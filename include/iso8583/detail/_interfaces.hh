@@ -285,6 +285,10 @@ namespace TNG_NAMESPACE {
         // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
         mutable ::TNG_NAMESPACE::codec::BcdPad bcd_pad_ = ::TNG_NAMESPACE::codec::BcdPad::RIGHT_ZERO;
         mutable bool bcd_pad_explicit_ = false;
+        // FR-9a (0.8.0): 'secondary: always' (nur Bitmap-Feldparser) — der
+        // Encoder schreibt immer die Sekundär-Bitmap (Bit 1 + 16 Byte).
+        // mutable: setzbar über `shared_ptr<const ISOFieldParserPtrBase>`.
+        mutable bool secondary_always_ = false;
     public:
         /// @brief Shared-pointer alias.
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
@@ -328,6 +332,19 @@ namespace TNG_NAMESPACE {
 
         /// @brief `true`, wenn die BCD-Padding-Variante explizit deklariert wurde.
         [[nodiscard]] bool bcdPadExplicit() const noexcept { return bcd_pad_explicit_; }
+
+        /// @brief Erzwingt beim Serialisieren die Sekundär-Bitmap (FR-9a, 0.8.0).
+        ///
+        /// Wirkt nur bei Bitmap-Feldparsern (`format: bitmap`, YAML
+        /// `secondary: always`): der Encoder schreibt immer 16 Byte mit gesetztem
+        /// Bit 1 — auch wenn kein Feld > 64 gesetzt ist (z. B. VISA BASE I mit
+        /// leerer Sekundär-Bitmap). Erfordert `length >= 16` beim Bitmap-Feld
+        /// (sonst im strikten Modus `std::runtime_error`). Default `false` (Legacy:
+        /// Sekundär-Bitmap nur bei gesetzten Feldern > 64).
+        void secondaryAlways(bool v) const noexcept { secondary_always_ = v; }
+
+        /// @brief `true`, wenn die Sekundär-Bitmap immer geschrieben wird.
+        [[nodiscard]] bool secondaryAlways() const noexcept { return secondary_always_; }
 
         // [Destructor]
         virtual ~ISOFieldParserPtrBase() = default;

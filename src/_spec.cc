@@ -154,6 +154,10 @@ namespace TNG_NAMESPACE::spec {
         // (Feld oder Root) → Parser validiert das Padding-Nibble beim Decode.
         codec::BcdPad            bcd_pad = codec::BcdPad::RIGHT_ZERO;
         bool                     bcd_pad_explicit = false;
+        // FR-9a (0.8.0): 'secondary: always' (nur 'format: bitmap') — der
+        // Encoder schreibt immer die Sekundär-Bitmap (Bit 1 + 16 Byte), auch
+        // wenn kein Feld > 64 gesetzt ist. Default (false = 'auto') = Legacy.
+        bool                     secondary_always = false;
         std::vector<SpecField>   children;             // Sequence-Kinder (non-TLV)
         std::map<int, SpecField> tlv_children;         // Map-Kinder (TLV, key = SE-Nummer/Tag)
         std::optional<TLVOptions> tlv;
@@ -295,7 +299,8 @@ namespace TNG_NAMESPACE::spec {
             "type", "format", "encoding", "length", "description", "children",
             "tlv", "sensitive", "scale", "sign", "strict_length",
             "prefix_encoding",  // FR-6 (0.7.0)
-            "bcd_pad"           // FR-7 (0.7.1)
+            "bcd_pad",          // FR-7 (0.7.1)
+            "secondary"         // FR-9a (0.8.0)
         };
         for (ryml::ConstNodeRef child : node.children()) {
             const auto key = toStdString(child.key());
@@ -954,6 +959,33 @@ namespace TNG_NAMESPACE::spec {
             f.bcd_pad_explicit = true;
         }
 
+        // FR-9a (0.8.0): optionales Feld-Key 'secondary' (nur 'format: bitmap')
+        // — 'always' erzwingt beim Bauen die Sekundär-Bitmap (Bit 1 + 16 Byte),
+        // 'auto' (Default) = Legacy (nur wenn ein Feld > 64 gesetzt ist).
+        // Fail-closed (positionierte SpecValidationError): ungültiger Wert;
+        // Feld ist kein Bitmap-Feld; 'always' mit 'length' < 16 (die
+        // Sekundär-Bitmap würde beim Decode nicht gelesen, s. FR-9b).
+        if (hasKey(node, "secondary")) {
+            const std::string label = "Feld '" + getStr(node, "description", "<unnamed>") + "'";
+            const ryml::id_type sid = node["secondary"].id();
+            const auto sv = toUpper(getStr(node, "secondary"));
+            if (sv != "AUTO" && sv != "ALWAYS")
+                throw SpecValidationError(
+                    label + " hat ungültiges secondary='" + getStr(node, "secondary") +
+                    "' (erlaubt: auto, always)", sid, smap);
+            if (f.format != "BITMAP")
+                throw SpecValidationError(
+                    label + ": 'secondary' ist nur für 'format: bitmap' gültig "
+                    "(format=" + f.format + ")", sid, smap);
+            if (sv == "ALWAYS" && f.length < 16)
+                throw SpecValidationError(
+                    label + ": 'secondary: always' erfordert 'length: 16' (oder mehr) "
+                    "beim Bitmap-Feld (aktuell length=" + std::to_string(f.length) +
+                    "): mit 'length: 8' liest der Decoder die Sekundär-Bitmap nicht",
+                    sid, smap);
+            f.secondary_always = (sv == "ALWAYS");
+        }
+
         // Warnung wenn length == 0 bei einem Feld das Daten erwartet.
         // 0.6.4: Container-Kinder (eigener 'tlv'-Block, kein 'format' nötig)
         // erwarten keine Daten — der äußere TLV-Frame trägt die Länge.
@@ -1246,6 +1278,10 @@ namespace TNG_NAMESPACE::spec {
             if (f.bcd_pad_explicit)
                 if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
                     fp->bcdPad(f.bcd_pad);
+            // FR-9a (0.8.0): 'secondary: always' (nur Bitmap-Feld).
+            if (f.secondary_always)
+                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(p))
+                    fp->secondaryAlways(true);
             // 0.6.0: 'format: amount' trägt die Wire-Form (jPOS vs. plain) über
             // die optionale 'scale'-Key. Für alle anderen Formate ist der Setter
             // ein no-op (s. ISOFieldParserPtrBase).
@@ -1637,6 +1673,9 @@ namespace TNG_NAMESPACE::spec {
         info.prefix_encoding = f.prefix_encoding.empty() ? f.encoding : f.prefix_encoding;
         // FR-7 (0.7.1): effektive BCD-Padding-Variante; "" bei Feldern ohne BCD-Nutzdaten.
         info.bcd_pad = hasBcdData(f) ? bcdPadName(f.bcd_pad) : "";
+        // FR-9a (0.8.0): Sekundär-Bitmap-Modus; "" bei Nicht-Bitmap-Feldern.
+        info.secondary_bitmap = (f.format == "BITMAP")
+            ? (f.secondary_always ? "always" : "auto") : "";
         // FR-4 (0.6.0): beide BER-Schreibweisen (tlv: {ber: true} und die
         // ...bertlv-Kurzform) setzen f.tlv->ber identisch → einheitliche
         // Introspektion; fixer SE-Modus und Nicht-TLV-Felder → false.

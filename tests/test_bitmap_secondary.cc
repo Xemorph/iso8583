@@ -15,6 +15,9 @@
 // [tng]
 #include <iso8583/ISOMessage.hh>
 #include <iso8583/ISOSpec.hh>
+// [tng/internal] (Direkttests des Bitmap-Feldparsers)
+#include "_parser.hh"
+#include "fmt_types.hh"
 // [stdc++]
 #include <atomic>
 #include <filesystem>
@@ -190,4 +193,106 @@ TEST_CASE("bitmap FR-9b - primary-only messages with length 8 are unaffected",
     msg2->parser(parser);
     REQUIRE(msg2->unparse(msg2, wire) == wire.size());
     CHECK(msg2->tryGetValue<OpaqueField>(4) == "000000010000");
+}
+
+// =============================================================================
+// C) FR-9a: 'secondary: always' erzwingt die Sekundaer-Bitmap beim Bauen
+// =============================================================================
+
+TEST_CASE("bitmap FR-9a - secondary always builds an empty secondary bitmap with bit 1",
+    "[bitmap][fr9][fr9a]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 16, secondary: always }"));
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    // VISA-Form: Bit 1 + DE3 + DE4, danach 8 Nullbytes Sekundaer-Bitmap.
+    const auto expected = cat({ B({ 0x02, 0x00 }),
+        B({ 0xB0, 0, 0, 0, 0, 0, 0, 0 }), B({ 0, 0, 0, 0, 0, 0, 0, 0 }), kDe3, kDe4 });
+    CHECK(build(parser, { 3, 4 }) == expected);
+}
+
+TEST_CASE("bitmap FR-9a - secondary always roundtrips (decode, Message::parse and parser->parse)",
+    "[bitmap][fr9][fr9a]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 16, secondary: always }"));
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    const auto wire = cat({ B({ 0x02, 0x00 }),
+        B({ 0xB0, 0, 0, 0, 0, 0, 0, 0 }), B({ 0, 0, 0, 0, 0, 0, 0, 0 }), kDe3, kDe4 });
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, wire) == wire.size());
+    CHECK(parser->parse(msg) == wire);
+    CHECK(msg->parse(msg) == wire);   // anders als ohne Schalter (s. A): bleibt erhalten
+}
+
+TEST_CASE("bitmap FR-9a - secondary always with a field > 64 equals the default output",
+    "[bitmap][fr9][fr9a]") {
+    TempYaml yAlways(specYaml("{ format: bitmap, length: 16, secondary: always }"));
+    TempYaml yAuto(specYaml("{ format: bitmap, length: 16 }"));
+    CHECK(build(spec::SpecDecoder::loadFromYaml(yAlways.str()), { 3, 70 }) ==
+          build(spec::SpecDecoder::loadFromYaml(yAuto.str()), { 3, 70 }));
+}
+
+TEST_CASE("bitmap FR-9a - secondary auto (explicit) equals the default (no key)",
+    "[bitmap][fr9][fr9a]") {
+    TempYaml yAuto(specYaml("{ format: bitmap, length: 16, secondary: auto }"));
+    TempYaml yNone(specYaml("{ format: bitmap, length: 16 }"));
+    CHECK(build(spec::SpecDecoder::loadFromYaml(yAuto.str()), { 3, 4 }) ==
+          build(spec::SpecDecoder::loadFromYaml(yNone.str()), { 3, 4 }));
+}
+
+TEST_CASE("bitmap FR-9a - secondary always also works with a 24 byte bitmap (length 24)",
+    "[bitmap][fr9][fr9a]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 24, secondary: ALWAYS }"));   // case-insensitive
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    const auto wire = build(parser, { 3, 4 });
+    REQUIRE(wire.size() == 2u + 16u + kDe3.size() + kDe4.size());
+    CHECK(wire[2] == 0xB0);   // Bit 1 + DE3 + DE4
+}
+
+TEST_CASE("bitmap FR-9a - introspection reports the secondary mode", "[bitmap][fr9][fr9a][spec]") {
+    TempYaml yAlways(specYaml("{ format: bitmap, length: 16, secondary: always }"));
+    auto [pA, sA] = spec::SpecDecoder::loadBothFromYaml(yAlways.str());
+    CHECK(sA->field(1)->secondary_bitmap == "always");
+    CHECK(sA->field(3)->secondary_bitmap == "");   // Nicht-Bitmap-Feld
+
+    TempYaml yAuto(specYaml("{ format: bitmap, length: 16 }"));
+    auto [pB, sB] = spec::SpecDecoder::loadBothFromYaml(yAuto.str());
+    CHECK(sB->field(1)->secondary_bitmap == "auto");
+}
+
+TEST_CASE("bitmap FR-9a - secondary always with length 8 is rejected at load", "[bitmap][fr9][fr9a][spec][error]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 8, secondary: always }"));
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(y.str()), ContainsSubstring("length: 16"));
+}
+
+TEST_CASE("bitmap FR-9a - secondary on a non-bitmap field is rejected at load", "[bitmap][fr9][fr9a][spec][error]") {
+    TempYaml y("spec: \"x\"\nencoding: ebcdic\nfields:\n"
+        "  \"000\": { format: numeric, length: 4, secondary: always }\n"
+        "  \"001\": { format: bitmap, length: 16 }\n");
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(y.str()), ContainsSubstring("format: bitmap"));
+}
+
+TEST_CASE("bitmap FR-9a - secondary with an invalid value is rejected at load", "[bitmap][fr9][fr9a][spec][error]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 16, secondary: sometimes }"));
+    CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(y.str()), ContainsSubstring("erlaubt: auto, always"));
+}
+
+TEST_CASE("bitmap FR-9a - encoder never reads past the bitset (forced 16 bytes, small bitset)",
+    "[bitmap][fr9][fr9a]") {
+    // Bitset fuer eine Primaer-Bitmap (64 Bits + Index 0 = 65), 16 Byte erzwungen.
+    auto bm = std::make_shared<Bitmap>(-1);
+    dynamic_bitset<> bits(65);
+    bits.set(3);
+    bm->value(bits);
+
+    IFB_BITMAP p16(16, "Bitmap");
+    p16.secondaryAlways(true);
+    const auto out = p16.parse(bm);
+    REQUIRE(out.size() == 16u);
+    CHECK(out[0] == 0xA0);   // Bit 1 (erzwungen) + Bit 3
+    for (std::size_t i = 1; i < out.size(); ++i)
+        CHECK(out[i] == 0x00);
+
+    // Programmatisch gesetztes Flag mit length 8 -> FR-9b-Guard (strict).
+    IFB_BITMAP p8(8, "Bitmap");
+    p8.secondaryAlways(true);
+    CHECK_THROWS_AS(p8.parse(bm), std::runtime_error);
 }

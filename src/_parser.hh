@@ -450,6 +450,12 @@ namespace TNG_NAMESPACE {
                         " (Feld " + d_ + "): Komponente ist keine Bitmap");
                 dynamic_bitset<> b = bmpc->value();
                 std::size_t bytes = de_l_ >= 8 ? ((b.size() + 62) >> 6) << 3 : de_l_;
+                // FR-9a (0.8.0): 'secondary: always' - Sekundär-Bitmap (16 Byte,
+                // Bit 1) auch ohne Felder > 64. Der Loader erzwingt length >= 16;
+                // ein programmatisch gesetztes Flag mit kleinerem length läuft
+                // in den FR-9b-Guard unten.
+                if (secondary_always_ && bytes < 16)
+                    bytes = 16;
                 // FR-9b (0.8.0): die Bitmap-Größe folgt den gesetzten Feldern,
                 // nicht 'length' - Felder > 64 (bzw. > 128) mit 'length: 8'
                 // (bzw. 16) ergäben eine Ausgabe, die der Decoder mit derselben
@@ -470,7 +476,10 @@ namespace TNG_NAMESPACE {
                 std::size_t bits = bytes * 8;
 
                 std::vector<uint8_t> d(bytes, 0x00);
-                for (std::size_t i = 0u; i < bits; ++i)
+                // FR-9a: bei erzwungener Sekundär-Bitmap kann 'bits' die Bitset-
+                // Größe übersteigen (Bit-Index i+1 muss < b.size() bleiben).
+                const std::size_t setBits = std::min(bits, b.size() > 0 ? b.size() - 1 : std::size_t{ 0 });
+                for (std::size_t i = 0u; i < setBits; ++i)
                     if (b[i + 1])                     // +1 because we don't use bit 0 of dynamic_bitset
                         d[i >> 3] |= 0x80 >> i % 8;
                 if (bits > 64)
