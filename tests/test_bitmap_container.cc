@@ -16,10 +16,12 @@
 // [tng]
 #include <iso8583/ISOMessage.hh>
 #include <iso8583/ISOSpec.hh>
+#include <iso8583/ISOUtils.hh>
 // [stdc++]
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 using namespace TNG_NAMESPACE;
 using Catch::Matchers::ContainsSubstring;
@@ -312,4 +314,35 @@ TEST_CASE("bitmap container FR-12 - bitmap on a scalar field is rejected",
         "  \"001\": { format: bitmap, length: 8 }\n"
         "  \"003\": { format: numeric, encoding: bcd, length: 6, bitmap: { length: 8 } }\n");
     CHECK_THROWS_WITH(spec::SpecDecoder::loadFromYaml(y.str()), ContainsSubstring("nested"));
+}
+
+TEST_CASE("bitmap container FR-12 - dump, to_json and flatten cope with the container bitmap; sensitive masks children",
+    "[bitmap-container][fr12]") {
+    const TempYaml y(specYaml(kDe62Ok));
+    auto parser = load(y);
+    const Bytes w = wire(cat({ Bytes{ 0x42, 0, 0, 0, 0, 0, 0, 0 }, kTid, ebcdicAZ() }));
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, w) == w.size());
+
+    std::ostringstream os;
+    CHECK_NOTHROW(os << *msg);
+    CHECK(os.str().find(kAZ) != std::string::npos);
+    CHECK_NOTHROW((void)msg->to_json());
+
+    const auto flat = utils::flatten(*msg);
+    REQUIRE(flat.count("62.2") == 1);
+    CHECK(flat.at("62.2") == "0123456789012345");
+    CHECK(flat.at("62.7") == kAZ);
+
+    // sensitive am Container maskiert alle Kinder in dump()
+    const TempYaml ys(specYaml("    sensitive: true\n" + kDe62Ok));
+    auto sparser = load(ys);
+    auto smsg = std::make_shared<Message>();
+    smsg->parser(sparser);
+    REQUIRE(smsg->unparse(smsg, w) == w.size());
+    std::ostringstream so;
+    so << *smsg;
+    CHECK(so.str().find(kAZ) == std::string::npos);
+    CHECK(so.str().find("***") != std::string::npos);
 }
