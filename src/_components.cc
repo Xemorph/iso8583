@@ -633,7 +633,19 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
     using namespace TNG_NAMESPACE;
 
     if (fieldParser) {
-        switch (fieldParser->type()) {
+        // FR-10a (0.8.0): 'remaining' kennt zwei Varianten (binaer =
+        // BinaryField, Text = OpaqueField), die type() nicht unterscheidet
+        // (l_ = UNKNOWN). create_component() liefert den vom Encoder
+        // erwarteten Typ; binaeres remaining wird wie BINARY behandelt
+        // (Hex-String -> Bytes), sonst legte set() ein OpaqueField ab und der
+        // Encoder dereferenzierte einen nullptr-Cast.
+        auto effectiveType = fieldParser->type();
+        if (effectiveType == ISOFieldParserType::REMAINING &&
+            std::dynamic_pointer_cast<::TNG_NAMESPACE::BinaryField>(
+                fieldParser->create_component(key)) != nullptr)
+            effectiveType = ISOFieldParserType::BINARY;
+
+        switch (effectiveType) {
         case ISOFieldParserType::OPAQUE:
         case ISOFieldParserType::EXCEPTIONAL:
         case ISOFieldParserType::REMAINING:

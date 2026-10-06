@@ -521,3 +521,171 @@ TEST_CASE("(0.6.0) Remaining length is a max (clamping)", "[remaining][spec]") {
     REQUIRE(f != nullptr);
     CHECK(f->value() == "HEL");
 }
+
+// =============================================================================
+// FR-10a (0.8.0): 'remaining' als Kind eines nested-Containers muss BAUEN
+// =============================================================================
+// Vorher: set("55.1", hex) legte fuer binaeres remaining ein OpaqueField ab,
+// der Encoder castete auf BinaryField (nullptr -> Null-Dereferenz, keine
+// std::exception) und pruefte 'length' als FIX-Laenge statt als Maximum.
+
+namespace {
+
+std::string fr10aNestedYaml(const std::string& secondChild,
+                            const std::string& rootEnc = "ebcdic",
+                            const std::string& childLen = "252") {
+    return
+        "spec: \"t\"\n"
+        "encoding: " + rootEnc + "\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, encoding: bcd, length: 4 }\n"
+        "  \"001\": { format: bitmap, length: 16 }\n"
+        "  \"055\":\n"
+        "    type: nested\n"
+        "    format: lbinary\n"
+        "    encoding: binary\n"
+        "    length: 255\n"
+        "    children:\n"
+        "      - { format: binary, length: 3 }\n"
+        "      - " + secondChild.substr(0, secondChild.find("@LEN@")) + childLen +
+        secondChild.substr(secondChild.find("@LEN@") + 5) + "\n";
+}
+
+// MTI 0200 (BCD) | Bitmap (nur DE55) | LBINARY-Laenge 0x0C | 3 + 9 Byte
+const std::vector<uint8_t> kFr10aWire = {
+    0x02, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+    0x0C, 0x01, 0x00, 0x78,
+    0x95, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x02 };
+
+} // namespace
+
+TEST_CASE("FR-10a remaining child builds (binary, with and without encoding)", "[remaining][nested][fr10a]") {
+    const std::vector<std::string> children = {
+        "{ format: remaining, encoding: binary, length: @LEN@ }",
+        "{ format: remaining, length: @LEN@ }" };
+    for (const auto& child : children) {
+        TempDir dir;
+        auto parser = spec::SpecDecoder::loadFromYaml(
+            dir.write("fr10a_bin.yml", fr10aNestedYaml(child)));
+
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        REQUIRE(msg->set("55.0", std::string("010078")));
+        REQUIRE(msg->set("55.1", std::string("950500000000008202")));
+
+        std::vector<uint8_t> wire;
+        REQUIRE_NOTHROW(wire = msg->parse(msg));
+        CHECK(wire == kFr10aWire);
+
+        // Roundtrip: Dekodierung der eigenen Ausgabe liefert dieselben Werte.
+        auto msg2 = std::make_shared<Message>();
+        msg2->parser(parser);
+        CHECK(msg2->unparse(msg2, wire) == wire.size());
+        auto de55 = msg2->get<Message>(55);
+        REQUIRE(de55 != nullptr);
+        auto head = de55->get<BinaryField>(0);
+        auto tail = de55->get<BinaryField>(1);
+        REQUIRE(head != nullptr);
+        REQUIRE(tail != nullptr);
+        CHECK(head->value() == B({ 0x01, 0x00, 0x78 }));
+        CHECK(tail->value() == B({ 0x95, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82, 0x02 }));
+
+        // Re-Encode der dekodierten Nachricht ist byte-identisch.
+        CHECK(msg2->parse(msg2) == wire);
+    }
+}
+
+TEST_CASE("FR-10a comparison children (fixed binary) still build", "[remaining][nested][fr10a]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("fr10a_fix.yml",
+        fr10aNestedYaml("{ format: binary, length: @LEN@ }", "ebcdic", "9")));
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    REQUIRE(msg->set("55.0", std::string("010078")));
+    REQUIRE(msg->set("55.1", std::string("950500000000008202")));
+    CHECK(msg->parse(msg) == kFr10aWire);
+}
+
+TEST_CASE("FR-10a remaining child value above max is rejected positioned (strict)", "[remaining][nested][fr10a]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("fr10a_max.yml",
+        fr10aNestedYaml("{ format: remaining, encoding: binary, length: @LEN@ }", "ebcdic", "4")));
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    REQUIRE(msg->set("55.0", std::string("010078")));
+    REQUIRE(msg->set("55.1", std::string("950500000000008202")));   // 9 Byte > Maximum 4
+    REQUIRE_THROWS_AS(msg->parse(msg), std::runtime_error);
+}
+
+TEST_CASE("FR-10a text remaining child builds (ascii)", "[remaining][nested][fr10a]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("fr10a_txt.yml",
+        "spec: \"t\"\n"
+        "encoding: ascii\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, encoding: bcd, length: 4 }\n"
+        "  \"001\": { format: bitmap, length: 16 }\n"
+        "  \"055\":\n"
+        "    type: nested\n"
+        "    format: lbinary\n"
+        "    encoding: binary\n"
+        "    length: 255\n"
+        "    children:\n"
+        "      - { format: binary, length: 2 }\n"
+        "      - { format: remaining, encoding: ascii, length: 20 }\n"));
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    REQUIRE(msg->set("55.0", std::string("0102")));
+    REQUIRE(msg->set("55.1", std::string("HELLO")));
+    std::vector<uint8_t> wire;
+    REQUIRE_NOTHROW(wire = msg->parse(msg));
+    CHECK(wire == B({ 0x02, 0x00,
+                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+                      0x07, 0x01, 0x02, 'H', 'E', 'L', 'L', 'O' }));
+
+    auto msg2 = std::make_shared<Message>();
+    msg2->parser(parser);
+    CHECK(msg2->unparse(msg2, wire) == wire.size());
+    auto de55 = msg2->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+    auto tail = de55->get<OpaqueField>(1);
+    REQUIRE(tail != nullptr);
+    CHECK(tail->value() == "HELLO");
+}
+
+TEST_CASE("FR-10a top-level binary remaining builds", "[remaining][fr10a]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("fr10a_top.yml",
+        "spec: \"t\"\n"
+        "encoding: ascii\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, length: 4 }\n"
+        "  \"001\": { format: bitmap, length: 8 }\n"
+        "  \"010\": { format: remaining, encoding: binary, length: 16 }\n"));
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    REQUIRE(msg->set(10, std::string("DEADBEEF")));
+    std::vector<uint8_t> wire;
+    REQUIRE_NOTHROW(wire = msg->parse(msg));
+    CHECK(wire == B({ '0', '2', '0', '0',
+                      0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                      0xDE, 0xAD, 0xBE, 0xEF }));
+}
+
+TEST_CASE("FR-10a wrong component type is a positioned error, not a crash", "[remaining][fr10a]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("fr10a_guard.yml",
+        "spec: \"t\"\n"
+        "encoding: ascii\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, length: 4 }\n"
+        "  \"001\": { format: bitmap, length: 8 }\n"
+        "  \"010\": { format: remaining, encoding: binary, length: 16 }\n"));
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    auto wrong = std::make_shared<OpaqueField>(10);
+    wrong->value(std::string("DEADBEEF"));
+    REQUIRE(msg->set(wrong));
+    REQUIRE_THROWS_AS(msg->parse(msg), std::runtime_error);
+}

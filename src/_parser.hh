@@ -347,7 +347,13 @@ namespace TNG_NAMESPACE {
                 );
             }
             else if constexpr (std::is_same_v< T, std::string >) {
-                std::string data = nonstd::to_string((nonstd::string_view)std::dynamic_pointer_cast< ISOOpaqueField >(c)->value());
+                // FR-10a (0.8.0): Typ-Guard statt ungeprüftem Cast-Dereferenz.
+                auto opq = std::dynamic_pointer_cast< ISOOpaqueField >(c);
+                if (!opq)
+                    throw std::runtime_error(
+                        "[ISO8583] DE" + std::to_string(c ? static_cast<int>(c->key()) : -1) +
+                        " (Feld " + d_ + "): Komponente ist kein OpaqueField (Parser erwartet Textwert)");
+                std::string data = nonstd::to_string((nonstd::string_view)opq->value());
                 // [ISO8583] B2: Überdimensionierter Wert (Serialisierung zu groß).
                 // strict: positioniert verwerfen; nicht-strikt: Legacy (loggen +
                 // Feld auslassen) - ohne Abfrage würde der Wert still entsorgt,
@@ -382,13 +388,23 @@ namespace TNG_NAMESPACE {
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, std::vector<uint8_t> >) {
-                std::vector<uint8_t> data = std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c)->value();
+                // FR-10a (0.8.0): Typ-Guard — ein ungeprüfter Cast-Dereferenz
+                // endete bei falschem Komponententyp als Null-Zugriff.
+                auto bin = std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(c);
+                if (!bin)
+                    throw std::runtime_error(
+                        "[ISO8583] DE" + std::to_string(c ? static_cast<int>(c->key()) : -1) +
+                        " (Feld " + d_ + "): Komponente ist kein BinaryField (Parser erwartet Binärwert)");
+                std::vector<uint8_t> data = bin->value();
                 std::size_t pl = codec::parsed_length<pe_, l_>();
                 // [ISO8583] B2: FIX-Feld mit passender Länge / prefixed Feld
                 // mit zu großem Wert. strict: verwerfen; nicht-strikt: Legacy
                 // (loggen; bei prefixed Feldern kann das Präfix dadurch
                 // unterdimensioniert bleiben).
-                if (pl == 0 && data.size() != de_l_) {
+                // FR-10a (0.8.0): 'remaining' (UNKNOWN/CONSUME) hat ebenfalls
+                // pl == 0, 'length' ist dort aber nur ein Maximum - die
+                // FIX-Prüfung gilt nur für Length::FIX (Muster FR-5).
+                if (l_ == codec::Length::FIX && pl == 0 && data.size() != de_l_) {
                     if (strict_)
                         throw std::runtime_error(
                             "Serialisierung zu groß: " + std::to_string(data.size()) +
@@ -407,13 +423,32 @@ namespace TNG_NAMESPACE {
                     TNG_LOG_ERROR("[codec] Serialisierung zu groß (nicht-strikt): {} Bytes > Maximum {} - Längenprfix könnte unterdimensioniert sein",
                         data.size(), de_l_);
                 }
+                // FR-10a: 'remaining' - Wert über dem deklarierten Maximum
+                // (wie im String-Zweig: strict verwerfen, nicht-strikt
+                // loggen und Feld auslassen).
+                if (l_ == codec::Length::UNKNOWN && data.size() > de_l_) {
+                    if (strict_)
+                        throw std::runtime_error(
+                            "Serialisierung zu groß: " + std::to_string(data.size()) +
+                            " Bytes > Maximum " + std::to_string(de_l_) +
+                            " (Feld " + d_ + ", remaining)");
+                    TNG_LOG_ERROR("[codec] Serialisierung zu groß (nicht-strikt): {} Bytes > Maximum {} - Feld wird ausgelassen (remaining)",
+                        data.size(), de_l_);
+                    return std::vector<uint8_t>{};
+                }
                 std::vector<uint8_t> b_img(pl + codec::required_sz_for_as<e_>(data.size()), 0);
                 codec::encode_length<pe_, l_>(data.size(), b_img); // Encode length if applicable
                 codec::to<e_>(data, b_img, pl, strict_);
                 return b_img;
             }
             else if constexpr (std::is_same_v< T, dynamic_bitset<> >) {
-                dynamic_bitset<> b = std::dynamic_pointer_cast< ::TNG_NAMESPACE::Bitmap >(c)->value();
+                // FR-10a (0.8.0): Typ-Guard statt ungeprüftem Cast-Dereferenz.
+                auto bmpc = std::dynamic_pointer_cast< ::TNG_NAMESPACE::Bitmap >(c);
+                if (!bmpc)
+                    throw std::runtime_error(
+                        "[ISO8583] DE" + std::to_string(c ? static_cast<int>(c->key()) : -1) +
+                        " (Feld " + d_ + "): Komponente ist keine Bitmap");
+                dynamic_bitset<> b = bmpc->value();
                 std::size_t bytes = de_l_ >= 8 ? ((b.size() + 62) >> 6) << 3 : de_l_;
                 std::size_t bits = bytes * 8;
 
