@@ -1835,7 +1835,7 @@ namespace TNG_NAMESPACE::spec {
         // Läuft rekursiv automatisch auf children/tlv_children.
         info.prefix_encoding = f.prefix_encoding.empty() ? f.encoding : f.prefix_encoding;
         // FR-7 (0.7.1): effektive BCD-Padding-Variante; "" bei Feldern ohne BCD-Nutzdaten.
-        info.bcd_pad = hasBcdData(f) ? bcdPadName(f.bcd_pad) : "";
+        info.bcd_pad = (hasBcdData(f) || !f.pack.empty()) ? bcdPadName(f.bcd_pad) : "";
         // FR-9a (0.8.0): Sekundär-Bitmap-Modus; "" bei Nicht-Bitmap-Feldern.
         info.secondary_bitmap = (f.format == "BITMAP")
             ? (f.secondary_always ? "always" : "auto") : "";
