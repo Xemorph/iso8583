@@ -700,6 +700,13 @@ Key eine SE-Nummer oder ein BER-Tag:
   - Ein constructed-Tag **ohne** `tlv:`-Block bleibt ein dynamischer
     `BinaryField`-Blob (Rohbytes) wie bisher — es gibt **keine** implizite
     Erkennung über das Constructed-Bit.
+- **TLV mit festen Kopfbytes (VISA-DE55: `01` + 2 Byte Länge + BER-TLV;
+  0.8.0, FR-10b) ist kein TLV-Container-Feature:** ein TLV-Container beginnt
+  immer mit dem ersten Frame, ein `header_bytes:` o. Ä. gibt es nicht.
+  Rezepte (getestet, `[fr10b]`): DE55 als `lbinary` roh (Kopf + Block als
+  `BinaryField`); Kopf abschneiden und den Block per Field-only-Spec +
+  `SpecDecoder::decodeField` auflösen; oder `nested` mit Kopf-Kind + `remaining`
+  (roh, baubar seit 0.8.0). Normativ: `docs/internals/spec_schema.md` §6.
 - Tags ohne einen deklarierten `children`-Eintrag fallen automatisch auf die
   generische `"SE<n>"`-Beschreibung zurück (Rohbytes, `BinaryField`) —
   unabhängig davon, ob das Containerfeld ein `tlv:`-Block oder die

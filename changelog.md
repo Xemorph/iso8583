@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### `[~](Updated)` TLV mit festen Kopfbytes (VISA-DE55): dokumentiertes Rezept statt Feature (FR-10b)
+
+- Ein TLV-Container mit festen Bytes **vor** den Frames (VISA BASE I DE55:
+  `01` + 2 Byte Länge + BER-TLV) wird **nicht** umgesetzt (kein `header_bytes:`;
+  Beleg nur aus einer Nachricht). Stattdessen drei getestete Rezepte in
+  `spec_schema.md` §6: DE55 als `lbinary` (roh); Kopf abschneiden und den
+  TLV-Block per Field-only-Spec + `decodeField` auflösen; `nested` mit
+  Kopf-Kind + `remaining` (roh, baubar seit FR-10a).
+- Tests: `tests/test_field_only_spec.cc` (Tag `[fr10b]`, 3 Cases). Keine
+  Code-/API-/ABI-Änderung.
+
 ### `[~](Changed)` Sekundär-Bitmap: `bitmap length` fail-closed + `secondary: always` (FR-9)
 
 - **Verhaltensänderung (strict, Default) — FR-9b:** Mit `bitmap … length: 8`

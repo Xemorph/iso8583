@@ -238,6 +238,13 @@ auch ohne Feld > 64 (VISA BASE I: Bit 1 + leere Sekundär-Bitmap); Default
 `auto` = bisheriges Verhalten. Normative Details:
 [spec_schema.md](spec_schema.md) §3, Unterabschnitt „Bitmap-Felder".
 
+**TLV mit festen Kopfbytes (0.8.0, FR-10b):** Ein TLV-Container beginnt
+immer mit dem ersten Frame; feste Bytes davor (VISA-DE55: `01` + 2 Byte Länge)
+werden nicht unterstützt. Getestete Rezepte: DE55 als `lbinary` (roh), Kopf
+abschneiden + Field-only-Spec (`decodeField`) für den TLV-Block, oder
+`nested` mit Kopf-Kind + `remaining` (roh, baubar). Details:
+[spec_schema.md](spec_schema.md) §6.
+
 #### Typisierte TLV-Kinder (seit 0.5.0)
 
 Deklarierte `children` (sowohl `tlv:`-Block als auch `...bertlv`-Kurzform)

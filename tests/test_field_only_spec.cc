@@ -601,3 +601,146 @@ field:
         CHECK(msg->parse(msg) == payload);
     }
 }
+// =============================================================================
+// FR-10b (0.8.0): TLV-Container mit festen Kopfbytes (VISA-DE55) - NICHT als
+// Feature umgesetzt, sondern als dokumentiertes Rezept (spec_schema.md §6).
+// Diese Tests nageln das Rezept fest:
+//   DE55 = lbinary { 01 | 2 Byte TLV-Laenge | BER-TLV }
+//   (a) als lbinary dekodieren/bauen (roh), (b) Kopf abschneiden und den
+//   TLV-Block per Field-only-Spec dekodieren, (c) Kopf-Kind + remaining
+//   (roh, baubar seit FR-10a).
+// =============================================================================
+
+namespace {
+
+// 3 Kopfbytes (Version 01, TLV-Laenge 0x000F) + 15 Byte BER-TLV
+// (95 / 9A / 9C).
+const std::vector<uint8_t> kVisaDe55Head = { 0x01, 0x00, 0x0F };
+const std::vector<uint8_t> kVisaDe55Tlv  = {
+    0x95, 0x05, 0x00, 0x00, 0x00, 0x80, 0x00,
+    0x9A, 0x03, 0x26, 0x10, 0x06,
+    0x9C, 0x01, 0x00 };
+
+std::vector<uint8_t> visaDe55Wire() {
+    std::vector<uint8_t> w = { '0', '2', '0', '0',
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,   // Bitmap: nur DE55
+        0x12 };                                            // lbinary: 18 Byte
+    w.insert(w.end(), kVisaDe55Head.begin(), kVisaDe55Head.end());
+    w.insert(w.end(), kVisaDe55Tlv.begin(), kVisaDe55Tlv.end());
+    return w;
+}
+
+} // namespace
+
+TEST_CASE("FR-10b recipe A - DE55 as lbinary decodes and builds raw (head + TLV)", "[fr10b][recipe]") {
+    TempYaml yaml(R"YAML(
+spec: "VISA DE55 recipe"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "055": { format: lbinary, encoding: binary, length: 255, description: "ICC Data (VISA)" }
+)YAML");
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    const auto wire = visaDe55Wire();
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, wire) == wire.size());
+    const auto de55 = msg->get<BinaryField>(55);
+    REQUIRE(de55 != nullptr);
+    std::vector<uint8_t> expect = kVisaDe55Head;
+    expect.insert(expect.end(), kVisaDe55Tlv.begin(), kVisaDe55Tlv.end());
+    CHECK(de55->value() == expect);
+    CHECK(msg->parse(msg) == wire);
+
+    // Bauen aus Hex-String (Grossbuchstaben).
+    auto built = std::make_shared<Message>("0200");
+    built->parser(parser);
+    REQUIRE(built->set(TNG_KEY_TYPE(55), std::string("01000F95050000008000" "9A0326100" "69C0100")));
+    CHECK(built->parse(built) == wire);
+}
+
+TEST_CASE("FR-10b recipe B - cut the 3 head bytes, decode the TLV block with a field-only spec",
+    "[fr10b][recipe]") {
+    TempYaml yaml(R"YAML(
+spec: "VISA DE55 TLV block"
+encoding: ascii
+field:
+  format: lllbertlv
+  length: 999
+  description: "ICC Data TLV block"
+  children:
+    "95": { format: binary, length: 5, description: "TVR" }
+    "9C": { format: binary, length: 1, description: "Transaction Type" }
+)YAML");
+    auto parser = spec::SpecDecoder::loadFieldFromYaml(yaml.str());
+
+    // DE55-Payload aus der Voll-Nachricht (Kopf + TLV) -> Kopf abschneiden.
+    std::vector<uint8_t> de55 = kVisaDe55Head;
+    de55.insert(de55.end(), kVisaDe55Tlv.begin(), kVisaDe55Tlv.end());
+    REQUIRE(de55.size() > kVisaDe55Head.size());
+    // Die 2 Laengenbytes des Kopfs nennen die Laenge des TLV-Blocks.
+    CHECK(((de55[1] << 8) | de55[2]) == static_cast<int>(de55.size() - kVisaDe55Head.size()));
+
+    const std::vector<uint8_t> block(de55.begin() + kVisaDe55Head.size(), de55.end());
+    const auto bf = std::make_shared<BinaryField>(0, block);
+    const auto tags = spec::SpecDecoder::decodeField(parser, *bf);
+    REQUIRE(tags != nullptr);
+
+    const auto tvr = tags->get<BinaryField>(0x95);
+    REQUIRE(tvr != nullptr);
+    CHECK(tvr->value() == std::vector<uint8_t>{ 0x00, 0x00, 0x00, 0x80, 0x00 });
+    CHECK(tvr->description() == "TVR");
+    const auto tt = tags->get<BinaryField>(0x9C);
+    REQUIRE(tt != nullptr);
+    CHECK(tt->value() == std::vector<uint8_t>{ 0x00 });
+    // Undeklarierter Tag 9A: dynamisch dekodiert.
+    CHECK(tags->get<BinaryField>(0x9A) != nullptr);
+
+    // Re-Encode + Kopf voranstellen == urspruengliches DE55 (Roundtrip des Rezepts).
+    const auto reencoded = tags->parse(tags);
+    CHECK(reencoded == block);
+    std::vector<uint8_t> rebuilt = kVisaDe55Head;
+    rebuilt.insert(rebuilt.end(), reencoded.begin(), reencoded.end());
+    CHECK(rebuilt == de55);
+}
+
+TEST_CASE("FR-10b recipe C - head child + remaining: raw TLV block, decodes and builds (FR-10a)",
+    "[fr10b][recipe]") {
+    TempYaml yaml(R"YAML(
+spec: "VISA DE55 head+remaining"
+encoding: ascii
+fields:
+  "000": { format: numeric, length: 4 }
+  "001": { format: bitmap,  length: 8 }
+  "055":
+    type: nested
+    format: lbinary
+    encoding: binary
+    length: 255
+    description: "ICC Data (VISA)"
+    children:
+      - { format: binary, length: 3, description: "Head (01 + TLV length)" }
+      - { format: remaining, encoding: binary, length: 252, description: "TLV block (raw)" }
+)YAML");
+    auto parser = spec::SpecDecoder::loadFromYaml(yaml.str());
+    const auto wire = visaDe55Wire();
+
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, wire) == wire.size());
+    const auto de55 = msg->get<Message>(55);
+    REQUIRE(de55 != nullptr);
+    REQUIRE(de55->get<BinaryField>(0) != nullptr);
+    REQUIRE(de55->get<BinaryField>(1) != nullptr);
+    CHECK(de55->get<BinaryField>(0)->value() == kVisaDe55Head);
+    CHECK(de55->get<BinaryField>(1)->value() == kVisaDe55Tlv);   // roh, keine Tags
+    CHECK(msg->parse(msg) == wire);
+
+    auto built = std::make_shared<Message>("0200");
+    built->parser(parser);
+    REQUIRE(built->set("55.0", std::string("01000F")));
+    REQUIRE(built->set("55.1", std::string("950500000080009A032610069C0100")));
+    CHECK(built->parse(built) == wire);
+}

@@ -562,6 +562,49 @@ Regeln (Fail-closed beim Laden, positioniertes `SpecValidationError`):
   übersprungen (kein Fehlrouting), mit `ISO8583_BERTLV` (int32) werden sie
   voll unterstützt.
 
+**TLV mit festen Kopfbytes vor den Frames (z. B. VISA-DE55) — Rezept, kein
+Feature (0.8.0, FR-10b):**
+
+Ein TLV-Container beginnt **immer** mit dem ersten TLV-Frame
+(`tlv: { ber: true }` bzw. `...bertlv`). Felder, die feste Bytes **vor**
+den Frames tragen — VISA BASE I DE55: `01` (Version) + 2 Byte binäre
+TLV-Länge + BER-TLV —, sind als TLV-Container **nicht** modellierbar (es gibt
+kein `header_bytes:` o. Ä.; der Beleg beschränkt sich auf eine Nachricht, ob
+der Kopf bei allen Nachrichten konstant ist, ist offen). Drei getestete
+Wege (`tests/test_field_only_spec.cc`, Tag `[fr10b]`):
+
+1. **Roh als `lbinary`** (dekodiert und baut byte-genau):
+   `"055": { format: lbinary, encoding: binary, length: 255 }` — der Wert
+   ist Kopf + TLV-Block als `BinaryField` (Setzen per Hex-Zeichenkette).
+2. **Kopf abschneiden und den TLV-Block per Field-only-Spec auflösen**
+   (§11; die Tags werden typisiert/beschrieben dekodiert): die ersten 3 Bytes
+   des `BinaryField`-Werts abtrennen, den Rest mit einer Field-only-Spec
+   (`field: { format: lllbertlv, length: 999, children: { "95": … } }`)
+   über `SpecDecoder::decodeField(parser, binaryField)` dekodieren. Der
+   Re-Encode (`msg->parse(msg)`) liefert den TLV-Block byte-identisch;
+   Kopf voranstellen ergibt das ursprüngliche DE55. Die Kopf-Längenbytes
+   (hier `00 0F`) nennen die Länge des TLV-Blocks und müssen beim Bauen vom
+   Aufrufer berechnet werden.
+3. **Kopf-Kind + `remaining`** (roh, seit 0.8.0 auch **baubar**, FR-10a):
+
+   ```yaml
+   "055":
+     type: nested
+     format: lbinary
+     encoding: binary
+     length: 255
+     children:
+       - { format: binary, length: 3, description: "Head (01 + TLV length)" }
+       - { format: remaining, encoding: binary, length: 252, description: "TLV block (raw)" }
+   ```
+
+   Der Kopf ist `55.0`, der TLV-Block `55.1` (jeweils `BinaryField`, Hex-
+   Zeichenkette in Großbuchstaben); der Block wird **nicht** in Tags
+   aufgeschlüsselt (dafür Weg 2).
+
+Wird ein konstanter Kopf über mehrere Nachrichten belegt, kann ein
+`tlv: { ber: true, header_bytes: N }` neu bewertet werden (nicht geplant).
+
 ## 7. Encoding-Auflösung und -Vererbung
 
 ```
