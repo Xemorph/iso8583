@@ -287,6 +287,8 @@ for (const auto& f : spec->fields())
 | `tlv_is_ber` | `bool` | `true`, wenn das Feld ein TLV-Container im **BER-TLV-Modus** ist (`tlv: {ber: true}` oder `format: ...bertlv`), `false` im fixen SE-Modus (`tlv: {tag_bytes, len_bytes, tcc}`) und bei allen Nicht-TLV-Feldern (Default). Beide BER-Schreibweisen setzen das Flag identisch; auch für BER-Container ohne deklarierte Kinder `true` (seit 0.6.0, FR-4) |
 | `bcd_pad` | `std::string` | Effektives BCD-Padding bei ungerader Ziffernzahl: `"right_zero"` (Default), `"right_f"`, `"left_zero"` bei Feldern mit BCD-**Nutzdaten** (`numeric`/`amount`/`*char`/`*num`/`remaining`, auch TLV-Kinder), sonst `""` (0.7.1, FR-7) |
 | `secondary_bitmap` | `std::string` | Sekundär-Bitmap-Modus eines Bitmap-Felds: `"always"` (YAML `secondary: always`) oder `"auto"` (Default), bei Nicht-Bitmap-Feldern `""` (0.8.0, FR-9a) |
+| `container_bitmap_bytes` | `int` | Bitmap-Größe in Byte eines **bitmap-gesteuerten** `nested`-Containers (YAML `bitmap: { length: N }`, 1..16); `children[i].key` ist dort die **Bit-Nummer**. `0` bei allen anderen Feldern (0.9.0, FR-12) |
+| `pack` | `std::string` | `"nibble"` bei einem `nested`-Container mit `pack: nibble` (dichter BCD-Ziffern-Strom, mehrere Kinder pro Byte), sonst `""` (0.9.0, FR-13) |
 | `prefix_encoding` | `std::string` | Effektives Längenpräfix-Encoding eines variablen Felds: `"ASCII"`, `"EBCDIC"`, `"BCD"`, `"BINARY"` bzw. `""` (encoding-neutrale Formate). Gleicht `encoding`, wenn der YAML-Key `prefix_encoding:` fehlt (Default), sonst der deklarierte Wert (0.7.0, FR-6) |
 
 > **ABI-Hinweis (0.5.0):** `tlv_children` ist ein neues Mitglied des
@@ -319,6 +321,11 @@ for (const auto& f : spec->fields())
 > neue Mitglied von `ISOFieldParserPtrBase` (`secondaryAlways`) ändern das
 > Layout — Shared-Library-Consumer müssen gegen die neue Bibliothek neu
 > kompiliert werden.
+
+> **ABI-Hinweis (0.9.0):** `container_bitmap_bytes` und `pack`
+> (`SpecFieldInfo`) ändern das Layout des per-Wert zurückgegebenen
+> `SpecFieldInfo` — Shared-Library-Consumer müssen gegen die neue
+> Bibliothek neu kompiliert werden.
 
 > **ABI-Hinweis (0.7.0):** `prefix_encoding` (`SpecFieldInfo`) ist ein
 > neues Mitglied desselben per-Wert zurückgegebenen `SpecFieldInfo` —
@@ -627,6 +634,25 @@ fields:
   (ungültiger Wert, Nicht-BCD-Feld, TLV-Container/constructed-Kind).
   Introspektion: `SpecFieldInfo::bcd_pad`. Normativ:
   `docs/internals/spec_schema.md` §3 „BCD-Padding".
+- **`bitmap:`-Container (0.9.0, FR-12/FR-11):** `type: nested` + `bitmap: { length: N }`
+  (N = 1..16 Byte) + `children` als **Map Bit-Nummer → Kind** — VISA-DE62/63/126:
+  Bitmap-Kopf, danach genau die Kinder, deren Bit gesetzt ist. Bit n gehört zu
+  Kind n (`"62.7"`); **Bit 1 ist ein normales Kind** (keine Sekundär-Bitmap im
+  Container, keine mehrstufigen Bitmaps). Decode: gesetztes Bit ohne Kind-Deklaration
+  → strict positionierter Fehler. Build: Bitmap wird aus den gesetzten Kindern
+  berechnet (nie setzen); nicht deklariertes Kind → strict Fehler. Fail-closed
+  beim Laden: `bitmap` ohne Map-`children`, mit `tlv`/`pack`, Bit außerhalb
+  `1..8*N`, doppelte/nicht numerische Bits, `length` ∉ 1..16. Introspektion:
+  `SpecFieldInfo::container_bitmap_bytes`. Normativ: `docs/internals/spec_schema.md` §6.
+- **`pack: nibble` (0.9.0, FR-13):** an einem `nested`-Container (Liste aus
+  `numeric`+`bcd`-Kindern fester Länge, `nop` als Schlüssel-Platzhalter) bilden die
+  Kinder einen **dichten Ziffern-Strom** (VISA-DE60: mehrere 1-stellige Unterfelder
+  pro Byte). Container = `ceil(Σ Ziffern / 2)` Byte, Padding nach `bcd_pad` (am
+  Container oder Root-Default, nie am Kind); kürzere Container (Kinder am Ende
+  fehlen) sind erlaubt, Abschnitt mitten im Kind, Lücken beim Bauen und ein
+  verkürzter Container mit ungerader Ziffernzahl sind strict Fehler. Ohne `pack`
+  belegt jedes Kind ganze Bytes (unverändert). Introspektion: `SpecFieldInfo::pack`.
+  Normativ: `docs/internals/spec_schema.md` §6.
 - `bertlv` (optional mit `l`/`ll`/`lll`/`llllbertlv`) — BER-TLV-Container
   (ISO/IEC 8825-1, EMV Book 3 Annex B); **nur scalar**. Seit 0.5.0 (FR-2)
   darf zusätzlich eine optionale `children:`-**Map** (HEX-Tag-Keys) bekannte/
@@ -868,6 +894,8 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Bitmap mit `length: 8`, obwohl Bit 1 gesetzt ist bzw. Felder > 64 vorkommen (0.8.0) | `length: 16` (Primär + Sekundär) deklarieren — strict wirft sonst positioniert (Decode **und** Bauen); `secondary: always` nur mit `length >= 16` und nur auf `format: bitmap` |
 | `bcd_pad` an Nicht-BCD-Feldern, `*binary`/`bertlv`-Containern oder constructed-Kindern (0.7.1) | Nur bei BCD-**Nutzdaten** gültig (`numeric`/`amount`/`*char`/`*num`/`remaining` mit `encoding: bcd`, TLV-Kinder) und nie am Längenpräfix — sonst `SpecValidationError` beim Laden (Fail-closed); ohne Key gilt `right_zero` ohne Decode-Validierung |
 | `prefix_encoding` an fixen Formaten, `*binary`/`bertlv`, TLV-Kindern oder als Root-Key (0.7.0) | Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix) gültig; bei `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec, bei TLV-Kindern liegt die Länge im Length-Feld des Frames, ein Root-Level-Default existiert nicht — sonst `SpecValidationError` beim Laden (Fail-closed) |
+| Bitmap-Unterfelder (VISA DE62) als positionelle `children`-Liste mit `bitmap`-Kind (0.9.0) | Die Kinder werden starr nach Position gelesen (passt nur für genau eine Bitmap, sonst stille Fehlinterpretation). Richtig: `bitmap: { length: N }` + `children` als Map Bit-Nummer → Kind (Bit 1 = normales Kind) |
+| Nibble-Unterfelder (VISA DE60) als `length: 1`-Kinder ohne `pack` (0.9.0) | Jedes Kind belegt ganze Bytes (zwei 1-stellige Kinder = zwei Bytes). Richtig: `pack: nibble` am Container; Kinder nur `numeric`+`bcd`+feste `length` (oder `nop`), `bcd_pad` nur am Container |
 
 ---
 

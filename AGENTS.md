@@ -17,7 +17,7 @@ Read this file fully; load the deep-dive files below **only when the task touche
 | Build, CMake options, presets, tests, CI, clangd | `.agents/build-test-ci.md` | §3, §7, §9 |
 | Object model, key type/ABI, Message API, threading, logging, encoding/EBCDIC pin, exceptions, global state | `.agents/concepts-encoding.md` | §4, §13 |
 | YAML spec grammar, formats, TLV, `remaining`, `amount`, sandbox, `strict_length`; `src/` map | `.agents/yaml-spec.md` | §5, §6 |
-| Runtime side effects + full pitfall list (45 items) | `.agents/pitfalls.md` | §12, §15 |
+| Runtime side effects + full pitfall list (47 items) | `.agents/pitfalls.md` | §12, §15 |
 | Docs build, history, new header/field-type/option/test checklists, release procedure, vendored licenses | `.agents/process-release.md` | §8, §10, §11, §14 |
 
 3. **Public API reference:** `include/iso8583/AGENTS.md` (German, canonical). **Normative spec schema:** `docs/internals/spec_schema.md`; also `yaml_format.md`, `encoding.md`.

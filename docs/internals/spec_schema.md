@@ -80,7 +80,9 @@ Jeder Wert in `fields` ist eine Map (oder `!use`/`!merge`):
 | `sign` | bool | nein (Default `false`) | nur `format: amount` mit `scale`, nicht `bcd`: führendes Vorzeichenzeichen `C`/`D`/`+`/`-`; `length` zählt es mit |
 | `strict_length` | bool | nein | Opt-in (0.6.2): zu kurzer Wert bei fester Länge wird beim Serialisieren abgelehnt (§9); überschreibt den Root-Default |
 | `tlv` | map | nein | `tag_bytes`/`len_bytes` (fester TLV) oder `ber: true` (EMV-BER-TLV), nur mit `type: nested` (§6) |
-| `children` | list \| map | ja bei `type: nested` | **Liste** = feste Subfelder (Positionsreihenfolge); **Map** = TLV-Modus (Schlüssel = SE-Nummer bzw. Hex-Tag) |
+| `bitmap` | map `{ length: N }` | nein | (0.9.0, FR-12): nur `type: nested` (Nicht-TLV): Container mit **Bitmap-Kopf** von `N` Byte (1..16); `children` ist dann eine Map **Bit-Nummer → Kind**, Bit 1 ist ein normales Kind. Details: §6 |
+| `pack` | `nibble` | nein | (0.9.0, FR-13): nur `type: nested` (Nicht-TLV) mit `children`-Liste aus `numeric`/`bcd`-Kindern fester Länge: die Kinder bilden einen dichten **Ziffern-Strom** (mehrere Kinder pro Byte); Padding nach `bcd_pad` am Container. Details: §6 |
+| `children` | list \| map | ja bei `type: nested` | **Liste** = feste Subfelder (Positionsreihenfolge); **Map** = TLV-Modus (Schlüssel = SE-Nummer bzw. Hex-Tag) oder mit `bitmap:` Bit-Nummer → Kind |
 
 **Minimales Feld:** `"003": { format: numeric, length: 6 }` — alles
 andere ist optional; `description` wird für nachvollziehbare Specs
@@ -426,6 +428,106 @@ fields:
     - { format: numeric, length: 1 }
     - { format: remaining, length: 10, description: "POS Postal Code" }
 ```
+
+Die Kind-Schlüssel sind die **Positionen** ab `0` (`"61.0"`, `"61.1"`); `nop`
+als Kind hält eine Position frei. Jedes Kind belegt **ganze Bytes**.
+
+**Bitmap-gesteuerter Container (`bitmap:`, 0.9.0, FR-12/FR-11):**
+
+Bitmap-Unterfelder (VISA DE62/DE63/DE126: Bitmap + genau die Unterfelder, deren
+Bit gesetzt ist) werden mit einem `bitmap:`-Block und `children` als **Map**
+(Bit-Nummer → Kind) deklariert:
+
+```yaml
+"062":
+  type: nested
+  format: lbinary
+  encoding: binary
+  length: 255
+  description: "Custom Payment Service Fields"
+  bitmap: { length: 8 }              # Bitmap-Kopf (62.0): 8 Byte, Bits 1..64
+  children:                          # Map: Bit-Nummer -> Kind
+    "1": { format: char,    encoding: ebcdic, length: 1,  description: "62.1 ACI" }
+    "2": { format: numeric, encoding: bcd,    length: 16, description: "62.2 Transaction Identifier" }
+    "7": { format: char,    encoding: ebcdic, length: 26, description: "62.7 Purchase Identifier" }
+```
+
+- **Wire:** `Container-Präfix | Bitmap (length Byte) | gesetzte Kinder in Bit-Reihenfolge`.
+  Bit `n` (1-indiziert, MSB des ersten Bytes = Bit 1) gehört zum Kind `n`.
+- **Bit 1 ist ein normales Kind** — es gibt im Container **keine**
+  Sekundär-Bitmap-Semantik (anders als beim Top-Level-`bitmap`-Feld, §3).
+  Mehrstufige Bitmaps im Container (Sekundär-/Tertiär-Bitmap) werden nicht
+  unterstützt. Damit ist auch VISA-62.1 (Authorization Characteristics
+  Indicator) abbildbar (FR-11); ein eigenes `secondary: never` für die
+  Top-Level-Bitmap gibt es nicht.
+- **Adressierung:** Punkt-Notation `"62.7"`; der Kind-Key ist die Bit-Nummer.
+  Die Bitmap-Komponente selbst liegt (wie bei Nachrichten) unter dem
+  Sonderschlüssel `-1`, der Kind-Key `1` bleibt frei.
+- **Decode:** nur Kinder mit gesetztem Bit werden dekodiert. Ein gesetztes Bit
+  **ohne** Kind-Deklaration → strict: positionierter `std::runtime_error`
+  (die Länge der Folgebytes ist unbekannt); nicht-strikt: Warnung und
+  Abbruch der Container-Dekodierung. Abgeschnittene Kinder und Rest-Bytes
+  sind strict ebenfalls Fehler.
+- **Build:** die Bitmap wird aus den gesetzten Kindern berechnet (nie setzen).
+  Ein gesetztes Kind ohne Bit-Deklaration → strict: Fehler (sonst Warnung, Kind
+  wird ausgelassen). Die Bitmap hat immer genau `length` Byte (nicht aufgerundet).
+- **Fail-closed beim Laden:** `bitmap` an einem Nicht-`nested`-Feld oder zusammen
+  mit `tlv:`/`...bertlv`/`pack`; `length` fehlt oder nicht `1..16`; unbekannter
+  Schlüssel im `bitmap:`-Block (z. B. `secondary`); `children` keine nicht-leere
+  Map; Bit-Nummer nicht dezimal, `< 1` oder `> 8*length`; doppelte Bit-Nummer
+  (`"1"` und `"01"`); Kind-Format `bitmap`/`nop`/`unused`.
+- **Introspektion:** `SpecFieldInfo::container_bitmap_bytes` (`0` = kein
+  Bitmap-Container), `children[i].key` = Bit-Nummer (aufsteigend sortiert).
+
+**Nibble-Packing (`pack: nibble`, 0.9.0, FR-13):**
+
+VISA-DE60 (Additional POS Information) besteht aus einzelnen **Ziffern**
+(Nibbles), die sich Bytes teilen. Mit `pack: nibble` bilden die BCD-Kinder
+einen **dichten Ziffern-Strom** ohne Byte-Grenzen dazwischen:
+
+```yaml
+"060":
+  type: nested
+  format: lbinary                    # Länge in BYTES
+  encoding: binary
+  length: 255
+  pack: nibble
+  # bcd_pad: right_zero              # optional (Container-Key oder Root-Default)
+  children:                          # Liste; Position = Kind-Schlüssel
+    - { format: nop }                # Platzhalter -> die Unterfelder heißen 60.1 ...
+    - { format: numeric, encoding: bcd, length: 1, description: "60.1 Terminal Type" }
+    - { format: numeric, encoding: bcd, length: 1, description: "60.2 Terminal Entry Capability" }
+    # ... 60.3 .. 60.7 ...
+    - { format: numeric, encoding: bcd, length: 2, description: "60.8 MOTO/ECI Indicator" }
+```
+
+- **Wire:** der Container ist `ceil(Summe der Ziffern / 2)` Byte lang;
+  `12 34 05` = Ziffern `1,2,3,4,0,5`. Bei **ungerader** Gesamtziffernzahl des
+  vollständigen Containers sitzt das Padding-Nibble nach `bcd_pad` (`right_zero`
+  Default: `123` → `12 30`, `right_f`: `12 3F`, `left_zero`: `01 23`); mit
+  deklariertem `bcd_pad` wird es beim Decode validiert (strict: Fehler).
+- **Kürzere Container sind erlaubt:** fehlen am Ende Bytes, bleiben die
+  restlichen Kinder ungesetzt (VISA-DE60 mit 5 statt 6 Datenbytes). Ein Kind
+  darf aber nicht **mittendrin** abgeschnitten sein (strict: Fehler).
+- **Build:** die gesetzten Kinder müssen eine **lückenlose Folge ab dem ersten
+  Kind** bilden (Lücke → strict: Fehler); jeder Wert hat genau `length` Ziffern
+  (`0`–`9`). Ein verkürzter Container mit **ungerader** Ziffernzahl wird beim
+  Bauen abgewiesen (das Padding-Nibble wäre beim Decode nicht von einer Ziffer
+  des Folgekinds unterscheidbar).
+- **`wire_offset`/`wire_length`** der Kinder sind eine Byte-Näherung: Offset =
+  Byte, in dem das Kind beginnt; Länge = Anzahl der berührten Bytes (zwei Kinder
+  in einem Byte haben denselben Offset).
+- **Kinder:** nur `format: numeric` + `encoding: bcd` + feste `length`
+  (Ziffern `>= 1`) oder `format: nop` (Platzhalter ohne Ziffern); kein `bcd_pad`
+  am Kind (es gehört an den Container). Das **Container**-`format` bleibt ein
+  Byte-Format (`lbinary` o. Ä.).
+- **Fail-closed beim Laden:** `pack` an einem Nicht-`nested`-Feld, mit `tlv:`/
+  `...bertlv`/`bitmap`; Wert ungleich `nibble`; `children` keine nicht-leere
+  Liste; Kind mit anderem Format/Encoding/ohne `length`; `bcd_pad` am Kind.
+  Ohne `pack` bleibt jedes Kind ein ganzes Byte (`numeric|bcd, length: 1` →
+  Byte mit Padding-Nibble) — unverändert.
+- **Introspektion:** `SpecFieldInfo::pack` (`"nibble"` | `""`); `bcd_pad` meldet
+  beim Container die effektive Variante.
 
 **Fixer TLV (MC/Visa-Style), `tag_bytes`/`len_bytes`:**
 
@@ -989,3 +1091,15 @@ Wire-Vertrag (s. o.) eindeutig zu halten.
     BCD-**Nutzdaten** bei ungerader Ziffernzahl, nie auf das
     Längenpräfix. Ohne Deklaration bleibt `right_zero` (Legacy) und das
     Padding-Nibble wird beim Decode nicht geprüft (§3 „BCD-Padding").
+    *Ausnahme (0.9.0):* ein `nested`-Container mit `pack: nibble` trägt das
+    Padding seines Ziffern-Stroms selbst (§6).
+16. **Bitmap-Unterfelder als positionelle `children`-Liste modellieren
+    (0.9.0)** → eine `bitmap`-Zeile als erstes Kind steuert nichts; die Kinder
+    werden **starr nach Position** gelesen und passen nur für genau eine
+    Bitmap (stille Fehlinterpretation). Richtig: `bitmap: { length: N }` +
+    `children` als Bit-Nummer-Map (§6).
+17. **Nibble-Unterfelder als ein Kind pro Byte oder `length: 1`-Kinder ohne
+    `pack` (0.9.0)** → jedes Kind belegt ganze Bytes (`length: 1` ergibt ein Byte
+    mit Padding-Nibble, zwei 1-stellige Kinder also **zwei** Bytes). Für
+    Ziffern, die sich ein Byte teilen: `pack: nibble` am Container (§6). Kinder
+    dort nur `numeric`+`bcd`+feste `length` (oder `nop`-Platzhalter).

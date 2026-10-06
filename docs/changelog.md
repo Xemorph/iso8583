@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.9.0
+
+### `[+](Added)` Nibble-Unterfelder: `pack: nibble` an `nested`-Containern (FR-13)
+
+- **Neu:** `pack: nibble` an einem `type: nested`-Container (Nicht-TLV,
+  `children`-Liste aus `numeric`+`bcd`-Kindern fester Länge, `format: nop` als
+  Schlüssel-Platzhalter): die Kinder bilden einen **dichten Ziffern-Strom**
+  (mehrere 1-stellige Unterfelder pro Byte, VISA-DE60 `60.1`–`60.10`). Der
+  Container ist `ceil(Σ Ziffern / 2)` Byte lang; Padding bei ungerader
+  Gesamtziffernzahl nach `bcd_pad` (am Container oder als Root-Default, nie am
+  Kind; mit Deklaration wird das Padding-Nibble beim Decode validiert).
+- **Kürzere Container sind erlaubt** (Kinder am Ende fehlen → ungesetzt). Strict
+  (Default) wirft positioniert bei: Kind mitten im Byte-Strom abgeschnitten,
+  Lücke beim Bauen (Kind fehlt, ein späteres ist gesetzt), falscher Ziffernzahl
+  / Nicht-Ziffern, **verkürztem Container mit ungerader Ziffernzahl** (das
+  Padding-Nibble wäre beim Decode nicht von einer Ziffer zu unterscheiden) und
+  Rest-Bytes. `wire_offset`/`wire_length` der Kinder sind eine Byte-Näherung
+  (Startbyte / berührte Bytes).
+- **Rein additiv:** ohne `pack` belegt jedes Kind weiterhin ganze Bytes
+  (byte-identisch zu 0.8.0). Fail-closed beim Laden (positionierte
+  `SpecValidationError`): `pack` an Nicht-`nested`/TLV/`bitmap`-Containern,
+  Wert ≠ `nibble`, `children` keine Liste, Kind mit anderem Format/Encoding
+  oder ohne `length`, `bcd_pad` am Kind.
+- **Introspektion/ABI:** `SpecFieldInfo::pack` (`"nibble"` | `""`) — neues
+  Mitglied, **Shared-Library-Consumer müssen neu kompiliert werden**.
+- Tests: `tests/test_nibble_pack.cc` (Tag `[nibble-pack]`, 9 Cases).
+  Normativ: `docs/internals/spec_schema.md` §6.
+
+### `[+](Added)` Bitmap-gesteuerte `nested`-Container: `bitmap: { length: N }` (FR-12, deckt FR-11 ab)
+
+- **Neu:** `type: nested` (Nicht-TLV) + `bitmap: { length: N }` (1..16 Byte) +
+  `children` als **Map Bit-Nummer → Kind** (VISA DE62/DE63/DE126: Bitmap-Kopf,
+  danach genau die Kinder, deren Bit gesetzt ist). Bit n gehört zu Kind n
+  (`"62.7"`). **Bit 1 ist ein normales Kind** — es gibt im Container keine
+  Sekundär-Bitmap-Semantik (FR-11: VISA-62.1 ist damit abbildbar; ein eigenes
+  `secondary: never` am Top-Level-Bitmap-Feld gibt es nicht). Mehrstufige
+  Bitmaps im Container werden nicht unterstützt.
+- Decode: gesetztes Bit ohne Kind-Deklaration → strict positionierter Fehler
+  (Folgebytes unlesbar); nicht-strikt Warnung + Abbruch. Build: Bitmap wird aus
+  den gesetzten Kindern berechnet (immer genau `length` Byte); nicht
+  deklariertes Kind → strict Fehler. Die Container-Bitmap liegt wie bei
+  Nachrichten unter dem Sonderschlüssel `-1`.
+- **Rein additiv:** positionelle `children`-Listen und alle Bestandsspecs
+  byte-identisch. Fail-closed beim Laden: `bitmap` ohne Map-`children` bzw. an
+  Skalar/TLV/`pack`, `length` ∉ 1..16, Bit-Nummer ∉ `1..8*length`, doppelte oder
+  nicht numerische Bits, Kind-Format `bitmap`/`nop`/`unused`, unbekannte Keys im
+  `bitmap:`-Block.
+- **Introspektion/ABI:** `SpecFieldInfo::container_bitmap_bytes` (+ Kind-`key` =
+  Bit-Nummer) — neues Mitglied, **Shared-Library-Consumer müssen neu
+  kompiliert werden**.
+- Tests: `tests/test_bitmap_container.cc` (Tag `[bitmap-container]`, 8 Cases).
+  Normativ: `docs/internals/spec_schema.md` §6.
+
 ## 0.8.0
 
 ### `[~](Updated)` TLV mit festen Kopfbytes (VISA-DE55): dokumentiertes Rezept statt Feature (FR-10b)
