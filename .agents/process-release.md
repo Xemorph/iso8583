@@ -84,7 +84,7 @@ Use `[!](BREAKING)` for breaking changes. One commit per logical change.
 > re-verify on the new commit. (Also run `sphinx-build -W` locally beforehand.)
 
 1. Bump **all four** version spots: `project(VERSION …)` in `CMakeLists.txt`, `TNG_CORE_VERSION` in `include/iso8583/config.h`, `version` in root `vcpkg.json`, `version` in `vcpkg-port/vcpkg.json`.
-2. Update `changelog.md` **and** its tracked mirror `docs/changelog.md` (both must end up identical).
+2. Update `changelog.md` (`docs/changelog.md` is an `{include}` of it — nothing to sync).
 3. Push, **wait for a green Docs run on that commit (release gate above)**, then create tag `vX.Y.Z` (the vcpkg portfile fetches `REF v${VERSION}` from `Xemorph/iso8583`).
 4. **After the tag exists**: compute the tag's SHA512 (GitHub codeload tarball of the tag) → fill it into `vcpkg-port/portfile.cmake` (currently holds the v0.6.2 archive hash; each release replaces it).
 5. Push to `main` → docs auto-publish to GitHub Pages (`docs.yml`).
@@ -93,10 +93,7 @@ Use `[!](BREAKING)` for breaking changes. One commit per logical change.
 ### 14.3 Vendored third-party code & licenses
 | File | Upstream | License |
 |---|---|---|
-| `src/_date.hh` | Howard Hinnant et al., `date.h` (~8.3 kloc) | MIT |
 | `include/iso8583/detail/extern/dynamic_bitset.hpp` | Maxime Pinard (`sul::dynamic_bitset`) | MIT |
-| `include/iso8583/detail/extern/libpopcnt.hpp` | Kim Walisch / Wojciech Muła | 2-clause BSD-style (in-file header) |
-| `include/iso8583/detail/extern/string_view.hpp` | Martin Moene, `string-view-lite` | Boost Software License 1.0 |
 
 Maintenance rules: **never strip the embedded copyright/license headers**; a proprietary library may bundle permissively licensed code only because of them. The vcpkg port installs only the proprietary `LICENSE`. Keep this table current whenever new code is vendored (and prefer the existing vendored pieces over adding new dependencies).
 

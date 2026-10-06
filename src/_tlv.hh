@@ -166,7 +166,7 @@ namespace TNG_NAMESPACE {
             std::size_t  data_len,
             std::size_t  wire_offset,
             std::size_t  wire_len,
-            const nonstd::string_view& description,
+            const std::string_view& description,
             bool         sensitive,
             const TlvChildInfo* child, ///< nullptr = undeklariertes Tag
             bool         strict);      ///< propagierter Strict-Modus (Codec-Whitelist)
@@ -404,7 +404,7 @@ namespace TNG_NAMESPACE {
         // Liefert eine LANGLEBIGE (an dieses Parser-Objekt gebundene) Sicht auf
         // die Beschreibung für `se_num` - NIEMALS eine Kopie/Temporäre.
         //
-        // KRITISCH: ISOComponent::description(const nonstd::string_view&)
+        // KRITISCH: ISOComponent::description(const std::string_view&)
         // speichert NUR eine Sicht, keine eigene Kopie (siehe _components.cc).
         // Ein Aufruf wie `se->description(irgendein_temporäres_std::string)`
         // erzeugt deshalb eine dangelnde Sicht, sobald die Temporäre am Ende
@@ -427,15 +427,15 @@ namespace TNG_NAMESPACE {
         // undeclarierter SE72 -> AV). Der Sperrbereich deckt NUR den
         // Fallback-Pfad; die Hot-Pfad-Suche in child_map_ bleibt
         // lock-frei (read-only nach dem Konstruktor).
-        nonstd::string_view description_for_wire(std::size_t se_num) const {
+        std::string_view description_for_wire(std::size_t se_num) const {
             if (const tlv_detail::TlvChildInfo* child = child_info(se_num);
                 child && !child->description.empty())
-                return nonstd::string_view(child->description);
+                return std::string_view(child->description);
 
             const std::lock_guard lock(fallback_cache_mutex_);
             auto [cacheIt, inserted] = fallback_description_cache_.try_emplace(
                 se_num, "SE" + std::to_string(se_num));
-            return nonstd::string_view(cacheIt->second);
+            return std::string_view(cacheIt->second);
         }
 
         // [ISO8583] 3.4 (PCI): Sensitivität eines SE-Tags — entweder global

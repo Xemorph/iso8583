@@ -28,13 +28,11 @@ namespace TNG_NAMESPACE {
         using flat_map = tsl::robin_map<K, V>;
     }
 }
-// [nonstd]
-#include "extern/string_view.hpp"
 // [iso8583]
 #include "_interfaces.hh"
 
 using json = nlohmann::json;
-using namespace nonstd::literals;
+using namespace std::literals;
 
 namespace TNG_NAMESPACE {
 
@@ -62,8 +60,8 @@ namespace TNG_NAMESPACE {
     protected:
         IntegerType         k_;             ///< DE number (key).
         T                   d_;             ///< Stored value.
-        nonstd::string_view desc_;          ///< Human-readable field name from the spec.
-        nonstd::string_view expl_;          ///< Optional value explanation.
+        std::string_view desc_;          ///< Human-readable field name from the spec.
+        std::string_view expl_;          ///< Optional value explanation.
         std::size_t         wire_offset_ = 0; ///< Byte offset in the original wire buffer.
         std::size_t         wire_length_ = 0; ///< Bytes consumed (incl. length prefix).
 
@@ -100,11 +98,11 @@ namespace TNG_NAMESPACE {
         /// - `AmountField`     → `"<currency code>/<amount>"` (e.g. `"978/19.99"`)
         std::string readable_value() const override;
 
-        void description(const nonstd::string_view& desc) override;
-        const nonstd::string_view description() const override;
+        void description(const std::string_view& desc) override;
+        const std::string_view description() const override;
 
-        void explanation(const nonstd::string_view& expl) override;
-        const nonstd::string_view explanation() const override;
+        void explanation(const std::string_view& expl) override;
+        const std::string_view explanation() const override;
 
         std::size_t wire_offset() const noexcept override { return wire_offset_; }
         void        wire_offset(std::size_t offset) noexcept override { wire_offset_ = offset; }
@@ -133,7 +131,7 @@ namespace TNG_NAMESPACE {
         // [Destructor]
         ~ISOTaggedField() = default;
         // [Constructor]
-        ISOTaggedField(nonstd::string_view tag, std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > delegate)
+        ISOTaggedField(std::string_view tag, std::shared_ptr< ::TNG_NAMESPACE::ISOComponentPtrBase > delegate)
             : tag_{ tag }, ISOComponent(delegate->key())
         {
             delegate_ = std::move(delegate);
@@ -307,7 +305,7 @@ namespace TNG_NAMESPACE {
     ///   if (auto pan = msg->tryGet<ISOOpaqueField>(2))
     ///       std::cout << "PAN: " << (*pan)->value() << "\n";
     ///
-    ///   auto amount = iso8583::ISOUtils::getOrDefault<ISOOpaqueField>(*msg, 4, "000000000000");
+    ///   auto amount = iso8583::utils::getOrDefault<ISOOpaqueField>(*msg, 4, "000000000000");
     /// @endcode
     ///
     /// **Building a message (parse = fields → wire bytes):**
@@ -412,7 +410,7 @@ namespace TNG_NAMESPACE {
         /// @brief Creates a root message with the given Message Type Indicator.
         ///
         /// @param mti Four-digit MTI string, e.g. `"0200"` (financial request).
-        explicit ISOMessage(nonstd::string_view mti);
+        explicit ISOMessage(std::string_view mti);
 
         std::string readable_value() const override;
         bool is_composite() const override;
@@ -469,7 +467,7 @@ namespace TNG_NAMESPACE {
         /// this message's own `Bitmap` component is stored in its field map)
         /// and `-2` (TLV TCC byte) never represent a real DE/SE number and
         /// would only confuse callers that want to e.g. rebuild a wire
-        /// bitmap from the result (see `iso8583::ISOUtils::makeBitmap()` in
+        /// bitmap from the result (see `iso8583::utils::makeBitmap()` in
         /// `<iso8583/ISOUtils.hh>`).
         ///
         /// @return Ascending vector of DE/SE numbers with `key >= 0`.
@@ -712,7 +710,7 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns the four-digit MTI string (e.g. `"0200"`).
         /// @throws std::logic_error if no MTI field is set.
-        nonstd::string_view mti();
+        std::string_view mti();
 
         /// @brief Returns `true` if the 3rd MTI digit indicates a request (`0` or `2`).
         bool isRequest();
@@ -785,10 +783,10 @@ namespace TNG_NAMESPACE {
         std::vector<uint8_t> pack() const override { return header; }
         std::size_t unpack(const std::vector<uint8_t>& b) override { header = b; return b.size(); }
         std::size_t size() const override { return header.size(); }
-        void destination(const nonstd::string_view) override {}
-        void source(const nonstd::string_view) override {}
-        std::optional<nonstd::string_view> destination() const override { return std::nullopt; }
-        std::optional<nonstd::string_view> source() const override { return std::nullopt; }
+        void destination(const std::string_view) override {}
+        void source(const std::string_view) override {}
+        std::optional<std::string_view> destination() const override { return std::nullopt; }
+        std::optional<std::string_view> source() const override { return std::nullopt; }
         void swapDirection() override {}
         std::unique_ptr<ISOHeader> clone() const override {
             auto h = std::make_unique<BaseHeader>();
@@ -832,8 +830,8 @@ namespace TNG_NAMESPACE {
         static constexpr size_t LENGTH = 22; ///< Standard header size in bytes.
 
         BASE1Header();
-        BASE1Header(nonstd::string_view _source, nonstd::string_view _destination);
-        BASE1Header(nonstd::string_view _source, nonstd::string_view _destination, int _format);
+        BASE1Header(std::string_view _source, std::string_view _destination);
+        BASE1Header(std::string_view _source, std::string_view _destination, int _format);
 
         /// @brief Constructs from raw bytes (calls unpack internally).
         explicit BASE1Header(const std::vector<uint8_t>& header);
@@ -858,10 +856,10 @@ namespace TNG_NAMESPACE {
         /// @brief Updates the total message length field (bytes 3–4).
         void setLen(std::size_t len);
 
-        void destination(nonstd::string_view dest) override;
-        void source(nonstd::string_view src) override;
-        std::optional<nonstd::string_view> source() const override;
-        std::optional<nonstd::string_view> destination() const override;
+        void destination(std::string_view dest) override;
+        void source(std::string_view src) override;
+        std::optional<std::string_view> source() const override;
+        std::optional<std::string_view> destination() const override;
 
         /// @brief Swaps source and destination IDs (used when building responses).
         void swapDirection() override;
@@ -895,12 +893,12 @@ namespace TNG_NAMESPACE {
         static constexpr size_t LENGTH = 4 + 10 + 10 + 4 + 26 + 1 + 20 + 16 + 2;
 
         WLP_FOHeader();
-        WLP_FOHeader(nonstd::string_view record, nonstd::string_view mti,
-            int version, nonstd::string_view uuid,
-            nonstd::string_view reference, int payment);
-        WLP_FOHeader(nonstd::string_view record, nonstd::string_view mti,
-            int version, nonstd::string_view uuid,
-            nonstd::string_view reference, nonstd::string_view payment);
+        WLP_FOHeader(std::string_view record, std::string_view mti,
+            int version, std::string_view uuid,
+            std::string_view reference, int payment);
+        WLP_FOHeader(std::string_view record, std::string_view mti,
+            int version, std::string_view uuid,
+            std::string_view reference, std::string_view payment);
         explicit WLP_FOHeader(const std::vector<uint8_t>& header);
 
         /// @brief Encodes the header fields into EBCDIC and returns the byte sequence.
@@ -911,17 +909,17 @@ namespace TNG_NAMESPACE {
 
         void length(int len);
         int  length() const;
-        void sysId(nonstd::string_view s);
-        void record(nonstd::string_view s);
-        void mti(nonstd::string_view s);
+        void sysId(std::string_view s);
+        void record(std::string_view s);
+        void mti(std::string_view s);
         void creationTs();
-        void creationTs(nonstd::string_view s);
+        void creationTs(std::string_view s);
         void version(int v);
         int  version() const;
-        void uuid(nonstd::string_view s);
-        void reference(nonstd::string_view s);
+        void uuid(std::string_view s);
+        void reference(std::string_view s);
         void payment(size_t payment);
-        void payment(nonstd::string_view s);
+        void payment(std::string_view s);
         std::unique_ptr<ISOHeader> clone() const override;
     };
 
@@ -946,17 +944,3 @@ namespace TNG_NAMESPACE {
     using Message = ::TNG_NAMESPACE::ISOMessage;
 } // namespace iso8583
 
-// =============================================================================
-// Deprecated Aliase (Rückwärtskompatibilität – ein Release-Zyklus)
-// =============================================================================
-
-/// @deprecated Verwende `iso8583::OpaqueField`
-typedef ::TNG_NAMESPACE::OpaqueField ISOOpaqueField;
-/// @deprecated Verwende `iso8583::BinaryField`
-typedef ::TNG_NAMESPACE::BinaryField ISOBinaryField;
-/// @deprecated Verwende `iso8583::FastBinaryField`
-typedef ::TNG_NAMESPACE::FastBinaryField ISOFastBinaryField;
-/// @deprecated Verwende `iso8583::Bitmap`
-typedef ::TNG_NAMESPACE::Bitmap ISOBitmap;
-/// @deprecated Verwende `iso8583::CodeField`
-typedef ::TNG_NAMESPACE::CodeField ISOCodeField;

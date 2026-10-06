@@ -82,7 +82,6 @@ set(ISO8583_SOURCES
 )
 
 set(ISO8583_PRIVATE_HEADERS
-    src/_date.hh
     src/_logger.hh
     src/_padder.hh
     src/_parser.hh          # ISOBaseParser, ISOFieldParser<> – bewusst NICHT öffentlich
@@ -125,8 +124,6 @@ set(ISO8583_DETAIL_HEADERS
 
 set(ISO8583_INCLUDED_EXTERNAL_HEADERS
     include/iso8583/detail/extern/dynamic_bitset.hpp
-    include/iso8583/detail/extern/libpopcnt.hpp
-    include/iso8583/detail/extern/string_view.hpp
 )
 
 # -----------------------------------------------------------------------------

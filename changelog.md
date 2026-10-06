@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (0.10.0)
+
+### `[!](BREAKING)` Entfernt: deprecated Aliase; vendored `date.h`/`string-view-lite`/`libpopcnt`
+
+- **Entfernt:** `ISOOpaqueField`, `ISOBinaryField`, `ISOFastBinaryField`,
+  `ISOBitmap`, `ISOCodeField` sowie die Namespace-Aliase `ISOUtils` und
+  `ISOCodec` – stattdessen `OpaqueField`, …, `utils::`, `codec::`.
+- **Intern:** `nonstd::string_view` → `std::string_view` (die Signaturen bleiben
+  ABI-/quellkompatibel bei C++17+; `"…"_sv` → `"…"sv`); Zeitstempel über
+  `std::chrono` statt Hinnant-`date.h`; `dynamic_bitset` nutzt `std::popcount`
+  statt `libpopcnt`. Drei vendored Header (~11 kloc) entfallen.
+- **Doku:** `docs/changelog.md` bindet `changelog.md` per `{include}` ein
+  (kein manueller Spiegel mehr); `IDEA.md` entfernt.
+
 ## 0.9.1
 
 ### `[#](Fixed)` Längenprefix-Dekodierung: leeres Feld, Ziffernprüfung, BCD-F-Padding

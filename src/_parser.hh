@@ -14,7 +14,7 @@
 #include "_logger.hh"   // TNG_LOG_* für die Fail-closed-Abfragen (B1/B2/B6)
 
 //using namespace std::string_literals; // available since C++14
-using namespace nonstd::literals;
+using namespace std::literals;
 
 
 namespace TNG_NAMESPACE {
@@ -77,8 +77,8 @@ namespace TNG_NAMESPACE {
         // [Constructor]
         // \param d (description) of this un/parser
         // \param hdrSz (header length), defaults to zero
-        ISOBaseParser(nonstd::string_view d, std::size_t hdrSz = 0u)
-            : d_(nonstd::to_string(d)), hdr_sz_(hdrSz)
+        ISOBaseParser(std::string_view d, std::size_t hdrSz = 0u)
+            : d_(std::string(d)), hdr_sz_(hdrSz)
         {}
 
         // Length of header if applicable
@@ -151,14 +151,14 @@ namespace TNG_NAMESPACE {
             }
         }
 
-        nonstd::string_view field_description(short key) const {
+        std::string_view field_description(short key) const {
             try
             {
                 return l_.at(key)->description();
             }
             catch (const std::exception&)
             {
-                return "<missing>"_sv;
+                return "<missing>"sv;
             }
         }
 
@@ -175,7 +175,7 @@ namespace TNG_NAMESPACE {
         }
 
         // Returns the un/parser's description
-        nonstd::string_view description() const { 
+        std::string_view description() const { 
             return d_; 
         }
 
@@ -289,16 +289,16 @@ namespace TNG_NAMESPACE {
         {}
 
         // [Constructor]
-        ISOFieldParser(std::size_t l, nonstd::string_view d)
-            : de_l_(l), d_(nonstd::to_string(d))
+        ISOFieldParser(std::size_t l, std::string_view d)
+            : de_l_(l), d_(std::string(d))
         {}
 
         // [Constructor]
         template < typename U = T, typename std::enable_if_t<std::is_base_of_v<ISOBaseParser, U>, int> = 0 >
         ISOFieldParser(ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr nested,
-            nonstd::string_view composite_description)
+            std::string_view composite_description)
             : n_(std::move(nested)), c_(std::make_shared<U>(composite_description)) {
-            b_ = std::make_shared<ISOBinaryField>(0);
+            b_ = std::make_shared<BinaryField>(0);
         }
 
         template < typename U = T, typename std::enable_if_t<std::is_base_of_v<ISOBaseParser, U>, int> = 0 >
@@ -325,7 +325,7 @@ namespace TNG_NAMESPACE {
         }
 
         // Returns the DE un/parser's description
-        nonstd::string_view description() const override {
+        std::string_view description() const override {
             if (n_)
                 return n_->description();
             else
@@ -333,11 +333,11 @@ namespace TNG_NAMESPACE {
         }
         // Sets the DE un/parser's description
         // \param d (description) of DE
-        void description(const nonstd::string_view& d) override {
+        void description(const std::string_view& d) override {
             if (n_)
                 n_->description(d);
             else
-                d_ = nonstd::to_string(d);
+                d_ = std::string(d);
         }
 
         const ::TNG_NAMESPACE::ISOFieldParserType type() const override {
@@ -377,7 +377,7 @@ namespace TNG_NAMESPACE {
                 // n_ = äußerer ISOBinaryFieldParser (trägt Prefix-Encoding + Länge)
                 auto inner_bytes = c_->parse(c);
 
-                // Temporäres ISOBinaryField für n_ erstellen und mit den inneren
+                // Temporäres BinaryField für n_ erstellen und mit den inneren
                 // Bytes befüllen – n_->parse() fügt den korrekten Prefix hinzu.
                 auto wrapper = std::make_shared< ::TNG_NAMESPACE::BinaryField >(c->key());
                 wrapper->value(inner_bytes);
@@ -394,12 +394,12 @@ namespace TNG_NAMESPACE {
             }
             else if constexpr (std::is_same_v< T, std::string >) {
                 // FR-10a (0.8.0): Typ-Guard statt ungeprüftem Cast-Dereferenz.
-                auto opq = std::dynamic_pointer_cast< ISOOpaqueField >(c);
+                auto opq = std::dynamic_pointer_cast< OpaqueField >(c);
                 if (!opq)
                     throw std::runtime_error(
                         "[ISO8583] DE" + std::to_string(c ? static_cast<int>(c->key()) : -1) +
                         " (Feld " + d_ + "): Komponente ist kein OpaqueField (Parser erwartet Textwert)");
-                std::string data = nonstd::to_string((nonstd::string_view)opq->value());
+                std::string data = std::string((std::string_view)opq->value());
                 // [ISO8583] B2: Überdimensionierter Wert (Serialisierung zu groß).
                 // strict: positioniert verwerfen; nicht-strikt: Legacy (loggen +
                 // Feld auslassen) - ohne Abfrage würde der Wert still entsorgt,
@@ -813,7 +813,7 @@ namespace TNG_NAMESPACE {
 
         virtual ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr create_component(TNG_KEY_TYPE key) const override {
             if constexpr (std::is_same_v< T, std::nullptr_t >)
-                return std::make_shared< ISOOpaqueField >(key);
+                return std::make_shared< OpaqueField >(key);
             else if constexpr (std::is_same_v< T, ::TNG_NAMESPACE::UNUSED >) {
                 throw std::runtime_error(
                     (std::ostringstream()
@@ -885,12 +885,12 @@ namespace TNG_NAMESPACE {
         explicit AmountFieldParser()
             : ISOFieldParser< std::string, l, pe, e, p >() {}
 
-        explicit AmountFieldParser(std::size_t len, nonstd::string_view desc)
+        explicit AmountFieldParser(std::size_t len, std::string_view desc)
             : ISOFieldParser< std::string, l, pe, e, p >(len, desc) {}
 
         template < typename U = std::string, typename std::enable_if_t<std::is_base_of_v<ISOBaseParser, U>, int> = 0 >
         explicit AmountFieldParser(ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr nested,
-            nonstd::string_view composite_description)
+            std::string_view composite_description)
             : ISOFieldParser< std::string, l, pe, e, p >(std::move(nested), composite_description) {}
 
         const ISOFieldParserType type() const override { return ISOFieldParserType::AMOUNT; }

@@ -12,8 +12,6 @@
 #include "_utils.hh"
 // [tng/logger]
 #include "_logger.hh"
-// [tng/date]
-#include "_date.hh"
 
 namespace {
 // [ISO8583] 3.4 (PCI-Logging-Hygiene): Maskier-Wert fuer sensitive Felder
@@ -86,21 +84,21 @@ std::string TNG_NAMESPACE::ISOComponent<IntegerType, T>::readable_value() const 
 }
 
 template < typename IntegerType, typename T >
-void TNG_NAMESPACE::ISOComponent<IntegerType, T>::description(const nonstd::string_view& desc) {
+void TNG_NAMESPACE::ISOComponent<IntegerType, T>::description(const std::string_view& desc) {
     desc_ = desc;
 }
 
 template < typename IntegerType, typename T >
-const nonstd::string_view TNG_NAMESPACE::ISOComponent<IntegerType, T>::description() const {
+const std::string_view TNG_NAMESPACE::ISOComponent<IntegerType, T>::description() const {
     return desc_;
 }
 template < typename IntegerType, typename T >
-void TNG_NAMESPACE::ISOComponent<IntegerType, T>::explanation(const nonstd::string_view& expl) {
+void TNG_NAMESPACE::ISOComponent<IntegerType, T>::explanation(const std::string_view& expl) {
     expl_ = expl;
 }
 
 template < typename IntegerType, typename T >
-const nonstd::string_view TNG_NAMESPACE::ISOComponent<IntegerType, T>::explanation() const {
+const std::string_view TNG_NAMESPACE::ISOComponent<IntegerType, T>::explanation() const {
     return expl_;
 }
 
@@ -478,22 +476,22 @@ json TNG_NAMESPACE::AmountField::to_json() const {
 TNG_NAMESPACE::ISOMessage::ISOMessage()
     : ISOComponent(ROOT_KEY), hf_(-1), recalc_(true)
 {
-    description("N/A"_sv);
+    description("N/A"sv);
 }
 TNG_NAMESPACE::ISOMessage::ISOMessage(const ISO_MAP::key_type& key)
     : ISOComponent(key), hf_(-1), recalc_(true)
 {
-    description("N/A"_sv);
+    description("N/A"sv);
 }
-TNG_NAMESPACE::ISOMessage::ISOMessage(nonstd::string_view mti)
+TNG_NAMESPACE::ISOMessage::ISOMessage(std::string_view mti)
     : ISOComponent(ROOT_KEY), hf_(-1), recalc_(true)
 {
-    description("N/A"_sv);
+    description("N/A"sv);
     if (isInner()) {
         TNG_LOG_ERROR("[ISOMessage::()] Cannot set MTI on inner message");
         return;
     }
-    set(std::make_shared<OpaqueField>(MTI_KEY, nonstd::to_string(mti)));
+    set(std::make_shared<OpaqueField>(MTI_KEY, std::string(mti)));
 }
 
 // Composites are just container and do not contain any usefull values.
@@ -514,8 +512,8 @@ void TNG_NAMESPACE::ISOMessage::dump(std::ostream& os, bool nested) const {
     if (!is_composite()) return;
 
     const TNG_KEY_TYPE      snap_key  = k_;
-    const nonstd::string_view snap_desc = desc_;
-    const nonstd::string_view snap_expl = expl_;
+    const std::string_view snap_desc = desc_;
+    const std::string_view snap_expl = expl_;
     std::vector<ISO_MAP::mapped_type> snap_children;
     {
         std::lock_guard<std::recursive_mutex> lock(d_lock_);
@@ -706,7 +704,7 @@ static ISO_MAP::mapped_type make_component_from_string(TNG_KEY_TYPE key, std::st
     }
 
     // Kein Parser oder unbekannter Typ → immer OpaqueField
-    auto f = std::make_shared<ISOOpaqueField>(key);
+    auto f = std::make_shared<OpaqueField>(key);
     f->value(std::move(data));
     return f;
 }
@@ -1006,7 +1004,7 @@ bool TNG_NAMESPACE::ISOMessage::hasMTI() {
     return (has_locked(MTI_KEY));
 }
 
-nonstd::string_view TNG_NAMESPACE::ISOMessage::mti() {
+std::string_view TNG_NAMESPACE::ISOMessage::mti() {
     std::lock_guard<std::recursive_mutex> lock(d_lock_);
     if (isInner())
         throw std::logic_error("MTI cannot be in inner data elements");
@@ -1111,9 +1109,9 @@ bool TNG_NAMESPACE::ISOMessage::isRetransmission() {
 
 static std::string getFormattedTimestamp() {
     auto tp = std::chrono::system_clock::now();
-    auto dp = date::floor<date::days>(tp);
-    date::year_month_day ymd{ dp };
-    auto time = date::make_time(tp - dp);
+    auto dp = std::chrono::floor<std::chrono::days>(tp);
+    std::chrono::year_month_day ymd{ dp };
+    std::chrono::hh_mm_ss<std::chrono::microseconds> time{ std::chrono::floor<std::chrono::microseconds>(tp - dp) };
     // Subsekunden als 6-stellige Mikrosekunden (WLP-FO erwartet
     // "YYYY.MM.DD.HH.MM.SS.uuuuuu"): Das Roh-Zeitperiod des Clocks
     // (z.B. 100 ns auf Windows/MSVC) liefert eine variable Ziffernzahl,
@@ -1121,7 +1119,7 @@ static std::string getFormattedTimestamp() {
     // flaky einen "Timestamp format error" werfen wuerde (10 % pro Sekunde
     // auf MSVC). Durch die Konvertierung auf Mikrosekunden ist das Format
     // deterministisch 26 Zeichen lang auf allen Plattformen.
-    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(time.subseconds());
+    const auto us = time.subseconds();
     std::stringstream ss;
     ss << std::setfill('0')
         << std::setw(4) << int(ymd.year()) << '.'
@@ -1135,7 +1133,7 @@ static std::string getFormattedTimestamp() {
 }
 
 static void setBcdField(std::vector<uint8_t>& header, std::size_t field_offset,
-    std::size_t field_bytes, nonstd::string_view sv)
+    std::size_t field_bytes, std::string_view sv)
 {
     if (sv.size() > field_bytes * 2)
         throw std::invalid_argument("Maximal " + std::to_string(field_bytes * 2) + " Ziffern erlaubt!");
@@ -1176,9 +1174,9 @@ namespace {
     }
 }
 
-TNG_NAMESPACE::BASE1Header::BASE1Header() : BASE1Header("000000"_sv, "000000"_sv) {
+TNG_NAMESPACE::BASE1Header::BASE1Header() : BASE1Header("000000"sv, "000000"sv) {
 }
-TNG_NAMESPACE::BASE1Header::BASE1Header(nonstd::string_view _source, nonstd::string_view _destination)
+TNG_NAMESPACE::BASE1Header::BASE1Header(std::string_view _source, std::string_view _destination)
     : BaseHeader(std::vector<uint8_t>(LENGTH, 0))
 {
     header[0] = LENGTH; // hlen
@@ -1187,7 +1185,7 @@ TNG_NAMESPACE::BASE1Header::BASE1Header(nonstd::string_view _source, nonstd::str
     source(_source);
     destination(_destination);
 }
-TNG_NAMESPACE::BASE1Header::BASE1Header(nonstd::string_view _source, nonstd::string_view _destination, int _format)
+TNG_NAMESPACE::BASE1Header::BASE1Header(std::string_view _source, std::string_view _destination, int _format)
     : BaseHeader(std::vector<uint8_t>(LENGTH, 0))
 {
     header[0] = LENGTH; // hlen
@@ -1227,25 +1225,25 @@ void TNG_NAMESPACE::BASE1Header::setLen(std::size_t len) {
     header[4] = static_cast<uint8_t>(len);
 }
 
-void TNG_NAMESPACE::BASE1Header::destination(nonstd::string_view dest) {
+void TNG_NAMESPACE::BASE1Header::destination(std::string_view dest) {
     base1_ensure(header);
     setBcdField(header, 5, 3, dest);
 }
-void TNG_NAMESPACE::BASE1Header::source(nonstd::string_view src) {
+void TNG_NAMESPACE::BASE1Header::source(std::string_view src) {
     base1_ensure(header);
     setBcdField(header, 8, 3, src);
 }
-std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::source() const {
+std::optional<std::string_view> TNG_NAMESPACE::BASE1Header::source() const {
     base1_ensure(header);
     src_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 8, 6);
     if (src_cache_.empty()) return std::nullopt;
-    return nonstd::string_view(src_cache_);
+    return std::string_view(src_cache_);
 }
-std::optional<nonstd::string_view> TNG_NAMESPACE::BASE1Header::destination() const {
+std::optional<std::string_view> TNG_NAMESPACE::BASE1Header::destination() const {
     base1_ensure(header);
     dst_cache_ = ::TNG_NAMESPACE::codec::as<std::string, ::TNG_NAMESPACE::codec::Encoder::BCD>(header, 5, 6);
     if (dst_cache_.empty()) return std::nullopt;
-    return nonstd::string_view(dst_cache_);
+    return std::string_view(dst_cache_);
 }
 void TNG_NAMESPACE::BASE1Header::swapDirection() {
     if (header.size() >= LENGTH) {
@@ -1289,16 +1287,16 @@ TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader()
 {}
 
 TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(
-    nonstd::string_view _record,
-    nonstd::string_view _mti,
+    std::string_view _record,
+    std::string_view _mti,
     int _version,
-    nonstd::string_view _uuid,
-    nonstd::string_view _reference,
+    std::string_view _uuid,
+    std::string_view _reference,
     int _payment
 ) : BaseHeader(std::vector<uint8_t>(LENGTH, 0))
 {
     length(LENGTH);
-    sysId("WLP-FO"_sv);
+    sysId("WLP-FO"sv);
     record(_record);
     mti(_mti);
     creationTs();
@@ -1308,16 +1306,16 @@ TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(
     payment(_payment);
 }
 TNG_NAMESPACE::WLP_FOHeader::WLP_FOHeader(
-    nonstd::string_view _record,
-    nonstd::string_view _mti,
+    std::string_view _record,
+    std::string_view _mti,
     int _version,
-    nonstd::string_view _uuid,
-    nonstd::string_view _reference,
-    nonstd::string_view _payment
+    std::string_view _uuid,
+    std::string_view _reference,
+    std::string_view _payment
 ) : BaseHeader(std::vector<uint8_t>(LENGTH, 0))
 {
     length(LENGTH);
-    sysId("WLP-FO"_sv);
+    sysId("WLP-FO"sv);
     record(_record);
     mti(_mti);
     creationTs();
@@ -1380,7 +1378,7 @@ int TNG_NAMESPACE::WLP_FOHeader::length() const {
     return (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
 }
 
-void TNG_NAMESPACE::WLP_FOHeader::sysId(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::sysId(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() > 10) throw std::invalid_argument("sysId too long");
     std::string str(s);
@@ -1388,7 +1386,7 @@ void TNG_NAMESPACE::WLP_FOHeader::sysId(nonstd::string_view s) {
     std::copy(str.begin(), str.end(), header.begin() + 4);
 }
 
-void TNG_NAMESPACE::WLP_FOHeader::record(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::record(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() > 10) throw std::invalid_argument("record too long");
     std::string str(s);
@@ -1396,7 +1394,7 @@ void TNG_NAMESPACE::WLP_FOHeader::record(nonstd::string_view s) {
     std::copy(str.begin(), str.end(), header.begin() + 14);
 }
 
-void TNG_NAMESPACE::WLP_FOHeader::mti(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::mti(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() != 4) throw std::invalid_argument("mti must be 4 chars");
     std::copy(s.begin(), s.end(), header.begin() + 24);
@@ -1408,7 +1406,7 @@ void TNG_NAMESPACE::WLP_FOHeader::creationTs() {
     if (ts.size() != 26) throw std::runtime_error("Timestamp format error");
     std::copy(ts.begin(), ts.end(), header.begin() + 28);
 }
-void TNG_NAMESPACE::WLP_FOHeader::creationTs(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::creationTs(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() != 26) throw std::invalid_argument("creationTs must be 26 chars");
     std::copy(s.begin(), s.end(), header.begin() + 28);
@@ -1425,7 +1423,7 @@ int TNG_NAMESPACE::WLP_FOHeader::version() const {
     return header[54];
 }
 
-void TNG_NAMESPACE::WLP_FOHeader::uuid(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::uuid(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() > 20) throw std::invalid_argument("uuid too long");
     std::string str(s);
@@ -1433,7 +1431,7 @@ void TNG_NAMESPACE::WLP_FOHeader::uuid(nonstd::string_view s) {
     std::copy(str.begin(), str.end(), header.begin() + 55);
 }
 
-void TNG_NAMESPACE::WLP_FOHeader::reference(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::reference(std::string_view s) {
     wlp_fo_ensure(header);
     if (s.size() > 16) throw std::invalid_argument("reference too long");
     std::string str(s);
@@ -1448,7 +1446,7 @@ void TNG_NAMESPACE::WLP_FOHeader::payment(size_t payment) {
     if (p.size() != 2) throw std::invalid_argument("payment must be 2 chars");
     std::copy(p.begin(), p.end(), header.begin() + 91);
 }
-void TNG_NAMESPACE::WLP_FOHeader::payment(nonstd::string_view s) {
+void TNG_NAMESPACE::WLP_FOHeader::payment(std::string_view s) {
     wlp_fo_ensure(header);
     std::string p(s);
     if (2 > p.size()) p.insert(0, 2 - p.size(), '0');

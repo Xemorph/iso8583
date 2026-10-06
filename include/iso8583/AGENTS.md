@@ -112,10 +112,10 @@ direkt eingebunden werden.
 Alle Typen erben von `ISOComponentPtrBase` und werden immer in
 `std::shared_ptr` gehalten.
 
-> Die alten Namen `ISOOpaqueField`, `ISOBinaryField`, `ISOBitmap`,
-> `ISOCodeField`, `ISOFastBinaryField` und `ISOMessage` sind deprecated
-> Aliase (ein Release-Zyklus) — neuen Code immer mit den neuen Namen
-> schreiben.
+> Die alten Aliase `ISOOpaqueField`, `ISOBinaryField`, `ISOBitmap`,
+> `ISOCodeField`, `ISOFastBinaryField` sowie die Namespace-Aliase `ISOUtils`/
+> `ISOCodec` wurden entfernt — stattdessen die neuen Namen bzw. `utils::`/
+> `codec::` verwenden (`Message` statt Klassenname `ISOMessage`).
 
 ---
 
@@ -879,7 +879,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | `detail/`-Header direkt includieren | `<iso8583/iso8583.h>` verwenden |
 | `msg->unparse()` ohne Parser | Zuerst `msg->parser(parser)` aufrufen |
 | `int` oder `int32_t` als DE-Keys | `TNG_KEY_TYPE` (`int16_t`) verwenden |
-| Deprecated Namen wie `ISOOpaqueField`/`ISOMessage` in neuem Code | `OpaqueField`/`Message` (Namespace `iso8583::`) verwenden |
+| Entfernte Namen wie `ISOOpaqueField` (bzw. `ISOMessage` in neuem Code) | `OpaqueField`/`Message` (Namespace `iso8583::`) verwenden |
 | `setQuillLogger()` mit einem DLL-Build | `QuillBridge` + `setLogger()` verwenden |
 | Ein `BITMAP`-Feld manuell setzen | Bitmaps werden automatisch berechnet |
 | Ein `NESTED`-Feld mit einer simplen Zeichenkette setzen | Punkt-Notation: `msg->set("3.1", "00")` |

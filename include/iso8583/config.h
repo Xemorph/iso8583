@@ -140,9 +140,7 @@ namespace TNG_NAMESPACE {
 // ── Third-party: ─────────────────────────────────────────────────────────────
 
 // [dynamic_bitset]
-#include "detail/extern/libpopcnt.hpp"
-#define DYNAMIC_BITSET_CAN_USE_LIBPOPCNT true
-#define DYNAMIC_BITSET_NO_STD_BITOPS true
+#define DYNAMIC_BITSET_NO_LIBPOPCNT
 #define DYNAMIC_BITSET_NO_NAMESPACE
 #include "detail/extern/dynamic_bitset.hpp"
 

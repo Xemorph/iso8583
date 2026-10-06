@@ -142,7 +142,7 @@ inline void encode(const uint8_t* data, std::size_t size) {
             const char c = (size_t(i) < size) ? static_cast<char>(data[i]) : '0';
             mti.push_back((c >= '0' && c <= '9') ? c : '0');
         }
-        auto msg = std::make_shared<iso8583::Message>(nonstd::string_view(mti));
+        auto msg = std::make_shared<iso8583::Message>(std::string_view(mti));
         msg->parser(p);
         msg->set(2, take(4, 10));   // OPAQUE (llchar) — beliebige Zeichen ok
         msg->set(3, std::string("000000"));

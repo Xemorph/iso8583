@@ -49,6 +49,6 @@ cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 
 ## Process
 - Commits: `<prefix>(<kind>) summary` with prefixes `[+](Added)`, `[-](Removed)`, `[#](Fixed)`, `[~](FIX|Updated|Changed)`, `[!](BREAKING)`, `[i](Info)`; one logical change per commit.
-- Version lives in 4 places (`CMakeLists.txt`, `include/iso8583/config.h` `TNG_CORE_VERSION`, root `vcpkg.json`, `vcpkg-port/vcpkg.json`); `changelog.md` and `docs/changelog.md` must stay identical.
+- Version lives in 4 places (`CMakeLists.txt`, `include/iso8583/config.h` `TNG_CORE_VERSION`, root `vcpkg.json`, `vcpkg-port/vcpkg.json`); `docs/changelog.md` just `{include}`s `changelog.md` (edit only the root file).
 - **Release only after a green Docs run on `main`** (procedure: `.agents/process-release.md` §14.2). Releases are user-initiated.
 - When you change behavior described in `.agents/*` or `include/iso8583/AGENTS.md`, update the affected file in the same commit.

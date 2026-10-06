@@ -571,25 +571,25 @@ TEST_CASE("ISOUtils::getOrThrow - returns value when field present", "[utils][ge
     msg->set(make_opaque(2, "4111111111111111"));
 
     std::string pan;
-    REQUIRE_NOTHROW(pan = ISOUtils::getOrThrow< OpaqueField >(*msg, 2));
+    REQUIRE_NOTHROW(pan = utils::getOrThrow< OpaqueField >(*msg, 2));
     CHECK(pan == "4111111111111111");
 }
 
 TEST_CASE("ISOUtils::getOrThrow - throws std::out_of_range for missing field", "[utils][getOrThrow]") {
     auto msg = std::make_shared< Message >();
-    REQUIRE_THROWS_AS(ISOUtils::getOrThrow< OpaqueField >(*msg, 2), std::out_of_range);
+    REQUIRE_THROWS_AS(utils::getOrThrow< OpaqueField >(*msg, 2), std::out_of_range);
 }
 
 TEST_CASE("ISOUtils::getOrThrow - throws for wrong type", "[utils][getOrThrow]") {
     auto msg = std::make_shared< Message >();
     msg->set(make_opaque(2, "text"));
-    REQUIRE_THROWS_AS(ISOUtils::getOrThrow< BinaryField >(*msg, 2), std::out_of_range);
+    REQUIRE_THROWS_AS(utils::getOrThrow< BinaryField >(*msg, 2), std::out_of_range);
 }
 
 TEST_CASE("ISOUtils::getOrThrow - exception message contains DE key", "[utils][getOrThrow]") {
     auto msg = std::make_shared< Message >();
     try {
-        ISOUtils::getOrThrow< OpaqueField >(*msg, 42);
+        utils::getOrThrow< OpaqueField >(*msg, 42);
         FAIL("Expected exception");
     }
     catch (const std::out_of_range& e) {
@@ -601,20 +601,20 @@ TEST_CASE("ISOUtils::getOrDefault - returns value when field present", "[utils][
     auto msg = std::make_shared< Message >();
     msg->set(make_opaque(11, "000042"));
 
-    auto stan = ISOUtils::getOrDefault< OpaqueField >(*msg, 11, "000000");
+    auto stan = utils::getOrDefault< OpaqueField >(*msg, 11, "000000");
     CHECK(stan == "000042");
 }
 
 TEST_CASE("ISOUtils::getOrDefault - returns default when field missing", "[utils][getOrDefault]") {
     auto msg = std::make_shared< Message >();
-    auto stan = ISOUtils::getOrDefault< OpaqueField >(*msg, 11, "000000");
+    auto stan = utils::getOrDefault< OpaqueField >(*msg, 11, "000000");
     CHECK(stan == "000000");
 }
 
 TEST_CASE("ISOUtils::getOrDefault - returns default for wrong type", "[utils][getOrDefault]") {
     auto msg = std::make_shared< Message >();
     msg->set(make_opaque(11, "text"));
-    auto val = ISOUtils::getOrDefault< BinaryField >(*msg, 11, std::vector<uint8_t>{});
+    auto val = utils::getOrDefault< BinaryField >(*msg, 11, std::vector<uint8_t>{});
     CHECK(val.empty());
 }
 
@@ -623,7 +623,7 @@ TEST_CASE("ISOUtils::ifPresent - calls callback when field present", "[utils][if
     msg->set(make_opaque(2, "4111111111111111"));
 
     std::string captured;
-    bool found = ISOUtils::ifPresent< OpaqueField >(*msg, 2,
+    bool found = utils::ifPresent< OpaqueField >(*msg, 2,
         [&](const std::string& pan) { captured = pan; });
 
     CHECK(found == true);
@@ -634,7 +634,7 @@ TEST_CASE("ISOUtils::ifPresent - returns false and skips callback when missing",
     auto msg = std::make_shared< Message >();
 
     bool called = false;
-    bool found = ISOUtils::ifPresent< OpaqueField >(*msg, 2,
+    bool found = utils::ifPresent< OpaqueField >(*msg, 2,
         [&](const std::string&) { called = true; });
 
     CHECK(found == false);
@@ -649,9 +649,9 @@ TEST_CASE("ISOUtils::ifPresent - lambda can mutate outer state", "[utils][ifPres
     int64_t amount = 0;
     std::string currency;
 
-    ISOUtils::ifPresent< OpaqueField >(*msg, 4,
+    utils::ifPresent< OpaqueField >(*msg, 4,
         [&](const std::string& v) { amount = std::stoll(v); });
-    ISOUtils::ifPresent< OpaqueField >(*msg, 49,
+    utils::ifPresent< OpaqueField >(*msg, 49,
         [&](const std::string& v) { currency = v; });
 
     CHECK(amount == 10000);

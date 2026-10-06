@@ -39,8 +39,8 @@ vendored inside the tree — see §14.3; their license headers are kept.)
 | Path | Purpose |
 |---|---|
 | `include/iso8583/` | **Public headers.** `iso8583.h` (master), `ISOMessage.hh`, `ISOSpec.hh`, `ISOLog.hh`, `ISOUtils.hh`, `POSDataCode.hh`, `Currency.hh`, `ISOParser.hh` (expert/custom-parser API), `_codec.hh` (codec enums/tables), `config.h` (namespace/visibility/key-type), `AGENTS.md` (primary API reference). |
-| `include/iso8583/detail/` | Implementation-support headers (`_components.hh` = full `Message`/`ISOComponent` definitions, `_interfaces.hh`, `_codec_impl.hh`, `_currency_table.hh` (generated), `extern/` = bundled `dynamic_bitset`, `libpopcnt`, `string_view`). **Never include `detail/` from user code.** |
-| `src/` | Private implementation. Underscore-prefixed headers (`_parser.hh`, `_spec.hh`, `_tlv.hh`, `_preprocessor.hh`, `_sourcemap.hh`, `_padder.hh`, `_utils.hh`, `_logger.hh`, `_date.hh`, `_tlv_policy.hh`) are **deliberately private**; `fmt_types.hh` (IFE_* aliases) is private. `config.cc` implements version/namespace plumbing. |
+| `include/iso8583/detail/` | Implementation-support headers (`_components.hh` = full `Message`/`ISOComponent` definitions, `_interfaces.hh`, `_codec_impl.hh`, `_currency_table.hh` (generated), `extern/` = bundled `dynamic_bitset`). **Never include `detail/` from user code.** |
+| `src/` | Private implementation. Underscore-prefixed headers (`_parser.hh`, `_spec.hh`, `_tlv.hh`, `_preprocessor.hh`, `_sourcemap.hh`, `_padder.hh`, `_utils.hh`, `_logger.hh`, `_tlv_policy.hh`) are **deliberately private**; `fmt_types.hh` (IFE_* aliases) is private. `config.cc` implements version/namespace plumbing. |
 | `tests/` | Catch2 unit tests (registration in `tests/CMakeLists.txt` — see §7). |
 | `examples/tcp_gateway/` | Opt-in example: minimal TCP gateway decoding one ISO-8583 message per connection (ASCII + EBCDIC/IBM-1047 specs, Python test client `send_test.py`). Built only with `ISO8583_BUILD_EXAMPLES=ON`. Manual test: `python send_test.py [host] [port] [ascii\|ebcdic]` (see §12.5). |
 | `docs/` | Sphinx + Doxygen + Breathe (+ Furo/MyST) documentation; `internals/yaml_format.md`, `internals/encoding.md`; `Doxyfile`, `conf.py`, `requirements.txt`, `build_docs.bat`. Built output in `docs/_build/`, Doxygen XML in `docs/_doxygen/` (both git-ignored). |
@@ -57,8 +57,7 @@ vendored inside the tree — see §14.3; their license headers are kept.)
 | `.cache/` | Local CMake-LSP (neocmakelsp) cache — git-ignored, do not edit. |
 | `scratch/` | Local-only scratch area: diagnostic probes, build logs, hand-off notes, one-off scripts (git-ignored, disposable, never committed). |
 | `binaries/` | Local-only probe binaries (`.exe`/`.obj`/`.pdb`/`.ilk`) moved out of the repo root (git-ignored). |
-| `changelog.md` | Change history (tracked; `docs/changelog.md` is a tracked mirror — **update both**, see §14.2). |
-| `IDEA.md` | One-liner: "C++20 library to parse ISO 8583 messages". |
+| `changelog.md` | Change history (tracked; `docs/changelog.md` just `{include}`s it — edit only the root file, see §14.2). |
 
 **Version strings** appear in four places and must be bumped together on
 every release (procedure: §14.2):

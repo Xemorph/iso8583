@@ -94,7 +94,7 @@ namespace TNG_NAMESPACE::tlv_detail {
         std::size_t se_num, const std::vector<uint8_t>& buf,
         std::size_t data_offset, std::size_t data_len,
         std::size_t wire_offset, std::size_t wire_len,
-        const nonstd::string_view& description,
+        const std::string_view& description,
         bool sensitive,
         const TlvChildInfo* child,
         bool strict)

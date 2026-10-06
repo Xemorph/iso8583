@@ -15,8 +15,8 @@
 using namespace TNG_NAMESPACE;
 
 TEST_CASE("WLP_FOHeader - pack()/unpack() Roundtrip", "[header][wlp_fo]") {
-    WLP_FOHeader hdr("REC0000001"_sv, "0100"_sv, 1, "UUID1234567890123456"_sv,
-        "REF0000000000000"_sv, 42);
+    WLP_FOHeader hdr("REC0000001"sv, "0100"sv, 1, "UUID1234567890123456"sv,
+        "REF0000000000000"sv, 42);
 
     const auto packed = hdr.pack();
     REQUIRE_FALSE(packed.empty());
@@ -37,8 +37,8 @@ TEST_CASE("WLP_FOHeader - pack()/unpack() Roundtrip", "[header][wlp_fo]") {
 
 TEST_CASE("WLP_FOHeader - pack() returns EBCDIC-encoded bytes", "[header][wlp_fo]") {
     // "0100" ist im MTI-Feld enthalten - ASCII '0'=0x30, EBCDIC '0'=0xF0.
-    WLP_FOHeader hdr("REC0000001"_sv, "0100"_sv, 1, "UUID1234567890123456"_sv,
-        "REF0000000000000"_sv, 42);
+    WLP_FOHeader hdr("REC0000001"sv, "0100"sv, 1, "UUID1234567890123456"sv,
+        "REF0000000000000"sv, 42);
 
     const auto packed = hdr.pack();
     // Byte 0x30 (ASCII '0') darf in einem EBCDIC-kodierten Puffer nicht mehr
@@ -56,8 +56,8 @@ TEST_CASE("WLP_FOHeader - default construction and length()/version()", "[header
 }
 
 TEST_CASE("WLP_FOHeader - clone() returns an independent copy", "[header][wlp_fo]") {
-    WLP_FOHeader hdr("REC0000001"_sv, "0200"_sv, 2, "UUID1234567890123456"_sv,
-        "REF0000000000000"_sv, 42);
+    WLP_FOHeader hdr("REC0000001"sv, "0200"sv, 2, "UUID1234567890123456"sv,
+        "REF0000000000000"sv, 42);
 
     auto clone = hdr.clone();
     REQUIRE(clone != nullptr);

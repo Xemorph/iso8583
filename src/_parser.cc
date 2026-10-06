@@ -184,10 +184,10 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
             auto de_bytes = ptr->parse(de_comp);
             if (de_bytes.empty() && ptr->type() != ISOFieldParserType::REMAINING)
                 TNG_LOG_WARN("[ISOBaseParser::parse] DE{:03d} '{}' lieferte leere Bytes",
-                    i, nonstd::to_string(ptr->description()));
+                    i, std::string(ptr->description()));
 
             TNG_LOG_DEBUG("[ISOBaseParser::parse] DE{:03d} '{}' → {} bytes",
-                i, nonstd::to_string(ptr->description()), de_bytes.size());
+                i, std::string(ptr->description()), de_bytes.size());
 
             out.insert(out.end(), de_bytes.begin(), de_bytes.end());
             ++i;
@@ -390,7 +390,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         if (bmp.size() == 0 || bmp[i])
             if (ptr->type() != ::TNG_NAMESPACE::ISOFieldParserType::UNUSED) {
                 TNG_LOG_DEBUG("[ISOBaseParser] DE{:03d} '{}' offset={} use_count={} buf_size={}",
-                    i, nonstd::to_string(ptr->description()),
+                    i, std::string(ptr->description()),
                     base_offset + consumed, ptr.use_count(), b.size());
 
                 auto de = ptr->create_component(i);
@@ -496,7 +496,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparseBitmapContainer(
         }
 
         TNG_LOG_DEBUG("[ISOBaseParser] Bit{:03d} '{}' offset={} buf_size={}",
-            bit, nonstd::to_string(ptr->description()), base_offset + consumed, b.size());
+            bit, std::string(ptr->description()), base_offset + consumed, b.size());
 
         const auto key = static_cast<TNG_KEY_TYPE>(bit);
         auto de = ptr->create_component(key);

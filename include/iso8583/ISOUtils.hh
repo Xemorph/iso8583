@@ -201,6 +201,3 @@ namespace TNG_NAMESPACE {
         }
 	}
 }
-
-/// @deprecated Verwende iso8583::utils:: statt ISOUtils::
-namespace ISOUtils = ::TNG_NAMESPACE::utils;

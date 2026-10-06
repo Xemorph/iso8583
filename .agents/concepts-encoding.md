@@ -26,9 +26,10 @@ All field components derive from `ISOComponentPtrBase` (abstract) /
 | `iso8583::Message` | `ISO_MAP` (see below) | composite/nested sub-message |
 | `iso8583::ISOTaggedField` | — | decoded TLV SE (tag + referenced field) |
 
-> Old names `ISOOpaqueField`, `ISOBinaryField`, `ISOBitmap`, `ISOCodeField`,
-> `ISOFastBinaryField`, `ISOMessage` are **deprecated aliases** — write new
-> code with the new names (`OpaqueField`, `Message`, …).
+> The old `ISOOpaqueField`/`ISOBinaryField`/`ISOBitmap`/`ISOCodeField`/
+> `ISOFastBinaryField` aliases and the `ISOUtils`/`ISOCodec` namespace aliases
+> were removed in 0.10.0 — use `OpaqueField`, `utils::`, `codec::`, … (`Message`
+> is preferred over the class name `ISOMessage`).
 
 **`ISO_MAP` is fixed, not user-selectable.** It is a typedef
 (`include/iso8583/detail/_components.hh`):

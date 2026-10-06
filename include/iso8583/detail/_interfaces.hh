@@ -7,10 +7,9 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <optional>
 #include <cstdint>
-// [nonstd]
-#include "extern/string_view.hpp"
 // [nlohmann/json]
 #include <nlohmann/json.hpp>
 
@@ -74,16 +73,16 @@ namespace TNG_NAMESPACE {
 
         /// @brief Sets the human-readable description (field name from the spec).
         /// @param desc E.g. `"Primary Account Number"`.
-        virtual void description(const nonstd::string_view& desc) = 0;
+        virtual void description(const std::string_view& desc) = 0;
 
         /// @brief Returns the field description set by the parser or the user.
-        virtual const nonstd::string_view description() const = 0;
+        virtual const std::string_view description() const = 0;
 
         /// @brief Sets an optional explanation string (e.g. decoded meaning of a code).
-        virtual void explanation(const nonstd::string_view& expl) = 0;
+        virtual void explanation(const std::string_view& expl) = 0;
 
         /// @brief Returns the optional explanation string.
-        virtual const nonstd::string_view explanation() const = 0;
+        virtual const std::string_view explanation() const = 0;
 
         /// @brief Returns `true` if this component is a composite (ISOMessage).
         ///
@@ -350,10 +349,10 @@ namespace TNG_NAMESPACE {
         virtual ~ISOFieldParserPtrBase() = default;
 
         /// @brief Returns the human-readable name of the data element (DE).
-        virtual nonstd::string_view description() const = 0;
+        virtual std::string_view description() const = 0;
 
         /// @brief Sets the human-readable name of the DE.
-        virtual void description(const nonstd::string_view&) = 0;
+        virtual void description(const std::string_view&) = 0;
 
 
         // -------------------------
@@ -428,16 +427,16 @@ namespace TNG_NAMESPACE {
         virtual std::size_t unpack(const std::vector<uint8_t>& b) = 0;
 
         /// @brief Sets the destination routing address.
-        virtual void destination(const nonstd::string_view dst) = 0;
+        virtual void destination(const std::string_view dst) = 0;
 
         /// @brief Returns the destination routing address, if present.
-        virtual std::optional<nonstd::string_view> destination() const = 0;
+        virtual std::optional<std::string_view> destination() const = 0;
 
         /// @brief Sets the source routing address.
-        virtual void source(const nonstd::string_view src) = 0;
+        virtual void source(const std::string_view src) = 0;
 
         /// @brief Returns the source routing address, if present.
-        virtual std::optional<nonstd::string_view> source() const = 0;
+        virtual std::optional<std::string_view> source() const = 0;
 
         /// @brief Returns the size of the header in bytes.
         virtual std::size_t size() const = 0;

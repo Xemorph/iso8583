@@ -322,6 +322,3 @@ namespace TNG_NAMESPACE::codec {
 
 // Implementierungen (werden in _codec.cc explizit instanziiert)
 #include "detail/_codec_impl.hh"
-
-/// @deprecated Verwende iso8583::codec:: statt ISOCodec::
-namespace ISOCodec = ::TNG_NAMESPACE::codec;

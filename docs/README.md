@@ -37,7 +37,7 @@ docs/
 ├── index.rst                 ← Inhaltsverzeichnis
 ├── quickstart.md             ← Einstieg (Installation & Grundgebrauch)
 ├── agents.md                 ← KI-Agenten-Referenz (bindet include/iso8583/AGENTS.md ein)
-├── changelog.md              ← Änderungsprotokoll (spiegelt CHANGELOG.md im Repo-Root)
+├── changelog.md              ← Änderungsprotokoll (bindet changelog.md im Repo-Root ein)
 ├── api/
 │   ├── isomessage.rst        ← ISOMessage, Feldtypen, ISOUtils
 │   ├── isospec.rst           ← YAML-Spec-Loader (SpecDecoder)

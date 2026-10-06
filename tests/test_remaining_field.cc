@@ -63,7 +63,7 @@ TEST_CASE("IFE_REMAINING - reads all remaining bytes", "[remaining][direct]") {
 TEST_CASE("IF_REMAINING - empty buffer returns 0 (no crash)", "[remaining][direct]") {
     auto buf = B({ 0xF1, 0xF2 });
     IF_REMAINING parser(0, "Optional Trailing");
-    auto component = std::make_shared<ISOOpaqueField>(15);
+    auto component = std::make_shared<OpaqueField>(15);
 
     // Offset = Buffer-Ende -> nichts zu lesen
     REQUIRE_NOTHROW(parser.unparse(component, buf, 2));
@@ -75,7 +75,7 @@ TEST_CASE("IF_REMAINING - empty buffer returns 0 (no crash)", "[remaining][direc
 TEST_CASE("IF_REMAINING - full buffer (no preceding field)", "[remaining][direct]") {
     auto buf = B({ 0xC1, 0xC2, 0xC3, 0xC4, 0xC5 });
     IF_REMAINING parser(0, "All Bytes");
-    auto component = std::make_shared<ISOOpaqueField>(1);
+    auto component = std::make_shared<OpaqueField>(1);
 
     std::size_t consumed = parser.unparse(component, buf, 0);
     CHECK(consumed == 5);

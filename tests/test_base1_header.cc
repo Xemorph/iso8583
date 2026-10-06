@@ -76,7 +76,7 @@ TEST_CASE("BASE1Header - multiple consecutive calls return stable values", "[hea
 }
 
 TEST_CASE("BASE1Header - constructor with source/destination", "[header][base1]") {
-    BASE1Header hdr("54321"_sv, "9"_sv);
+    BASE1Header hdr("54321"sv, "9"sv);
     REQUIRE(hdr.source().has_value());
     REQUIRE(hdr.destination().has_value());
     CHECK(*hdr.source() == "054321");

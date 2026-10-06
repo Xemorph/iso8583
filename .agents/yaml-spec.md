@@ -91,9 +91,9 @@ Loader behaviors worth knowing:
 | `_parser.cc/.hh` (private) | `ISOBaseParser`, `ISOFieldParser<>` — the concrete parser machinery; deliberately **not** part of the public API (only the abstract `ISOParserPtrBase`/`ISOFieldParserPtrBase`/`ISOFieldParserType`/`ISOHeader` are, via `ISOParser.hh`). |
 | `_tlv.cc/.hh`, `_tlv_policy.hh` | TLV parsers: fixed-format TLV, `BERTLVParser` (ISO/IEC 8825-1, `BerTag`), tag/length policies. |
 | `_codec.cc` + `include/.../_codec.hh` + `detail/_codec_impl.hh` | Prefixer/encoder tables (`PrefixEncoder`, `Length`, `Encoder` enums; EBCDIC digit tables, ASCII↔EBCDIC conversion tables `kEbcdicToAscii`/`kAsciiToEbcdic`/`kEbcdicValid` = IBM-1047, **ICU-78.3-oracle-pinned**, §4) and the constexpr codecs. **This is the reason C++20 is mandatory.** |
-| `_padder.cc`, `_date.hh`, `_utils.cc`, `_logger.cc/.hh`, `config.cc` | Padding, date helpers (vendored Hinnant `date.h`), misc utils, default logger backend, config plumbing. |
+| `_padder.cc`, `_utils.cc`, `_logger.cc/.hh`, `config.cc` | Padding, misc utils, default logger backend, config plumbing. |
 | `fmt_types.hh` | Private `IFE_*`/`IFA_*` field-type aliases used by `SpecDecoder`. |
 
-`include/iso8583/detail/extern/` bundles `dynamic_bitset.hpp` (+ `libpopcnt.hpp`) and `nonstd::string_view` — no external fetch needed; `config.h` includes the bitset with `DYNAMIC_BITSET_*` guards. Vendored third-party files and their licenses: §14.3.
+`include/iso8583/detail/extern/` bundles `dynamic_bitset.hpp` — no external fetch needed; `config.h` includes the bitset with `DYNAMIC_BITSET_*` guards. Vendored third-party files and their licenses: §14.3.
 
 ---
