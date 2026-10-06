@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### `[#](Fixed)` `remaining` als Kind eines `nested`-Containers baut jetzt (FR-10a)
+
+- **Bug:** `format: remaining` (binär, mit oder ohne `encoding: binary`) als
+  Kind eines `nested`-Containers (oder als Schlussfeld) ließ sich zwar
+  dekodieren, aber nicht **bauen**: `set()` legte ein `OpaqueField` ab, der
+  Encoder dereferenzierte den fehlgeschlagenen `BinaryField`-Cast (Null-Zugriff,
+  bei Konsumenten als „nicht standardkonforme Exception“ sichtbar), und
+  `length` wurde dort fälschlich als FIX-Länge geprüft.
+- **Fix:** binäres `remaining` nimmt beim `set()` einen Hex-String
+  (`BinaryField`, wie `binary`); `length` ist beim Serialisieren ein
+  **Maximum** (strict: positionierter `std::runtime_error` darüber). Die
+  Encoder haben zusätzlich einen Typ-Guard: eine Komponente des falschen Typs
+  (`OpaqueField`/`BinaryField`/`Bitmap`) ergibt einen positionierten
+  `std::runtime_error` statt eines Null-Zugriffs. Wire-Format und
+  Bestandsverhalten unverändert (Dekodierung unberührt).
+- Doku: `spec_schema.md` §4 Punkt 6 (Bauen von `remaining`).
+- Tests: `tests/test_remaining_field.cc` (Tag `[fr10a]`, 6 Cases).
+
 ## 0.7.1
 
 ### `[+](Added)` Konfigurierbares Padding bei gepacktem BCD mit ungerader Ziffernzahl (FR-7: `bcd_pad:`)

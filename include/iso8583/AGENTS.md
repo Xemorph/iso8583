@@ -575,7 +575,10 @@ fields:
   `negative`. Beispiel: `"028": { format: amount, length: 9, scale: 2, sign: true }`
 - `remaining` — liest alle Bytes, die im Elternpuffer übrig sind
   (0.6.0: encoding-aware — `""`/`binary` → roh `BinaryField`,
-  `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum)
+  `ascii`/`ebcdic`/`bcd` → `OpaqueField`; `length` zwingend, gilt als Maximum;
+  seit 0.8.0 auch **baubar** als Kind eines `nested`-Containers/Schlussfeld —
+  binär per Hex-String via `set()`, Wert über dem Maximum → strict
+  `std::runtime_error`)
 - **`prefix_encoding:` (Feld-Key, 0.7.0, FR-6)** — Encoding des
   **Längenpräfixes** unabhängig vom Nutzdaten-`encoding`
   (`ascii`/`bcd`/`ebcdic`/`binary`; Default = `encoding`), nur auf

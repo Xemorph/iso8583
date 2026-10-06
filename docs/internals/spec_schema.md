@@ -295,6 +295,17 @@ encoding-neutral:
    Eltern-Buffers (typisch: Schlussfeld eines `type: nested` Containers,
    z. B. BMP_061-Subfeld 15/POS-Postleitzahl). In **TLV-Kindern** ist
    `remaining` verboten (Whitelist, §6).
+6. **Bauen (Encode) — seit 0.8.0 (FR-10a) auch als Kind eines `nested`-
+   Containers und als Schlussfeld der Nachricht unterstützt.** Der Wert ist
+   der Rest des Eltern-Puffers; die Länge ergibt sich beim Serialisieren
+   (kein Präfix). Der Setter-Typ folgt dem aufgelösten Encoding (Tabelle
+   oben): bei `""`/`binary` nimmt `set("55.1", "950500…")` einen
+   **Hex-String in Großbuchstaben** (`BinaryField`), bei Text-Encodings
+   einen Text (`OpaqueField`). `length` ist auch hier ein **Maximum**: ein
+   längerer Wert wird im strict-Modus mit einem positionierten
+   `std::runtime_error` (`Serialisierung zu groß … > Maximum …`) abgelehnt
+   (nicht-strikt: Fehler-Log, Feld entfällt). Vor 0.8.0 war das Bauen eines
+   binären `remaining`-Kindes defekt (Null-Zugriff statt Fehler).
 
 ```yaml
 # Beispiel: EBCDIC-Spec mit remaining-Schlussfeld (0.6.0)
