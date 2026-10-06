@@ -130,17 +130,64 @@ TEST_CASE("bitmap FR-9 - an empty secondary bitmap (bit 1 set) decodes with leng
         B({ 0x30, 0, 0, 0, 0, 0, 0, 0 }), kDe3, kDe4 }));
 }
 
-TEST_CASE("bitmap FR-9 - length 8 builds the secondary bitmap anyway (0.7.1 asymmetry)",
-    "[bitmap][fr9][characterization]") {
+// =============================================================================
+// B) FR-9b: Bit 1 / Felder > 64 mit 'bitmap length' < 16 sind fail-closed
+// =============================================================================
+
+TEST_CASE("bitmap FR-9b - building a field > 64 with length 8 is rejected (strict)",
+    "[bitmap][fr9][fr9b]") {
     TempYaml y(specYaml("{ format: bitmap, length: 8 }"));
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    REQUIRE(msg->set(TNG_KEY_TYPE(3),  std::string("000000")));
+    REQUIRE(msg->set(TNG_KEY_TYPE(70), std::string("301")));
+    CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("length: 8"));
+    CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("length: 16"));
+}
+
+TEST_CASE("bitmap FR-9b - building a field > 64 with length 8 only warns when not strict (legacy output)",
+    "[bitmap][fr9][fr9b]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 8 }", "strict: false\n"));
     auto parser = spec::SpecDecoder::loadFromYaml(y.str());
     const auto wire = build(parser, { 3, 70 });
     CHECK(wire == cat({ B({ 0x02, 0x00 }),
         B({ 0xA0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0, 0, 0, 0, 0, 0, 0 }), kDe3, kDe70 }));
+}
 
-    // ... aber mit length 8 wird die Sekundaer-Bitmap beim Decode nicht
-    // gelesen: die eigene Ausgabe ist nicht rueckdekodierbar.
+TEST_CASE("bitmap FR-9b - decoding bit 1 with length 8 is rejected with a positioned error (strict)",
+    "[bitmap][fr9][fr9b]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 8 }"));
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    const auto wire = cat({ B({ 0x02, 0x00 }),
+        B({ 0xA0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0, 0, 0, 0, 0, 0, 0 }), kDe3, kDe70 });
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    CHECK_THROWS_WITH(msg->unparse(msg, wire), ContainsSubstring("Bit 1"));
+    CHECK_THROWS_WITH(msg->unparse(msg, wire), ContainsSubstring("Offset 2"));
+    CHECK_THROWS_WITH(msg->unparse(msg, wire), ContainsSubstring("length: 16"));
+}
+
+TEST_CASE("bitmap FR-9b - the same message roundtrips with length 16 (own output is decodable)",
+    "[bitmap][fr9][fr9b]") {
+    for (const char* len : { "16", "24" }) {
+        TempYaml y(specYaml(std::string("{ format: bitmap, length: ") + len + " }"));
+        auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+        const auto wire = build(parser, { 3, 70 });
+        auto msg2 = std::make_shared<Message>();
+        msg2->parser(parser);
+        REQUIRE(msg2->unparse(msg2, wire) == wire.size());
+        CHECK(msg2->tryGetValue<OpaqueField>(70) == "301");
+    }
+}
+
+TEST_CASE("bitmap FR-9b - primary-only messages with length 8 are unaffected",
+    "[bitmap][fr9][fr9b]") {
+    TempYaml y(specYaml("{ format: bitmap, length: 8 }"));
+    auto parser = spec::SpecDecoder::loadFromYaml(y.str());
+    const auto wire = build(parser, { 3, 4 });
     auto msg2 = std::make_shared<Message>();
     msg2->parser(parser);
-    CHECK_THROWS_AS(msg2->unparse(msg2, wire), std::runtime_error);
+    REQUIRE(msg2->unparse(msg2, wire) == wire.size());
+    CHECK(msg2->tryGetValue<OpaqueField>(4) == "000000010000");
 }

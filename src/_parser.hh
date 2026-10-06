@@ -450,6 +450,23 @@ namespace TNG_NAMESPACE {
                         " (Feld " + d_ + "): Komponente ist keine Bitmap");
                 dynamic_bitset<> b = bmpc->value();
                 std::size_t bytes = de_l_ >= 8 ? ((b.size() + 62) >> 6) << 3 : de_l_;
+                // FR-9b (0.8.0): die Bitmap-Größe folgt den gesetzten Feldern,
+                // nicht 'length' - Felder > 64 (bzw. > 128) mit 'length: 8'
+                // (bzw. 16) ergäben eine Ausgabe, die der Decoder mit derselben
+                // Spec nicht zurücklesen kann (er liest die Sekundär-Bitmap nur
+                // ab length >= 16). strict: positionierter Fehler; nicht-strikt:
+                // Warnung, Legacy-Ausgabe.
+                if (de_l_ >= 8 && bytes > de_l_) {
+                    const std::string msg =
+                        "Bitmap: gesetzte Felder erfordern " +
+                        std::to_string(bytes) + " Byte Bitmap, die Spec deklariert aber nur "
+                        "'length: " + std::to_string(de_l_) + "' - die Ausgabe wäre mit dieser "
+                        "Spec nicht rückdekodierbar ('length: " + std::to_string(bytes) +
+                        "' setzen; FR-9)";
+                    if (strict_)
+                        throw std::runtime_error("[ISO8583] " + msg);
+                    TNG_LOG_WARN("[codec] {} (nicht-strikt: Legacy-Ausgabe)", msg);
+                }
                 std::size_t bits = bytes * 8;
 
                 std::vector<uint8_t> d(bytes, 0x00);

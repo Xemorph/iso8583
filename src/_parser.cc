@@ -304,6 +304,24 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         }
         bitmap->wire_length(bmp_bytes);
         consumed += bmp_bytes;
+        // FR-9b (0.8.0): Bit 1 zeigt eine Sekundär-Bitmap an, der Bitmap-
+        // Feldparser hat aber nur die Primär-Bitmap gelesen (Spec: 'length'
+        // < 16). Die Folgefelder wären stillschweigend um 8 Byte verschoben.
+        // strict: positionierter Fehler; nicht-strikt: Warnung (Legacy).
+        {
+            const auto& peek = bitmap->value();
+            if (peek.size() > 1 && peek[1] && bmp_bytes < 16) {
+                const std::string msg =
+                    "Bitmap @ Offset " + std::to_string(base_offset + consumed - bmp_bytes) +
+                    ": Bit 1 (Sekundär-Bitmap) ist gesetzt, die Spec deklariert für das "
+                    "Bitmap-Feld aber nur " + std::to_string(bmp_bytes) +
+                    " Byte ('length: " + std::to_string(bmp_bytes) +
+                    "') - 'length: 16' setzen (FR-9), sonst wären alle Folgefelder verschoben";
+                if (strict_)
+                    throw std::runtime_error("[ISO8583] " + msg);
+                TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Legacy-Dekodierung)", msg);
+            }
+        }
         bmp = bitmap->value();
         bmp.shrink_to_fit();
         bmp_sz = ((bmp.size() - 1 + 63) >> 6) << 3;

@@ -1887,12 +1887,13 @@ fields:
     REQUIRE(parser != nullptr);
 
     // Handwerkliches Wire-Image: MTI "0200" (ascii) + 8-Byte-Bitmap
-    // (Bit 1 = Bitmap-Feld, DE57 = Byte 7 Bit 0x80) + DE57 = LLL("013" =
+    // (nur DE57 = Byte 7 Bit 0x80; Bit 1 waere die Sekundaer-Bitmap-Anzeige und
+    // ist bei 'length: 8' seit FR-9b fail-closed) + DE57 = LLL("013" =
     // 13 Bytes: 69-Frame = Tag(1) + BER-Length(1) + 11 Wert-Bytes) +
     // TLV-Payload (constructed Tag 69 mit inneren Frames 63 und A0).
     const std::vector<uint8_t> wire = {
         '0', '2', '0', '0',
-        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
         '0', '1', '3',
         0x69, 0x0B,
         0x63, 0x05, 0x1E, 0x40, 0x00, 0x80, 0x00,
@@ -1949,11 +1950,11 @@ fields:
     auto [parser, spec] = spec::SpecDecoder::loadBothFromYaml(yaml.str());
     REQUIRE(parser != nullptr);
 
-    // MTI "0200" + Bitmap (Bit 1, DE48 = Byte 5 Bit 0x01) + DE48 = LLL("010")
+    // MTI "0200" + Bitmap (nur DE48 = Byte 5 Bit 0x01; Bit 1 = Sekundaer-Bitmap-Anzeige) + DE48 = LLL("010")
     // + Frame 60/06 = Frame 48/02 DE AD (Tag/Length ASCII, Wert roh).
     const std::vector<uint8_t> wire = {
         '0', '2', '0', '0',
-        0x80, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
         '0', '1', '0',
         '6', '0', '0', '6',
         '4', '8', '0', '2', 0xDE, 0xAD
@@ -2124,7 +2125,7 @@ fields:
     // DE57 = LLL("009") + [5A 02 'A' 'B'] [82 03 63 05 1E]
     const std::vector<uint8_t> wire = {
         '0', '2', '0', '0',
-        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
         '0', '0', '9',
         0x5A, 0x02, 'A', 'B',
         0x82, 0x03, 0x63, 0x05, 0x1E
