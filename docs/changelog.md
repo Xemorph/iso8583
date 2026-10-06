@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### `[+](Added)` Binäres Längenpräfix (Einheit Ziffern) vor gepackten BCD-Ziffern (FR-8)
+
+- Neue Kombinationen `lchar`/`llchar`/`lllchar`/`lnum`/`llnum` mit
+  `encoding: bcd` + `prefix_encoding: binary` (5 zusätzliche
+  Dispatch-Einträge, jetzt **30** statt 25 Kombinationen): das Längenpräfix
+  ist ein Big-Endian-Binärwert (L=1 → 1 Byte, LL → 2, LLL → 3) in der Einheit
+  der Nutzdaten, also **Ziffern**; die Daten belegen `ceil(Ziffern/2)` Byte,
+  das Padding folgt `bcd_pad`. VISA BASE I: DE 2 `10` + 8 Byte = 16 Ziffern;
+  DE 35 `25` = 37 Ziffern → 19 Byte mit `bcd_pad: left_zero`.
+- Rein additiv: bisher abgelehnte Kombinationen werden akzeptiert; alle
+  übrigen Kombinationen (inkl. der 25 aus 0.7.0) und Bestandsspecs bleiben
+  byte-identisch. Weiterhin abgelehnt: `llllchar`/`lllnum` mit BCD, `*binary`,
+  fixe Formate. Introspektion: `SpecFieldInfo::prefix_encoding == "BINARY"`;
+  kein ABI-Change.
+- Doku: BCD-Nibbles ≥ `A` dekodieren als `'0' + n` — `D` → `=`
+  (Track-2-Trenner), `A`→`:`, `B`→`;`, `C`→`<`, `E`→`>`, `F`→`?`
+  (verlustfreier Roundtrip); die bisherige Formulierung nannte nur `:`/`;`.
+- Tests: neue Suite `tests/test_prefix_bcd_binary.cc` (Tag `[fr8]`, 20 Cases,
+  reale VISA-DE2/32/35-Struktur).
+
 ### `[#](Fixed)` `remaining` als Kind eines `nested`-Containers baut jetzt (FR-10a)
 
 - **Bug:** `format: remaining` (binär, mit oder ohne `encoding: binary`) als

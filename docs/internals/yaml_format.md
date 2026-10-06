@@ -211,8 +211,9 @@ Präfix-Zeichen: `L` (max. 9), `LL` (max. 99), `LLL` (max. 999),
 **Längenpräfix-Encoding `prefix_encoding:` (0.7.0, FR-6):** Der
 optionale Feld-Key trennt das Codec des Längenpräfixes vom Codec der
 Nutzdaten (z. B. VISA BASE-I: `llnum|bcd` + BCD-Präfix, `lllchar|ascii`
-+ BINARY-Präfix). Default = `encoding`; verfügbar sind 25 Kombinationen,
-sonst Fail-closed (`SpecValidationError` beim Laden) — nur auf variablen
++ BINARY-Präfix). Default = `encoding`; verfügbar sind 30 Kombinationen
+(seit 0.8.0, FR-8: auch BINARY-Präfix vor BCD-Nutzdaten, Einheit
+**Ziffern** — VISA-BASE-I-DE 2/32/35), sonst Fail-closed (`SpecValidationError` beim Laden) — nur auf variablen
 `*char`/`*num`-Formaten, nicht bei TLV-Kindern. Normative Details
 (Breiten-/Zählregeln, Kombinationen, `!merge`):
 [spec_schema.md](spec_schema.md) §3, Unterabschnitt

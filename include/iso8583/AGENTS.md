@@ -587,9 +587,13 @@ fields:
   `{ format: lllchar, encoding: ascii, prefix_encoding: binary }`
   (DE 48). Breitenregeln: BINARY-Präfix = L-Zahl Bytes (L=1, LL=2,
   LLL=3, LLLL=4, Big-Endian); BCD-Präfix = 1 Byte für L/LL, 2 Byte für
-  LLL/LLLL (je 2 BCD-Ziffern/Byte, aufgerundet; `0x16` = sechzehn). Verfügbar sind 25 Kombinationen (16× `l*char`,
+  LLL/LLLL (je 2 BCD-Ziffern/Byte, aufgerundet; `0x16` = sechzehn). Verfügbar sind 30 Kombinationen (16× `l*char`,
   8× `lnum`/`llnum`, 3× Identitätslücken `lnum|bcd`/`llnum|bcd`/
-  `llnum|ebcdic`) — jede andere Kombination, fixbreite Formate,
+  `llnum|ebcdic`, seit 0.8.0 (FR-8) 5× `lchar`/`llchar`/`lllchar`/
+  `lnum`/`llnum` mit `encoding: bcd` + `prefix_encoding: binary`: das
+  **binäre** Längenbyte zählt dort **Ziffern** (VISA: DE 2 `10` + 8 Byte =
+  16 Ziffern; DE 35 `25` = 37 Ziffern → 19 Byte, mit `bcd_pad: left_zero`);
+  BCD-Nibbles dekodieren als `'0'+n`, u. a. `D` → `=`) — jede andere Kombination, fixbreite Formate,
   `*binary`/`bertlv` (dort bestimmt `encoding:` das Präfix), TLV-Kinder
   und ein Root-Key werden Fail-closed beim Laden abgewiesen
   (`SpecValidationError`). Introspektion: `SpecFieldInfo::prefix_encoding`.

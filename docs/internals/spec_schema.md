@@ -158,8 +158,11 @@ Default-Auswahl.
 - **BCD-Semantik:** Bei allen BCD-Formaten ist `length` die
   **Ziffernzahl** (Präfixe ebenso: ein `ll`-Präfix in BCD trägt die
   *Ziffernzahl*, nicht die Bytezahl). Nibbles ≥ 0xA werden legacy als
-  `:`/`;` abgebildet (nicht validiert, auch nicht im strict-Modus —
-  BCD-Daten sollten nur Ziffern enthalten). Bei **ungerader** Ziffernzahl
+  `'0' + n` abgebildet (nicht validiert, auch nicht im strict-Modus —
+  BCD-Daten sollten nur Ziffern enthalten): `A`→`:`, `B`→`;`, `C`→`<`,
+  **`D`→`=`**, `E`→`>`, `F`→`?`. Das Kodieren bildet diese Zeichen
+  verlustfrei auf dasselbe Nibble zurück (Roundtrip) — so liefert ein
+  Track-2-Trennzeichen `D` ein `=` (z. B. `4524720000000000=4912…`). Bei **ungerader** Ziffernzahl
   wird das letzte, ungenutzte Low-Nibble des abschließenden Bytes mit **`0`**
   gefüllt (nicht `F`): der Wert `123` wird zu BCD `12 30`; beim Decode mappt
   dieses Nibble wieder auf `0`.
@@ -187,15 +190,39 @@ prefix_encoding: binary }`).
   | `ascii` | `L`-Zahl = 1 Byte (L=1, LL=2, LLL=3, LLLL=4) | ASCII-Ziffern = Bytes |
   | `bcd` | **1 Byte für L/LL, 2 Byte für LLL/LLLL** (je 2 BCD-Ziffern/Byte, aufgerundet: `parsed_length = (L + 1) >> 1`) | *Ziffern* (1 Byte = 2 Ziffern); BCD-Zeichen sind Dezimalziffern: `0x16` = sechzehn, `0x10` = zehn |
   | `ebcdic` | `L`-Zahl = Bytes | EBCDIC-Ziffern (IBM-1047, orakelgepinnt) |
-  | `binary` | `L`-Zahl = **Bytes** (L=1, LL=2, LLL=3, LLLL=4), Big-Endian | Bytes |
+  | `binary` | `L`-Zahl = **Bytes** (L=1, LL=2, LLL=3, LLLL=4), Big-Endian | Bytes — **außer vor BCD-Nutzdaten** (0.8.0, FR-8): dort **Ziffern** (Einheit der Nutzdaten, s. unten) |
 
-- **Verfügbare Kombinationen (25, Fail-closed beim Laden):**
+- **Verfügbare Kombinationen (30, Fail-closed beim Laden):**
   - 16× `l*char`: L/LL/LLL(/LLLL)/× `ascii`/`ebcdic`-Nutzdaten ×
     `bcd`/`binary`-Präfix (LLLL nur bei `ascii`)
   - 8× `lnum`/`llnum` × `ascii`/`ebcdic`-Nutzdaten × `bcd`/`binary`-Präfix
   - 3× **Identitätslücken** (Präfix == Nutzdaten-Encoding, 2-teiler
     Dispatch-Key): `lnum`/`llnum` mit `bcd` (`IFB_LNUM`/`IFB_LLNUM`)
     und `llnum` mit `ebcdic` (`IFE_LLNUM`)
+  - 5× **BINARY-Präfix vor BCD-Nutzdaten** (0.8.0, FR-8): `lchar`/`llchar`/
+    `lllchar`/`lnum`/`llnum` × `encoding: bcd` × `prefix_encoding: binary`
+    (3-teiliger Dispatch-Key `FORMAT|BCD|BINARY`). `llllchar` und `lllnum`
+    gibt es mit BCD nicht (keine BCD-Identität) und bleiben abgelehnt.
+- **Binärpräfix vor BCD-Nutzdaten (0.8.0, FR-8):** Das Präfix ist ein
+  Big-Endian-**Binärwert** (L=1 → 1 Byte, LL → 2, LLL → 3) in der Einheit
+  der Nutzdaten, also **Ziffern** — die Daten belegen `ceil(Ziffern / 2)`
+  Byte, das Padding bei ungerader Ziffernzahl folgt `bcd_pad` (das Präfix
+  bleibt davon unberührt). `length` ist das Maximum in Ziffern. Beispiel
+  VISA BASE I (L=1, `bcd_pad: left_zero`):
+
+  | Feld | Wire (Hex) | Deutung |
+  |---|---|---|
+  | DE 2 | `10` `45 24 72 00 00 00 00 00` | `0x10` = **16 Ziffern** → 8 Byte |
+  | DE 32 | `06` `40 90 23` | 6 Ziffern → 3 Byte |
+  | DE 35 | `25` `04 52 47 20 …` (19 Byte) | `0x25` = **37 Ziffern** → 19 Byte, führendes `0`-Nibble als Padding |
+
+  ```yaml
+  "002": { format: lnum,  encoding: bcd, prefix_encoding: binary, bcd_pad: left_zero, length: 19 }
+  "035": { format: lchar, encoding: bcd, prefix_encoding: binary, bcd_pad: left_zero, length: 37 }
+  ```
+
+  Vorbestehende Eigenheit (alle Präfix-Encodings, nicht geändert): ein
+  Präfixwert `0` wird beim Decode wie das deklarierte Maximum gelesen.
 - **Fail-closed-Regeln** (positionierte `SpecValidationError`, s. §8):
   - Value-Whitelist `ascii`/`ebcdic`/`bcd`/`binary`
   - nur variable `*char`/`*num`-Formate; bei `*binary`/`bertlv`
