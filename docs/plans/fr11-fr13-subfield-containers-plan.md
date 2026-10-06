@@ -1,7 +1,19 @@
 # FR-11 / FR-12 / FR-13 Implementierungsplan: Unterfelder in VISA-Containern
 
-> **Status:** in Umsetzung (Plan erstellt 2026-10-06). Maintainer-Entscheidung 2026-10-06: Empfehlungen E1–E4 übernommen,
+> **Status:** **umgesetzt auf `main`** (2026-10-06, Stand `e1ce97b`); offen nur Release 0.9.0 (Version-Strings, Tag,
+> vcpkg-Port-SHA512 — maintainer-initiiert, nach grünem Docs-Run) und Vault-/Chatroom-Abschluss.
+> Maintainer-Entscheidung 2026-10-06: Empfehlungen E1–E4 übernommen,
 > **E5 = ein gebündeltes Release 0.9.0 mit FR-12 + FR-13** (FR-11 durch FR-12 abgedeckt); Commit pro Meilenstein.
+>
+> **Umsetzungsnotizen (Abweichungen vom Entwurf):**
+> - FR-12: Die Container-Bitmap wird im Parser lokal berechnet/gelesen (`parseBitmapContainer`/`unparseBitmapContainer`),
+>   **nicht** über `recalcBitmap_locked()` (das auf Vielfache von 64 Bit aufrundet); Kind-Key = Bit-Nummer, kein neues
+>   `SpecFieldInfo`-Feld nötig. `bitmap.length` auf 1..16 Byte begrenzt.
+> - FR-13: `nop`-Kinder sind erlaubte Schlüssel-Platzhalter (damit VISA-Unterfelder `60.1`…`60.10` heißen; Position = Key);
+>   `bcd_pad` am Container ist die einzige Ausnahme von der „nur BCD-Nutzdaten"-Regel. Wire-Offsets: Byte-Näherung (E4).
+> - Commits: `c76f1d3` (Plan), `b42d79f` (FR-12), `671445f` (FR-13), `7c59fa7` (Doku), `e1ce97b` (Zusatztest).
+> - Verifikation: Debug-Build 549→550 Cases grün, `debug-bertlv` (int32-Keys) grün, ASan (`build/ci-asan-md`) grün,
+>   `sphinx -W` (clean rebuild) grün; neue Suites `[bitmap-container]` (9 Cases), `[nibble-pack]` (9 Cases).
 > **Ursprung:** drei Feature-Requests von `tng-wire-viewer` (VISA DE60/DE62/DE63/DE126) —
 > Vault `ai_connected`: `iso8583/FR-11 …`, `FR-12 …`, `FR-13 …`.
 > **Repo-Stand bei Erstellung:** `main` (0.8.0, Commit `bf21dc6`).
