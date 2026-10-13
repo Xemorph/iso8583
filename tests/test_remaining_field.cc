@@ -759,3 +759,41 @@ TEST_CASE("length prefix above maximum: strict throws, non-strict clamps", "[rem
     msg2->parser(parser);
     CHECK_NOTHROW(msg2->unparse(msg2, wire));   // Legacy: auf Maximum geklemmt (+ WARN)
 }
+
+TEST_CASE("empty prefixed value encodes prefix 0 and roundtrips", "[remaining][zerolen][encode]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("zl3.yml", kZeroLenYaml));
+    for (bool strict : { true, false }) {
+        parser->strict(strict);
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        REQUIRE(msg->set(48, std::string("")));
+        REQUIRE(msg->set(64, std::string("ABC")));
+        std::vector<uint8_t> wire;
+        REQUIRE_NOTHROW(wire = msg->parse(msg));
+        // MTI | Bitmap (48, 64) | DE48 = Prefix "000" | DE64
+        CHECK(wire == B({ 0xF0, 0xF2, 0xF0, 0xF0, 0, 0, 0, 0, 0, 0x01, 0, 0x01,
+                          0xF0, 0xF0, 0xF0, 0xC1, 0xC2, 0xC3 }));
+        auto msg2 = std::make_shared<Message>();
+        msg2->parser(parser);
+        CHECK(msg2->unparse(msg2, wire) == wire.size());
+        auto de48 = msg2->get<OpaqueField>(48);
+        REQUIRE(de48 != nullptr);
+        CHECK(de48->value() == "");
+        CHECK(msg2->get<OpaqueField>(64)->value() == "ABC");
+        CHECK(msg2->parse(msg2) == wire);
+    }
+}
+
+TEST_CASE("empty nested container encodes prefix 0 and roundtrips", "[remaining][zerolen][encode]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("zl4.yml", kZeroLenYaml));
+    // Decodierte leere Container (Prefix 000) wieder serialisieren.
+    const auto wire = zeroLenWire(B({ 0xF0, 0xF0, 0xF0 }), B({ 0xF0, 0xF0, 0xF0 }));
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, wire) == wire.size());
+    std::vector<uint8_t> out;
+    REQUIRE_NOTHROW(out = msg->parse(msg));
+    CHECK(out == wire);
+}
