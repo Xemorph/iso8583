@@ -19,7 +19,12 @@
   Ziffern geprüft. Strict: positionierter Fehler (`Längenprefix enthält
   Nicht-Ziffer 0x00 …`); nicht-strikt: `WARN` + Legacy-Dekodierung. Bisher las
   EBCDIC (`& 0x0F`) `00 00 00` oder ASCII-Ziffern in einer EBCDIC-Spec still
-  als gültige Länge. BCD-/Binär-Prefix unverändert (`0` = leeres Feld).
+  als gültige Länge. Binär-Prefix unverändert (`0` = leeres Feld).
+- **Neu:** BCD-Längenprefix: Ziffern-Nibbles müssen `0`–`9` sein, ein führendes
+  Padding-Nibble (ungerade Ziffernzahl, z. B. `lll` in 2 Bytes) darf `0` oder
+  `F` sein. `FF FF`, `00 FF` (lll) und `FF` (ll) sind ungültig (strict:
+  Fehler, sonst `WARN`). `decode_length` zählt ein führendes `F`-Padding als 0
+  (`F0 12` → 12; bisher 15012).
 - `FIX`/`UNKNOWN`/`CONSUME` (kein Prefix) sind unverändert.
 
 ## 0.9.0

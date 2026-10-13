@@ -653,6 +653,28 @@ namespace TNG_NAMESPACE {
                     }
                 }
 
+                // BCD-Prefix: Ziffern-Nibbles 0-9; ein fuehrendes Padding-Nibble
+                // (ungerade Ziffernzahl, z. B. LLL in 2 Bytes) darf 0 oder F sein.
+                // Also ist FF FF, FF (LL) oder 00 FF (LLL) ungueltig.
+                if constexpr (ll > 0 && pe_ == codec::PrefixEncoder::BCD) {
+                    constexpr std::size_t pad = ll * 2 - static_cast<std::size_t>(l_);
+                    for (std::size_t i = 0; i < ll * 2; ++i) {
+                        const uint8_t nib = (i & 1) ? (b[o + (i >> 1)] & 0x0F) : (b[o + (i >> 1)] >> 4);
+                        if (i < pad ? (nib == 0x00 || nib == 0x0F) : nib <= 9) continue;
+                        if (strict_) {
+                            char hx[2];
+                            std::snprintf(hx, sizeof hx, "%X", nib);
+                            throw std::runtime_error(
+                                std::string("Längenprefix enthält ungültiges BCD-Nibble 0x") + hx +
+                                " (Nibble " + std::to_string(i) + " ab Offset " + std::to_string(o) +
+                                (i < pad ? ", Padding nur 0 oder F" : ", Ziffer 0-9 erwartet") + ")");
+                        }
+                        TNG_LOG_WARN("[codec] Längenprefix enthält ungültiges BCD-Nibble 0x{:X} (Nibble {}, Offset {}) (nicht-strikt): Legacy-Dekodierung",
+                            nib, i, o);
+                        break;
+                    }
+                }
+
                 if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME) {
                     l /* remaining */ = b.size() - o;
                     // (0.6.0) remaining + BCD: b.size() - o ist die Byte-Zahl,

@@ -81,10 +81,14 @@ namespace TNG_NAMESPACE::codec {
         }
         else if constexpr (PrefixEncoder::BCD == encoding) {
             const std::size_t bytes = parsed_length<encoding, digits>();
-            for (std::size_t i = 0; i < bytes; ++i)
-                l = l * 100
-                    + ((b.at(o + i) >> 4) & 0x0F) * 10
-                    +  (b.at(o + i)       & 0x0F);
+            // Ungerade Ziffernzahl (z. B. LLL = 3 Ziffern in 2 Bytes): das
+            // fuehrende Nibble ist Padding, '0' oder 'F' -> zaehlt als 0.
+            const bool padded = bytes * 2 > (std::size_t)digits;
+            for (std::size_t i = 0; i < bytes; ++i) {
+                std::size_t hi = (b.at(o + i) >> 4) & 0x0F;
+                if (i == 0 && padded && hi == 0x0F) hi = 0;
+                l = l * 100 + hi * 10 + (b.at(o + i) & 0x0F);
+            }
         }
         else if constexpr (PrefixEncoder::BINARY == encoding) {
             for (std::size_t i = 0; i < (std::size_t)digits; ++i)

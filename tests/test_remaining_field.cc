@@ -882,3 +882,43 @@ TEST_CASE("BCD and binary length prefix 0 yields empty field", "[remaining][zero
         }
     }
 }
+
+// BCD-Praefix: Ziffern-Nibbles 0-9, fuehrendes Padding-Nibble (ungerade Ziffernzahl) 0 oder F.
+TEST_CASE("BCD length prefix nibble validation and F padding", "[remaining][zerolen][prefixdigit][bcdnibble]") {
+    struct Row { const char* fmt; std::vector<uint8_t> prefix; bool valid; std::size_t len; };
+    const std::vector<Row> rows = {
+        { "lllchar", { 0x00, 0x05 }, true,  5 },
+        { "lllchar", { 0xF0, 0x05 }, true,  5 },    // F-Padding
+        { "lllchar", { 0xF0, 0x12 }, true,  12 },
+        { "lllchar", { 0xFF, 0xFF }, false, 0 },
+        { "lllchar", { 0x00, 0xFF }, false, 0 },
+        { "lllchar", { 0x00, 0x1A }, false, 0 },
+        { "lllchar", { 0x10, 0x05 }, false, 0 },    // Padding-Nibble 1
+        { "llchar",  { 0x05 },       true,  5 },
+        { "llchar",  { 0xFF },       false, 0 },
+        { "llchar",  { 0x0F },       false, 0 },
+        { "llchar",  { 0xF5 },       false, 0 } };   // LL hat kein Padding
+    for (const auto& r : rows) {
+        TempDir dir;
+        auto parser = spec::SpecDecoder::loadFromYaml(dir.write("bn.yml", prefixSpec("ascii",
+            (std::string("{ format: ") + r.fmt + ", length: 50, prefix_encoding: bcd }").c_str())));
+        std::vector<uint8_t> wire = B({ '0', '2', '0', '0', 0, 0, 0, 0, 0, 0x01, 0, 0x01 });
+        wire.insert(wire.end(), r.prefix.begin(), r.prefix.end());
+        wire.insert(wire.end(), r.len, 'x');
+        wire.insert(wire.end(), { 'A', 'B', 'C' });
+        parser->strict(true);
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        if (r.valid) {
+            CHECK(msg->unparse(msg, wire) == wire.size());
+            CHECK(std::string(msg->get<OpaqueField>(48)->value()).size() == r.len);
+            CHECK(msg->get<OpaqueField>(64)->value() == "ABC");
+        } else {
+            CHECK_THROWS_AS(msg->unparse(msg, wire), std::runtime_error);
+            parser->strict(false);
+            auto msg2 = std::make_shared<Message>();
+            msg2->parser(parser);
+            CHECK_NOTHROW(msg2->unparse(msg2, wire));
+        }
+    }
+}
