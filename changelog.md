@@ -1,31 +1,35 @@
 # Changelog
 
-## Unreleased (0.9.1)
+## 0.9.1
 
-### `[#](Fixed)` Längenprefix `0` = leeres Feld; Prefix > Maximum im strict-Modus ein Fehler
+### `[#](Fixed)` Längenprefix-Dekodierung: leeres Feld, Ziffernprüfung, BCD-F-Padding
 
-- **Behoben:** Bei Feldern mit Längenprefix (`ll`/`lll`/…, alle Prefix-Encodings,
-  auch `nested`-Container) wurde ein Prefix `0` still als *Maximum* gelesen
+Patch-Release für Felder mit Längenprefix (`l`/`ll`/`lll`/…, auch `nested`-Container).
+`FIX`/`UNKNOWN`/`CONSUME` (kein Prefix) sind unverändert.
+
+- **Prefix `0` = leeres Feld:** bisher wurde `0` still als *Maximum* gelesen
   (`000` bei `length: 50` las 50 Bytes → „abgeschnitten“ oder verschobene
-  Folgefelder). Jetzt: leeres Feld, nur der Prefix wird verbraucht (`nested`:
-  leerer Container).
-- **Neu:** Prefix > Maximum wirft im strict-Modus einen positionierten Fehler
+  Folgefelder). Jetzt verbraucht ein Nullprefix nur den Prefix (`nested`: leerer
+  Container); Encode → Decode → Encode ist byte-identisch.
+- **Prefix > Maximum:** strict wirft einen positionierten Fehler
   (`Längenprefix 237 > Maximum 50`); nicht-strikt weiterhin auf das Maximum
   geklemmt, jetzt mit `WARN`.
+- **Text-Prefix (ASCII `0x30`–`0x39`, EBCDIC `0xF0`–`0xF9`) wird auf Ziffern
+  geprüft:** strict Fehler (`Längenprefix enthält Nicht-Ziffer 0x00 …`),
+  nicht-strikt `WARN` + Legacy-Dekodierung. Bisher las EBCDIC (`& 0x0F`)
+  `00 00 00` oder ASCII-Ziffern in einer EBCDIC-Spec still als gültige Länge.
+- **BCD-Prefix:** Ziffern-Nibbles müssen `0`–`9` sein; ein führendes
+  Padding-Nibble (ungerade Ziffernzahl, z. B. `lll` in 2 Bytes) darf `0` oder
+  `F` sein. `FF FF`, `00 FF` (lll) und `FF` (ll) sind ungültig (strict Fehler,
+  sonst `WARN`). `decode_length` zählt ein führendes `F`-Padding als 0
+  (`F0 12` → 12; bisher 15012). Binär-Prefix unverändert (`0` = leeres Feld).
 - **Intern:** `strict(bool)` erreicht nun auch den Container-Basis-Parser
   eines `nested`-Felds (`ISOFieldParserPtrBase::strict` ist `virtual`); bisher
-  blieb er nach `strict(false)` strikt.
-- **Neu:** Text-Längenprefix (ASCII `0x30`–`0x39`, EBCDIC `0xF0`–`0xF9`) wird auf
-  Ziffern geprüft. Strict: positionierter Fehler (`Längenprefix enthält
-  Nicht-Ziffer 0x00 …`); nicht-strikt: `WARN` + Legacy-Dekodierung. Bisher las
-  EBCDIC (`& 0x0F`) `00 00 00` oder ASCII-Ziffern in einer EBCDIC-Spec still
-  als gültige Länge. Binär-Prefix unverändert (`0` = leeres Feld).
-- **Neu:** BCD-Längenprefix: Ziffern-Nibbles müssen `0`–`9` sein, ein führendes
-  Padding-Nibble (ungerade Ziffernzahl, z. B. `lll` in 2 Bytes) darf `0` oder
-  `F` sein. `FF FF`, `00 FF` (lll) und `FF` (ll) sind ungültig (strict:
-  Fehler, sonst `WARN`). `decode_length` zählt ein führendes `F`-Padding als 0
-  (`F0 12` → 12; bisher 15012).
-- `FIX`/`UNKNOWN`/`CONSUME` (kein Prefix) sind unverändert.
+  blieb er nach `strict(false)` strikt. Vtable-Änderung: Library und Consumer
+  gemeinsam neu bauen.
+- **Verhaltensänderung:** Wires, die bisher still durchgingen (Nullprefix als
+  Maximum, EBCDIC-Prefix mit Nicht-Ziffern), werden im strict-Modus abgelehnt
+  bzw. liefern leere Felder.
 
 ## 0.9.0
 
