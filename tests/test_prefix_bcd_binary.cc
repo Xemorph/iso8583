@@ -134,13 +134,13 @@ TEST_CASE("prefix FR-8 - odd digit count default padding right_zero", "[prefix][
         "378282246310005", 19);
 }
 
-TEST_CASE("prefix FR-8 - zero length prefix is read as maximum (characterization)", "[prefix][fr8]") {
-    // Vorbestehende Eigenheit (alle Praefix-Encodings): l == 0 -> l = length.
-    // Hier festgehalten, NICHT durch FR-8 geaendert.
+TEST_CASE("prefix FR-8 - zero length prefix is an empty field", "[prefix][fr8]") {
+    // Praefix 0 (alle Praefix-Encodings) = leeres Feld, nur der Praefix wird
+    // verbraucht (frueher: l == 0 -> l = length).
     L1 p(4, "T");
     auto f = std::make_shared<OpaqueField>(2);
-    CHECK(p.unparse(f, B({ 0x00, 0x12, 0x34 }), 0) == 3u);
-    CHECK(f->value() == "1234");
+    CHECK(p.unparse(f, B({ 0x00, 0x12, 0x34 }), 0) == 1u);
+    CHECK(f->value() == "");
 }
 
 // =============================================================================

@@ -689,3 +689,73 @@ TEST_CASE("FR-10a wrong component type is a positioned error, not a crash", "[re
     REQUIRE(msg->set(wrong));
     REQUIRE_THROWS_AS(msg->parse(msg), std::runtime_error);
 }
+
+// =============================================================================
+// Laengenprefix 0 = leeres Feld; Prefix > Maximum: strict wirft, sonst klemmen
+// =============================================================================
+
+namespace {
+
+const char* kZeroLenYaml =
+    "spec: \"t\"\n"
+    "encoding: ebcdic\n"
+    "fields:\n"
+    "  \"000\": { format: numeric, length: 4 }\n"
+    "  \"001\": { format: bitmap, length: 8 }\n"
+    "  \"048\": { format: lllchar, length: 50 }\n"
+    "  \"063\":\n"
+    "    type: nested\n"
+    "    format: lllbinary\n"
+    "    length: 50\n"
+    "    children:\n"
+    "      - { format: nop, length: 0 }\n"
+    "      - { format: char, length: 3 }\n"
+    "      - { format: remaining, length: 9 }\n"
+    "  \"064\": { format: char, length: 3 }\n";
+
+// MTI 0200 | Bitmap (48, 63, 64) | DE48 | DE63 | DE64
+std::vector<uint8_t> zeroLenWire(const std::vector<uint8_t>& de48, const std::vector<uint8_t>& de63) {
+    std::vector<uint8_t> w = B({ 0xF0, 0xF2, 0xF0, 0xF0,
+                                 0, 0, 0, 0, 0, 0x01, 0, 0x03 });
+    w.insert(w.end(), de48.begin(), de48.end());
+    w.insert(w.end(), de63.begin(), de63.end());
+    w.insert(w.end(), { 0xC1, 0xC2, 0xC3 });   // DE64 = "ABC"
+    return w;
+}
+
+} // namespace
+
+TEST_CASE("length prefix 0 yields empty fields, next field stays aligned", "[remaining][zerolen]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("zl.yml", kZeroLenYaml));
+    for (bool strict : { true, false }) {
+        parser->strict(strict);
+        const auto wire = zeroLenWire(B({ 0xF0, 0xF0, 0xF0 }), B({ 0xF0, 0xF0, 0xF0 }));
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        CHECK(msg->unparse(msg, wire) == wire.size());
+        auto de48 = msg->get<OpaqueField>(48);
+        REQUIRE(de48 != nullptr);
+        CHECK(de48->value() == "");
+        auto de63 = msg->get<Message>(63);
+        REQUIRE(de63 != nullptr);
+        auto de64 = msg->get<OpaqueField>(64);
+        REQUIRE(de64 != nullptr);
+        CHECK(de64->value() == "ABC");
+    }
+}
+
+TEST_CASE("length prefix above maximum: strict throws, non-strict clamps", "[remaining][zerolen]") {
+    TempDir dir;
+    auto parser = spec::SpecDecoder::loadFromYaml(dir.write("zl2.yml", kZeroLenYaml));
+    // DE63-Prefix 237 > 50
+    const auto wire = zeroLenWire(B({ 0xF0, 0xF0, 0xF0 }), B({ 0xF2, 0xF3, 0xF7 }));
+    parser->strict(true);
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    CHECK_THROWS_AS(msg->unparse(msg, wire), std::runtime_error);
+    parser->strict(false);
+    auto msg2 = std::make_shared<Message>();
+    msg2->parser(parser);
+    CHECK_NOTHROW(msg2->unparse(msg2, wire));   // Legacy: auf Maximum geklemmt (+ WARN)
+}

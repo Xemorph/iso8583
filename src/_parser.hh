@@ -306,6 +306,15 @@ namespace TNG_NAMESPACE {
             c_ = std::move(c);
         }
 
+        // Container-Basis-Parser n_ liest den Längenprefix → Modus muss dorthin,
+        // sonst bleibt n_ nach strict(false) strikt.
+        using ISOFieldParserPtrBase::strict;
+        void strict(bool v) const noexcept override {
+            ISOFieldParserPtrBase::strict(v);
+            if (n_)
+                n_->strict(v);
+        }
+
         /// Returns the inner ::TNG_NAMESPACE::ISOBaseParser when type() == NESTED
         /// Allows ::TNG_NAMESPACE::ISOMessage::set(dot-notation) to find sub element types
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr
@@ -635,9 +644,24 @@ namespace TNG_NAMESPACE {
                     l = codec::decode_length<pe_, l_>(b, o); // Something like this?
 
                 // Checks for length are different between types
-                if constexpr (l_ != codec::Length::CONSUME)
-                    if (l == 0 || l > de_l_)
+                if constexpr (l_ != codec::Length::CONSUME) {
+                    if (ll == 0) {
+                        // FIX/UNKNOWN: kein Prefix (decode_length liefert 0) → Maximum.
+                        if (l == 0 || l > de_l_)
+                            l = de_l_;
+                    }
+                    else if (l > de_l_) {
+                        // Längenprefix über Maximum: strict → Fehler, sonst klemmen.
+                        if (strict_)
+                            throw std::runtime_error(
+                                "Längenprefix " + std::to_string(l) + " > Maximum " +
+                                std::to_string(de_l_) + " (Offset " + std::to_string(o) + ")");
+                        TNG_LOG_WARN("[codec] Längenprefix {} > Maximum {} (nicht-strikt): auf Maximum geklemmt",
+                            l, de_l_);
                         l = de_l_;
+                    }
+                    // Prefix == 0 → leeres Feld (nur der Prefix wird verbraucht).
+                }
 
                 // Truncation:
                 // -----------

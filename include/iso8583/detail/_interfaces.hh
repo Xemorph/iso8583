@@ -294,7 +294,7 @@ namespace TNG_NAMESPACE {
         using ISOFieldParserPtrBaseSmartPtr = std::shared_ptr<ISOFieldParserPtrBase>;
 
         /// @brief Setzt den strikten Modus dieses Feld-Parsers.
-        void strict(bool v) const noexcept { strict_ = v; }
+        virtual void strict(bool v) const noexcept { strict_ = v; }
 
         /// @brief Liefert den aktuellen strikten-Modus-Status.
         [[nodiscard]] bool strict() const noexcept { return strict_; }

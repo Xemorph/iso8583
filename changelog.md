@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased (0.9.1)
+
+### `[#](Fixed)` Längenprefix `0` = leeres Feld; Prefix > Maximum im strict-Modus ein Fehler
+
+- **Behoben:** Bei Feldern mit Längenprefix (`ll`/`lll`/…, alle Prefix-Encodings,
+  auch `nested`-Container) wurde ein Prefix `0` still als *Maximum* gelesen
+  (`000` bei `length: 50` las 50 Bytes → „abgeschnitten“ oder verschobene
+  Folgefelder). Jetzt: leeres Feld, nur der Prefix wird verbraucht (`nested`:
+  leerer Container).
+- **Neu:** Prefix > Maximum wirft im strict-Modus einen positionierten Fehler
+  (`Längenprefix 237 > Maximum 50`); nicht-strikt weiterhin auf das Maximum
+  geklemmt, jetzt mit `WARN`.
+- **Intern:** `strict(bool)` erreicht nun auch den Container-Basis-Parser
+  eines `nested`-Felds (`ISOFieldParserPtrBase::strict` ist `virtual`); bisher
+  blieb er nach `strict(false)` strikt.
+- `FIX`/`UNKNOWN`/`CONSUME` (kein Prefix) sind unverändert.
+
 ## 0.9.0
 
 ### `[+](Added)` Nibble-Unterfelder: `pack: nibble` an `nested`-Containern (FR-13)
