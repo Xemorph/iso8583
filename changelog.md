@@ -15,6 +15,11 @@
 - **Intern:** `strict(bool)` erreicht nun auch den Container-Basis-Parser
   eines `nested`-Felds (`ISOFieldParserPtrBase::strict` ist `virtual`); bisher
   blieb er nach `strict(false)` strikt.
+- **Neu:** Text-Längenprefix (ASCII `0x30`–`0x39`, EBCDIC `0xF0`–`0xF9`) wird auf
+  Ziffern geprüft. Strict: positionierter Fehler (`Längenprefix enthält
+  Nicht-Ziffer 0x00 …`); nicht-strikt: `WARN` + Legacy-Dekodierung. Bisher las
+  EBCDIC (`& 0x0F`) `00 00 00` oder ASCII-Ziffern in einer EBCDIC-Spec still
+  als gültige Länge. BCD-/Binär-Prefix unverändert (`0` = leeres Feld).
 - `FIX`/`UNKNOWN`/`CONSUME` (kein Prefix) sind unverändert.
 
 ## 0.9.0

@@ -631,6 +631,28 @@ namespace TNG_NAMESPACE {
                         " Prefix-Bytes ab Offset " + std::to_string(o) + ", im Puffer vorhanden " +
                         std::to_string(o < b.size() ? b.size() - o : 0) + " Bytes");
 
+                // Text-Prefix (ASCII '0'-'9' / EBCDIC 0xF0-0xF9) muss aus Ziffern
+                // bestehen: decode_length maskiert bei EBCDIC nur mit 0x0F, ein
+                // 00 00 00 (oder 0xC1) wuerde sonst als gueltige Laenge gelesen.
+                // strict: Fehler; nicht-strikt: WARN + Legacy-Dekodierung.
+                if constexpr (ll > 0 && (pe_ == codec::PrefixEncoder::ASCII || pe_ == codec::PrefixEncoder::EBCDIC)) {
+                    constexpr uint8_t hi = pe_ == codec::PrefixEncoder::ASCII ? 0x30 : 0xF0;
+                    for (std::size_t i = 0; i < ll; ++i) {
+                        const uint8_t ch = b[o + i];
+                        if (ch >= hi && ch <= hi + 9) continue;
+                        if (strict_) {
+                            char hx[3];
+                            std::snprintf(hx, sizeof hx, "%02X", ch);
+                            throw std::runtime_error(
+                                std::string("Längenprefix enthält Nicht-Ziffer 0x") + hx +
+                                " (Prefix-Byte " + std::to_string(i) + " ab Offset " + std::to_string(o) + ")");
+                        }
+                        TNG_LOG_WARN("[codec] Längenprefix enthält Nicht-Ziffer 0x{:02X} bei Offset {} (nicht-strikt): Legacy-Dekodierung",
+                            ch, o + i);
+                        break;
+                    }
+                }
+
                 if constexpr (l_ == codec::Length::UNKNOWN || l_ == codec::Length::CONSUME) {
                     l /* remaining */ = b.size() - o;
                     // (0.6.0) remaining + BCD: b.size() - o ist die Byte-Zahl,

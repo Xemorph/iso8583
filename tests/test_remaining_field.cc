@@ -797,3 +797,88 @@ TEST_CASE("empty nested container encodes prefix 0 and roundtrips", "[remaining]
     REQUIRE_NOTHROW(out = msg->parse(msg));
     CHECK(out == wire);
 }
+
+// =============================================================================
+// Nicht-Ziffern im Text-Laengenprefix (ASCII/EBCDIC); BCD/Binary: 0 = leer
+// =============================================================================
+
+namespace {
+
+// DE48 mit Prefix-Encoding/Format aus `de48`; DE64 = "ABC" in der Spec-Codierung.
+std::string prefixSpec(const char* enc, const char* de48) {
+    return std::string("spec: \"t\"\nencoding: ") + enc + "\n"
+        "fields:\n"
+        "  \"000\": { format: numeric, length: 4 }\n"
+        "  \"001\": { format: bitmap, length: 8 }\n"
+        "  \"048\": " + de48 + "\n"
+        "  \"064\": { format: char, length: 3 }\n";
+}
+
+std::vector<uint8_t> prefixWire(bool ebcdic, const std::vector<uint8_t>& prefix) {
+    std::vector<uint8_t> w = ebcdic ? B({ 0xF0, 0xF2, 0xF0, 0xF0 }) : B({ '0', '2', '0', '0' });
+    w.insert(w.end(), { 0, 0, 0, 0, 0, 0x01, 0, 0x01 });
+    w.insert(w.end(), prefix.begin(), prefix.end());
+    if (ebcdic) w.insert(w.end(), { 0xC1, 0xC2, 0xC3 });
+    else        w.insert(w.end(), { 'A', 'B', 'C' });
+    return w;
+}
+
+} // namespace
+
+TEST_CASE("text length prefix with non-digit bytes: strict throws, non-strict warns", "[remaining][zerolen][prefixdigit]") {
+    struct Row { const char* enc; bool ebcdic; std::vector<uint8_t> prefix; };
+    const std::vector<Row> rows = {
+        { "ebcdic", true,  { 0x00, 0x00, 0x00 } },
+        { "ebcdic", true,  { 0xF0, 0xF0, 0xC1 } },
+        { "ebcdic", true,  { 0x30, 0x30, 0x30 } },   // ASCII-Ziffern in EBCDIC-Spec
+        { "ascii",  false, { 0x00, 0x00, 0x00 } } };
+    for (const auto& r : rows) {
+        TempDir dir;
+        auto parser = spec::SpecDecoder::loadFromYaml(dir.write("pd.yml",
+            prefixSpec(r.enc, "{ format: lllchar, length: 50 }")));
+        const auto wire = prefixWire(r.ebcdic, r.prefix);
+        parser->strict(true);
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        CHECK_THROWS_AS(msg->unparse(msg, wire), std::runtime_error);
+        parser->strict(false);
+        auto msg2 = std::make_shared<Message>();
+        msg2->parser(parser);
+        CHECK_NOTHROW(msg2->unparse(msg2, wire));
+    }
+}
+
+TEST_CASE("text length prefix with valid digits is unaffected", "[remaining][zerolen][prefixdigit]") {
+    for (bool ebcdic : { true, false }) {
+        TempDir dir;
+        auto parser = spec::SpecDecoder::loadFromYaml(dir.write("pd2.yml",
+            prefixSpec(ebcdic ? "ebcdic" : "ascii", "{ format: lllchar, length: 50 }")));
+        const auto wire = prefixWire(ebcdic, ebcdic ? B({ 0xF0, 0xF0, 0xF0 }) : B({ '0', '0', '0' }));
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        CHECK(msg->unparse(msg, wire) == wire.size());
+        CHECK(msg->get<OpaqueField>(48)->value() == "");
+        CHECK(msg->get<OpaqueField>(64)->value() == "ABC");
+    }
+}
+
+// BCD-/Binary-Praefix: 00 00 00 ist ein gueltiger Wert (0) -> leeres Feld.
+TEST_CASE("BCD and binary length prefix 0 yields empty field", "[remaining][zerolen][prefixdigit]") {
+    struct Row { const char* de48; std::vector<uint8_t> prefix; };
+    const std::vector<Row> rows = {
+        { "{ format: lllchar, length: 50, prefix_encoding: bcd }",    { 0x00, 0x00 } },
+        { "{ format: lllchar, length: 50, prefix_encoding: binary }", { 0x00, 0x00, 0x00 } } };
+    for (const auto& r : rows) {
+        TempDir dir;
+        auto parser = spec::SpecDecoder::loadFromYaml(dir.write("pd3.yml", prefixSpec("ascii", r.de48)));
+        for (bool strict : { true, false }) {
+            parser->strict(strict);
+            const auto wire = prefixWire(false, r.prefix);
+            auto msg = std::make_shared<Message>();
+            msg->parser(parser);
+            CHECK(msg->unparse(msg, wire) == wire.size());
+            CHECK(msg->get<OpaqueField>(48)->value() == "");
+            CHECK(msg->get<OpaqueField>(64)->value() == "ABC");
+        }
+    }
+}
