@@ -1672,6 +1672,23 @@ namespace TNG_NAMESPACE::spec {
             childMap, f.sensitive);
     }
 
+    static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
+        buildFieldParser(const SpecField& f);
+
+    // FR-14/FR-15 (0.11.0): Kind-Parser eines Containers. Ein nested-Kind wird
+    // rekursiv wie ein Top-Level-Container gebaut (buildFieldParser), alles
+    // andere bleibt ein Skalar-Parser. PCI: 'sensitive' des Elterncontainers
+    // wird auf das Kind (und damit auf dessen Sub-Baum) vererbt.
+    static ::TNG_NAMESPACE::ISOFieldParserPtrBase::ISOFieldParserPtrBaseSmartPtr
+        buildChildParser(const SpecField& child, bool parentSensitive)
+    {
+        if (!parentSensitive || child.sensitive)
+            return buildFieldParser(child);
+        SpecField c = child;
+        c.sensitive = true;
+        return buildFieldParser(c);
+    }
+
     // Sequenz-Sub-Parser für nested Container (ohne TLV): ISOBaseParser im
     // Container-Modus (kein MTI/Bitmap, Slot 0 = erstes Kind), je ein
     // Skalaren-Parser pro deklariertem Kind. Der Container-Basis-Parser
@@ -1694,12 +1711,7 @@ namespace TNG_NAMESPACE::spec {
                 const auto slot = static_cast<std::size_t>(f.child_keys[i]);
                 for (; nextSlot < slot; ++nextSlot)
                     sub->add(std::make_shared<IF_NOP>());
-                const auto& child = f.children[i];
-                auto childP = createScalarParser(child);
-                if (child.sensitive || f.sensitive)
-                    if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
-                        fp->sensitive(true);
-                sub->add(childP);
+                sub->add(buildChildParser(f.children[i], f.sensitive));
                 nextSlot = slot + 1;
             }
             return sub;
@@ -1711,15 +1723,10 @@ namespace TNG_NAMESPACE::spec {
                 digits.push_back(child.format == "NOP" ? 0u : child.length);
             sub->nibblePack(std::move(digits), f.bcd_pad, f.bcd_pad_explicit);
         }
-        for (const auto& child : f.children) {
-            auto childP = createScalarParser(child);
-            // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang
-            // von einem sensitive Container.
-            if (child.sensitive || f.sensitive)
-                if (auto fp = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOFieldParserPtrBase>(childP))
-                    fp->sensitive(true);
-            sub->add(childP);
-        }
+        // [ISO8583] 3.4 (PCI): eigene Deklaration ODER Erbgang von einem
+        // sensitive Container (s. buildChildParser).
+        for (const auto& child : f.children)
+            sub->add(buildChildParser(child, f.sensitive));
         return sub;
     }
 

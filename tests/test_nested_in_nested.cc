@@ -204,8 +204,12 @@ TEST_CASE("nested in nested FR-14 - nested child of a bitmap container decodes a
     msg->parser(parser);
     REQUIRE(msg->unparse(msg, w) == w.size());
     auto k6 = sub(sub(msg, 62), 6);
-    CHECK(k6->get<OpaqueField>(1)->value() == "AA");
-    CHECK(k6->get<OpaqueField>(2)->value() == "BBCC");
+    auto k61 = k6->get<BinaryField>(1);
+    auto k62 = k6->get<BinaryField>(2);
+    REQUIRE(k61);
+    REQUIRE(k62);
+    CHECK(k61->value() == Bytes{ 0xAA });
+    CHECK(k62->value() == Bytes{ 0xBB, 0xCC });
     CHECK(msg->parse(msg) == w);
 
     auto built = std::make_shared<Message>("0200");
