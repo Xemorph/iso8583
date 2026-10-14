@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased (0.10.0)
+## 0.10.0
+
+Minor-Release mit einem Feature und einem Aufräum-Breaking-Change:
+
+- **`[+]` FR-16:** `header:` als Feldbeschreibung (Header variabler Länge, inkl. binärer
+  Daten hinter EBCDIC-`LLL`).
+- **`[!]` BREAKING:** deprecated `ISO*`-Aliase entfernt, drei vendored Header entfallen.
+- **ABI:** `ISOParserPtrBase` (neue virtuelle Funktion), `ISOMessage` und `ISOSpec`
+  (neue Mitglieder) ändern Vtable/Layout – Shared-Library-Consumer neu kompilieren.
 
 ### `[+](Added)` FR-16: `header:` als Feldbeschreibung (Header variabler Länge)
 
