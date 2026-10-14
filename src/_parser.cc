@@ -197,6 +197,49 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
     return out;
 }
 
+// --- FR-16 (0.10.0): Header als Feldbeschreibung ------------------------------
+// Dekodiert die Header-Kinder sequenziell ab Offset 0 von b. Jedes Kind
+// bestimmt seine Länge selbst (fest oder per Längenpräfix); ein Präfix, das
+// über das Pufferende führt, oder ein nichtnumerisches Präfix wirft (strict)
+// positioniert aus dem Feld-Codec - es wird nie über das Ende gelesen.
+// Rückgabe: verbrauchte Header-Bytes (dahinter beginnt der MTI).
+std::size_t TNG_NAMESPACE::ISOBaseParser::unparseHeaderFields(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+    const std::vector<uint8_t>& b,
+    std::size_t base_offset)
+{
+    auto hm = std::make_shared<::TNG_NAMESPACE::ISOMessage>(TNG_KEY_TYPE{ 0 });
+    hm->parser(hdr_parser_);
+
+    std::size_t consumed = 0u;
+    for (std::size_t i = 0; i < hdr_parser_->l_.size(); ++i) {
+        const auto& ptr = hdr_parser_->l_[i];
+        const auto key = static_cast<TNG_KEY_TYPE>(i);
+
+        auto de = ptr->create_component(key);
+        de->description(ptr->description());
+        de->set_sensitive(ptr->sensitive());
+        de->wire_offset(base_offset + consumed);
+        std::size_t de_bytes;
+        try {
+            de_bytes = ptr->unparse(de, b, consumed);
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                "[ISO8583] Header-Feld " + std::to_string(i) + " '" +
+                std::string(ptr->description()) + "' @ Offset " +
+                std::to_string(base_offset + consumed) + ": " + e.what());
+        }
+        de->wire_length(de_bytes);
+        consumed += de_bytes;
+        if (!hm->set(de))
+            throw std::runtime_error("[ISO8583] Header-Feld " + std::to_string(i) +
+                ": ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+    }
+    m->headerFields(std::move(hm));
+    TNG_LOG_TRACE("[ISOBaseParser] Header-Felder: {} Bytes", consumed);
+    return consumed;
+}
+
 // --- Top-Level unparse (kein base_offset) ------------------------------------
 std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     ::TNG_NAMESPACE::ISOComponentPtrBase::ISOComponentPtrBaseSmartPtr c,
@@ -247,7 +290,12 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     std::size_t consumed = 0u;
 
     // Header
-    if (hdr_sz_ != 0) {
+    if (hdr_parser_) {
+        // FR-16: Header als Feldbeschreibung - die Länge ergibt sich aus den
+        // verbrauchten Kind-Bytes (hdr_sz_ ist in dem Fall 0).
+        consumed += unparseHeaderFields(m, b, base_offset);
+    }
+    else if (hdr_sz_ != 0) {
         if (b.size() < hdr_sz_) {
             throw std::runtime_error(
                 "[ISO8583] Byte-Image zu kurz für Header: benötigt " +
