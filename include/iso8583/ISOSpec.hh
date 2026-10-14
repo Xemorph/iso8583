@@ -301,6 +301,24 @@ namespace TNG_NAMESPACE {
             /// @return `0` if the key is not defined.
             std::size_t headerSize() const noexcept { return headerSize_.value_or(0); }
 
+            /// @brief `true` if the root `header:` key is a field description
+            ///        (variable-length header, FR-16, 0.10.0).
+            ///
+            /// For such a header `hasHeader()` is `true` and `headerSize()` is
+            /// `0` (the length is only known after decoding); the children are
+            /// available via @ref headerFields.
+            ///
+            ///     header:
+            ///       type: nested
+            ///       children:
+            ///         - { format: char,    length: 6 }
+            ///         - { format: lllchar, length: 999 }
+            bool hasHeaderFields() const noexcept { return !headerFields_.empty(); }
+
+            /// @brief Children of a field-description header, in wire order
+            ///        (`key` = position, starting at 0); empty for `header: N`.
+            const std::vector<SpecFieldInfo>& headerFields() const noexcept { return headerFields_; }
+
             /// @brief Returns field info for a DE key, or `nullopt` if not defined.
             /// @param key DE number to look up.
             std::optional<SpecFieldInfo> field(TNG_KEY_TYPE key) const;
@@ -316,13 +334,18 @@ namespace TNG_NAMESPACE {
             /// @brief Internal constructor – use @ref SpecDecoder::loadBothFromYaml.
             /// @param headerSize Value of the root YAML `header:` key; `nullopt`
             ///        if the key is absent (→ `hasHeader()` is false).
+            /// @param headerFields Children of a field-description `header:`
+            ///        (FR-16); empty for a numeric header.  With non-empty
+            ///        `headerFields` pass `headerSize = 0`.
             ISOSpec(std::string name, std::string encoding,
                 std::vector<SpecFieldInfo> fields,
-                std::optional<std::size_t> headerSize = std::nullopt)
+                std::optional<std::size_t> headerSize = std::nullopt,
+                std::vector<SpecFieldInfo> headerFields = {})
                 : name_(std::move(name))
                 , encoding_(std::move(encoding))
                 , fields_(std::move(fields))
                 , headerSize_(std::move(headerSize))
+                , headerFields_(std::move(headerFields))
             {
             }
 
@@ -333,6 +356,7 @@ namespace TNG_NAMESPACE {
             // nullopt = YAML-Root-Key "header" fehlt; ansonsten deren Wert
             // (können auch 0 sein – hasHeader() meldet dann trotzdem true).
             std::optional<std::size_t> headerSize_;
+            std::vector<SpecFieldInfo> headerFields_;
         };
 
         // ── SpecDecoder ───────────────────────────────────────────────────────

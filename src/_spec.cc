@@ -1904,10 +1904,56 @@ namespace TNG_NAMESPACE::spec {
         return parseBcdPadValue(getStr(yaml, "bcd_pad"), "Root-Key", yaml["bcd_pad"].id(), smap);
     }
 
+    // FR-16 (0.10.0): Root-Key 'header:' als Feldbeschreibung (Map) statt Byte-
+    // Zahl. Grammatik = ein nested-Container mit positionellen Skalar-Kindern
+    // (Header-Länge = Summe der verbrauchten Kind-Bytes). Fail-closed mit
+    // Position für alles, was im Header keinen Sinn ergibt.
+    static SpecField parseHeaderField(ryml::ConstNodeRef node,
+        const std::string& defaultEncoding, const SourceMap* smap)
+    {
+        validateFieldKeys(node, "header", smap);
+        if (hasKey(node, "type") && toLower(getStr(node, "type")) != "nested")
+            throw SpecValidationError(
+                "header: als Feldbeschreibung muss 'type: nested' sein",
+                node["type"].id(), smap);
+        for (const char* bad : { "format", "length", "tlv", "bitmap", "pack", "prefix_encoding" })
+            if (hasKey(node, bad))
+                throw SpecValidationError(
+                    std::string("header: '") + bad + "' ist im Header-Container "
+                    "unzulässig (nur 'children' als Liste; der Header hat keinen "
+                    "eigenen Längenframe)", node[bad].id(), smap);
+        if (!hasKey(node, "children") || !node["children"].is_seq() ||
+            !node["children"].has_children())
+            throw SpecValidationError(
+                "header: als Feldbeschreibung benötigt 'children' als nicht-leere "
+                "Liste (z.B. 'children: [ { format: char, length: 4 } ]')",
+                node.id(), smap);
+
+        SpecField f = parseSpecField(node, defaultEncoding, "header", smap);
+        std::size_t idx = 0;
+        for (ryml::ConstNodeRef c : node["children"].children()) {
+            const SpecField& child = f.children.at(idx);
+            // Ein Header-Kind muss seine Länge selbst bestimmen: 'remaining'
+            // würde den Nachrichtenrest verschlingen, Bitmap/NOP/Container
+            // haben im Header keine Bedeutung.
+            if (child.type != SpecFieldType::SCALAR || child.format == "REMAINING" ||
+                child.format == "BITMAP" || child.format == "NOP" || child.format == "UNUSED")
+                throw SpecValidationError(
+                    "header: Kind " + std::to_string(idx) + " (format=" + child.format +
+                    "): nur Skalarfelder mit eigener Länge sind im Header erlaubt "
+                    "(kein remaining/bitmap/nop/nested)", c.id(), smap);
+            ++idx;
+        }
+        return f;
+    }
+
     struct LoadedSpec {
         std::string              desc;
         std::string              defaultEncoding;
         std::size_t              hdr_sz = 0;
+        // FR-16 (0.10.0): 'header:' als Feldbeschreibung (variable Länge).
+        // Gesetzt => hdr_sz == 0 und headerKey == true.
+        std::optional<SpecField> headerField;
         // Wurde das YAML-Root-Key "header" definiert? (Kann true sein bei
         // hdr_sz == 0 – ISOSpec::hasHeader() meldet die Präsenz des Keys,
         // der Parser behandelt 0 wie "kein Header".)
@@ -1934,12 +1980,23 @@ namespace TNG_NAMESPACE::spec {
 
         LoadedSpec result;
         result.desc = getStr(yaml, "spec", "<unnamed>");
-        result.hdr_sz = getSizeT(yaml, "header", 0);
         result.headerKey = hasKey(yaml, "header");
         result.strict = getBool(yaml, "strict", true);
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
         const bool rootStrictLength = getBool(yaml, "strict_length", false);
         const auto rootBcdPad = readRootBcdPad(yaml, &pr.source_map);
+
+        // 'header:' ist entweder eine Byte-Zahl (fest) oder eine Feldbeschreibung.
+        if (result.headerKey && yaml["header"].is_map()) {
+            result.headerField = parseHeaderField(
+                yaml["header"], result.defaultEncoding, &pr.source_map);
+            if (rootStrictLength)
+                applyStrictLengthDefault(*result.headerField, true);
+            if (rootBcdPad)
+                applyBcdPadDefault(*result.headerField, *rootBcdPad);
+        }
+        else
+            result.hdr_sz = getSizeT(yaml, "header", 0);
 
         for (ryml::ConstNodeRef entry : yaml["fields"].children()) {
             const auto de = toStdString(entry.key());
@@ -1997,6 +2054,11 @@ namespace TNG_NAMESPACE::spec {
                 ? buildFieldParser(loaded.fields.at(i))
                 : std::make_shared<IF_NOP>());
         }
+        // FR-16: Header als Feldbeschreibung -> Container-Sub-Parser (vor strict(),
+        // damit der Modus auch dorthin propagiert wird).
+        if (loaded.headerField)
+            parser->headerFields(std::static_pointer_cast<::TNG_NAMESPACE::ISOBaseParser>(
+                buildNestedSubParser(*loaded.headerField)));
         // [ISO8583] strict-Modus (YAML-Key `strict:`, Default true) auf alle
         // Feld-Parserv inkl. verschachtelter Sub-Parserv propagieren.
         parser->strict(loaded.strict);
@@ -2243,8 +2305,12 @@ namespace TNG_NAMESPACE::spec {
                 infos.push_back(makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(key), f));
             const std::optional<std::size_t> hdr =
                 b.loaded.headerKey ? std::make_optional(b.loaded.hdr_sz) : std::nullopt;
+            std::vector<SpecFieldInfo> hdrInfos;
+            if (b.loaded.headerField)
+                hdrInfos = makeSpecFieldInfo(static_cast<TNG_KEY_TYPE>(0), *b.loaded.headerField).children;
             b.spec = std::make_shared<ISOSpec>(
-                b.loaded.desc, b.loaded.defaultEncoding, std::move(infos), std::move(hdr));
+                b.loaded.desc, b.loaded.defaultEncoding, std::move(infos), std::move(hdr),
+                std::move(hdrInfos));
         }
         return b;
     }

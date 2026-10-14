@@ -229,6 +229,13 @@ namespace TNG_NAMESPACE {
         /// nested fields (e.g. DE048 sub-elements) typically do not.
         virtual bool emit_bitmap() const noexcept = 0;
 
+        /// @brief Header-field sub-parser (FR-16, 0.10.0), or `nullptr`.
+        ///
+        /// Non-null only if the spec declares the root key `header:` as a field
+        /// description (instead of a fixed byte count).  The returned parser
+        /// reads/writes the header children in front of the MTI.
+        virtual ISOParserPtrBaseSmartPtr headerParser() const noexcept { return nullptr; }
+
         /// @brief Deserialises a full message from a wire buffer (top-level).
         ///
         /// Reads MTI, bitmap and all active DEs from `b` and populates `c`.

@@ -39,6 +39,16 @@ namespace TNG_NAMESPACE {
         TNG_KEY_TYPE bmp_3rd_ = std::numeric_limits<TNG_KEY_TYPE>::min();
         // Header size if applicable;
         std::size_t hdr_sz_ = 0u;
+        // [ISO8583] FR-16 (0.10.0): Header als Feldbeschreibung (variable Länge).
+        // Container-Sub-Parser (kein MTI/Bitmap); seine Kinder werden vor dem
+        // MTI sequenziell gelesen/geschrieben. Schließt sich mit hdr_sz_ aus.
+        std::shared_ptr<ISOBaseParser> hdr_parser_;
+
+        // FR-16: Header-Felder dekodieren/serialisieren (src/_parser.cc)
+        std::size_t unparseHeaderFields(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+            const std::vector<uint8_t>& b, std::size_t base_offset);
+        void parseHeaderFields(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+            std::vector<uint8_t>& out) const;
         // [ISO8583] FR-3 (0.6.0): Container-Modus (Spec: type: nested,
         // text-basiertes Format, kein TLV): der Sub-Payload enthält
         // weder MTI noch Bitmap – Slot 0 ist das erste Kind-Feld.
@@ -90,6 +100,11 @@ namespace TNG_NAMESPACE {
             hdr_sz_ = hdrSz;
         }
 
+        // [ISO8583] FR-16 (0.10.0): Header-Feld-Parser setzen (Loader). Der Parser
+        // muss im Container-Modus stehen; hdr_sz_ bleibt 0.
+        void headerFields(std::shared_ptr<ISOBaseParser> p) { hdr_parser_ = std::move(p); }
+        ISOParserPtrBaseSmartPtr headerParser() const noexcept override { return hdr_parser_; }
+
         // [ISO8583] FR-3 (0.6.0): Container-Modus setzen/abfragen
         // (s. container_). const-Setter wie strict(bool) – das Flag
         // betrifft ausschließlich dieses Parser-Objekt (Container-Sub-Parser).
@@ -120,6 +135,8 @@ namespace TNG_NAMESPACE {
         using ISOParserPtrBase::strict; // Getter `bool strict() const` bleiben sichtbar
         void strict(bool v) const noexcept override {
             ISOParserPtrBase::strict(v);
+            if (hdr_parser_)
+                hdr_parser_->strict(v);
             for (const auto& fp : l_) {
                 fp->strict(v);
                 if (auto sub = fp->subParser())
