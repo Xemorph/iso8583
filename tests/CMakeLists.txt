@@ -51,6 +51,8 @@ add_executable(libiso8583_tests
     test_nibble_pack.cc
     # (0.10.0, FR-16) 'header:' als Feldbeschreibung (variable Header-Laenge)
     test_header_fields.cc
+    # (0.11.0, FR-14/FR-15) Container in Container (nested in nested)
+    test_nested_in_nested.cc
     # test_e2e_full_message.cc MUSS der letzte Eintrag bleiben: Catch2
     # registriert TEST_CASEs in der Reihenfolge, in der ihre statischen
     # Registrar-Objekte initialisiert werden. Das ist laut Standard über
