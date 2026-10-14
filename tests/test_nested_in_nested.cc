@@ -12,6 +12,7 @@
 // [catch2]
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <catch2/matchers/catch_matchers_all.hpp>
 // [tng]
 #include <iso8583/ISOMessage.hh>
 #include <iso8583/ISOSpec.hh>
@@ -311,5 +312,26 @@ TEST_CASE("nested in nested FR-15 - nesting beyond the depth limit is a load err
         node = "{ type: nested, format: binary, length: 1, children: [ " + node + " ] }";
     const std::string fld = "  \"003\": " + node + "\n";
     const TempYaml y(msgSpec(fld));
-    CHECK_THROWS_AS(load(y), std::runtime_error);
+    // Der Preprozessor (Limit 200 YAML-Knoten, ~2 pro Spec-Ebene) greift vor
+    // parseSpecField; beide Meldungen enthalten "zu tief".
+    CHECK_THROWS_WITH(load(y), ContainsSubstring("zu tief"));
+}
+
+TEST_CASE("nested in nested FR-13 - nested child in a nibble pack container is a load error",
+    "[nested-in-nested][fr13]") {
+    const std::string fld =
+        "  \"003\":\n"
+        "    type: nested\n"
+        "    format: binary\n"
+        "    length: 4\n"
+        "    pack: nibble\n"
+        "    children:\n"
+        "      - { format: nop }\n"
+        "      - type: nested\n"
+        "        format: binary\n"
+        "        length: 2\n"
+        "        children:\n"
+        "          - { format: numeric, encoding: bcd, length: 2 }\n";
+    const TempYaml y(msgSpec(fld));
+    CHECK_THROWS_WITH(load(y), ContainsSubstring("pack: nibble"));
 }

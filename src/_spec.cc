@@ -712,11 +712,12 @@ namespace TNG_NAMESPACE::spec {
     // Bindung nutzen und sich nichts teilen).
     static constexpr int MAX_RECURSION_DEPTH = 200;
 
-    static void checkDepth(int depth) {
+    static void checkDepth(int depth, ryml::ConstNodeRef node, const SourceMap* smap) {
         if (depth > MAX_RECURSION_DEPTH)
-            throw std::runtime_error(
+            throw SpecValidationError(
                 "Feld-Verschachtelung zu tief (> " + std::to_string(MAX_RECURSION_DEPTH) +
-                " Ebenen) - vermutlich eine fehlerhafte 'children'-Struktur in der Spec.");
+                " Ebenen) - vermutlich eine fehlerhafte 'children'-Struktur in der Spec.",
+                node.id(), smap);
     }
 
     // Forward-Deklarationen (Definitionen weiter unten im Dispatch-Abschnitt):
@@ -740,7 +741,7 @@ namespace TNG_NAMESPACE::spec {
         const SourceMap* smap,
         int depth)
     {
-        checkDepth(depth);
+        checkDepth(depth, node, smap);
         SpecField f;
         f.format = toUpper(getStr(node, "format"));
 
