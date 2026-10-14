@@ -371,3 +371,82 @@ TEST_CASE("header fields FR-16 - field-only spec still rejects header",
     CHECK_THROWS_WITH(spec::SpecDecoder::loadFieldFromYaml(y.str()),
         ContainsSubstring("header"));
 }
+
+// -----------------------------------------------------------------------------
+// Teil B (FR-16): binaere Daten hinter einem EBCDIC-LLL. Kein neues Format noetig:
+// 'lllbinary' mit 'encoding: ebcdic' ist EBCDIC-Praefix (Byte-Zaehlung) + Roh-Bytes
+// (parserTable: LLLBINARY|EBCDIC); der Wert ist ein BinaryField (Hex-String beim set()).
+// -----------------------------------------------------------------------------
+namespace {
+
+// Header: char(4), lllchar (Text), lllbinary (ICC-Daten) - gemischte Kinder.
+const std::string kMixedHeader =
+    "header:\n"
+    "  type: nested\n"
+    "  children:\n"
+    "    - { format: char,      length: 4,   description: \"Fest\" }\n"
+    "    - { format: lllchar,   length: 999, description: \"Text\" }\n"
+    "    - { format: lllbinary, length: 10,  description: \"ICC-Daten\" }\n";
+
+std::vector<uint8_t> binValue(const std::shared_ptr<Message>& msg, int key) {
+    auto h = msg->headerFields();
+    REQUIRE(h);
+    auto f = h->get<BinaryField>(static_cast<TNG_KEY_TYPE>(key));
+    REQUIRE(f);
+    return f->value();
+}
+
+} // namespace
+
+TEST_CASE("header fields FR-16 part B - binary data behind an EBCDIC LLL decodes, builds and round-trips",
+    "[header-fields][fr16][fr16b]") {
+    const TempYaml y(specYaml(kMixedHeader));
+    auto parser = load(y);
+
+    const Bytes hdr = cat({ ebc("ABCD"), ebc("003"), ebc("xyz"), ebc("003"), Bytes{ 0x9F, 0x26, 0x08 } });
+    const Bytes w = cat({ hdr, body() });
+
+    SECTION("decode: LLL=003 gives the three raw bytes, MTI follows") {
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        REQUIRE(msg->unparse(msg, w) == w.size());
+        CHECK(hval(msg, 1) == "xyz");
+        CHECK(binValue(msg, 2) == Bytes{ 0x9F, 0x26, 0x08 });
+        CHECK(msg->headerFields()->get<BinaryField>(2)->readable_value() == "9F2608");
+        CHECK(msg->mti() == "0200");
+        CHECK(msg->parse(msg) == w);
+    }
+    SECTION("build from the hex string is byte-identical") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        auto h = msg->headerFields();
+        REQUIRE(setv(h, 0, "ABCD"));
+        REQUIRE(setv(h, 1, "xyz"));
+        REQUIRE(setv(h, 2, "9F2608"));
+        REQUIRE(setv(msg, 3, "000000"));
+        CHECK(msg->parse(msg) == w);
+    }
+    SECTION("LLL=000 is an empty field and rebuilds") {
+        const Bytes w0 = cat({ ebc("ABCD"), ebc("003"), ebc("xyz"), ebc("000"), body() });
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        REQUIRE(msg->unparse(msg, w0) == w0.size());
+        CHECK(binValue(msg, 2).empty());
+        CHECK(msg->parse(msg) == w0);
+    }
+    SECTION("data longer than length fails when building") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        auto h = msg->headerFields();
+        REQUIRE(setv(h, 0, "ABCD"));
+        REQUIRE(setv(h, 1, "xyz"));
+        REQUIRE(setv(h, 2, "0102030405060708090A0B"));   // 11 Byte > length 10
+        CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("Header-Feld 2"));
+    }
+    SECTION("LLL beyond the declared maximum fails when decoding") {
+        const Bytes wl = cat({ ebc("ABCD"), ebc("003"), ebc("xyz"), ebc("011"), Bytes(11, 0x01), body() });
+        auto msg = std::make_shared<Message>();
+        msg->parser(parser);
+        CHECK_THROWS_WITH(msg->unparse(msg, wl), ContainsSubstring("Header-Feld 2"));
+    }
+}

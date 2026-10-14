@@ -91,6 +91,13 @@ header:
   `type` ≠ `nested`; Kinder mit `remaining`/`bitmap`/`nop`/`nested`. Root-Defaults
   `encoding`, `strict_length`, `bcd_pad` gelten auch hier. In Field-only-Dokumenten
   bleibt `header:` verboten. Mehrere Header-Varianten = mehrere Specs.
+- **Binäre Daten hinter einem EBCDIC-Längenfeld:** `{ format: lllbinary, length: 999 }`
+  unter `encoding: ebcdic` (Root oder Feld) ist EBCDIC-Präfix (3 Ziffern, Zählung in
+  **Byte**) + Roh-Bytes; der Wert ist ein `BinaryField` (Hex-String beim `set()`,
+  `LLL = 000` = leeres Feld). Das ist keine „Mischform“ (kein eigenes
+  `prefix_encoding` nötig): bei `*binary` bestimmt `encoding` das Präfix-Codec, die
+  Nutzdaten bleiben immer roh. Text- und Binärkinder lassen sich im selben Header
+  mischen (`lllchar` + `lllbinary`), und die Kombination gilt ebenso in `fields:`.
 
 ## 2. Feld-Deklaration
 

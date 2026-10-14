@@ -20,8 +20,10 @@
   `remaining`/`bitmap`/`nop`/`nested`-Kinder ab.
 - **ABI:** neue virtuelle Funktion `ISOParserPtrBase::headerParser()`, neues
   Mitglied in `ISOMessage` und `ISOSpec` – Shared-Library-Consumer neu kompilieren.
-- **Nicht enthalten:** `lllbinary` mit EBCDIC-Präfix (Teil B des FR, offen bis der
-  Konsument die Daten-Art klärt).
+- **Teil B (binäre Daten hinter EBCDIC-`LLL`):** keine Library-Änderung nötig –
+  `format: lllbinary` mit `encoding: ebcdic` ist bereits EBCDIC-Präfix + Roh-Bytes
+  (`BinaryField`); neu sind nur Tests (`[fr16b]`, gemischter Header `lllchar` +
+  `lllbinary`) und der Doku-Hinweis in `spec_schema.md`.
 
 ### `[!](BREAKING)` Entfernt: deprecated Aliase; vendored `date.h`/`string-view-lite`/`libpopcnt`
 

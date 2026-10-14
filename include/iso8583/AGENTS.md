@@ -883,7 +883,9 @@ out->headerFields()->set(TNG_KEY_TYPE(0), std::string("ABCD"));
 
 Fehler (positioniert, `[ISO8583] Header-Feld i '…' @ Offset N`): Präfix über das
 Pufferende, nichtnumerisches Präfix, nicht gesetztes Kind beim Bauen, zusätzlich
-gesetztes `header(bytes)`. Normativ: `docs/internals/spec_schema.md` §1.
+gesetztes `header(bytes)`. Binäre Daten hinter EBCDIC-LLL: `format: lllbinary`
+mit `encoding: ebcdic` (EBCDIC-Präfix in Byte + Roh-Bytes, `BinaryField`),
+mischbar mit `lllchar`-Kindern. Normativ: `docs/internals/spec_schema.md` §1.
 
 Verfügbare Header-Typen: `iso8583::BaseHeader`, `iso8583::BASE1Header`
 (Visa), `iso8583::WLP_FOHeader` (Worldline).
