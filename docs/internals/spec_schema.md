@@ -63,7 +63,8 @@ fields:                 # PFLICHT, nicht-leere Map
 
 **Header als Feldbeschreibung (0.10.0, FR-16):** `header:` darf statt einer
 Byte-Zahl ein `type: nested`-Container mit `children` als **Liste** sein. Die
-Kinder (nur Skalarfelder, gleiche Grammatik wie `fields:`-Kinder) werden vor dem
+Kinder (Skalarfelder wie in `fields:` oder — ab 0.11.0, FR-15 — positionelle
+`nested`-Container aus ebensolchen Kindern) werden vor dem
 MTI der Reihe nach gelesen; die Header-Länge ist die Summe der verbrauchten
 Bytes — damit sind längenpräfixierte Header (`lllchar` mit EBCDIC-Präfix usw.)
 dekodier- und baubar. `header: N` (Zahl) bleibt unverändert gültig.
@@ -88,7 +89,8 @@ header:
   liefern die `SpecFieldInfo`-Kinder (`key` = Position ab 0).
 - **Fail-closed beim Laden:** `children` fehlt / ist keine nicht-leere Liste;
   `format`, `length`, `tlv`, `bitmap`, `pack`, `prefix_encoding` am Header selbst;
-  `type` ≠ `nested`; Kinder mit `remaining`/`bitmap`/`nop`/`nested`. Root-Defaults
+  `type` ≠ `nested`; Kinder mit `remaining`/`bitmap`/`nop`; `nested`-Kinder mit
+  `tlv`/`bitmap`/`pack` oder ohne `children`-Liste (rekursiv). Root-Defaults
   `encoding`, `strict_length`, `bcd_pad` gelten auch hier. In Field-only-Dokumenten
   bleibt `header:` verboten. Mehrere Header-Varianten = mehrere Specs.
 - **Binäre Daten hinter einem EBCDIC-Längenfeld:** `{ format: lllbinary, length: 999 }`
@@ -469,6 +471,17 @@ fields:
 
 Die Kind-Schlüssel sind die **Positionen** ab `0` (`"61.0"`, `"61.1"`); `nop`
 als Kind hält eine Position frei. Jedes Kind belegt **ganze Bytes**.
+
+**Container in Container (0.11.0, FR-14/FR-15):** Ein Kind darf selbst ein
+`nested`-Container sein — positionell (`children` als Liste), mit `bitmap:` und
+als Kind eines Bitmap-Containers (`"6": { type: nested, ... }`). Der innere
+Container wird wie ein Top-Level-Container aufgeschlüsselt; der Zugriff erfolgt
+per Punkt-Notation über beliebig viele Ebenen (`"3.1.2"`, `"62.6.1"`). Beim Bauen
+wird das Bit eines Bitmap-Kindes gesetzt, sobald mindestens ein Unterkind gesetzt
+ist. `sensitive` wird auf den Sub-Baum vererbt. Die Tiefe ist begrenzt: mehr als
+200 Ebenen sind ein Ladefehler. In einem `pack: nibble`-Container bleiben nur
+`numeric`/`bcd`-Kinder erlaubt. Vor 0.11.0 wurde ein solches Kind still wie ein
+Blattfeld behandelt (Dekodieren: ein Rohfeld, `set()` der Unterkinder scheiterte).
 
 **Bitmap-gesteuerter Container (`bitmap:`, 0.9.0, FR-12/FR-11):**
 

@@ -867,7 +867,9 @@ if (h && h->isRejected())
 **Header variabler Länge als Feldbeschreibung (0.10.0, FR-16):** deklariert die
 Spec `header:` als Map (`type: nested` + `children`-Liste, z. B. feste `char`-Felder
 und `lllchar`-Felder), liefert `unparse()` die Header-Kinder und der MTI beginnt
-hinter dem letzten Kind; `header(bytes)` entfällt dann.
+hinter dem letzten Kind; `header(bytes)` entfällt dann. Seit 0.11.0 (FR-15) darf ein
+Header-Kind selbst ein positioneller `nested`-Container sein (Zugriff
+`msg->headerFields()->get<Message>(0)->get<OpaqueField>(1)`).
 
 ```cpp
 // Dekodieren

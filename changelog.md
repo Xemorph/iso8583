@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.0
+
+Minor-Release: Container in Container (FR-14, FR-15), rein additiv.
+
+### `[+](Added)` FR-14/FR-15: `nested` in `nested`
+
+- **Neu:** Ein Kind eines `nested`-Containers darf selbst ein Container sein —
+  positionell (`children`-Liste), mit `bitmap:` oder als Kind eines Bitmap-Containers
+  (VISA DE126.6/126.7) — und auch als Kind des `header:` (FR-16). Dekodieren und Bauen
+  per Punkt-Notation über beliebig viele Ebenen (`3.1.2`, `62.6.1`); das Bit eines
+  Bitmap-Kindes wird gesetzt, sobald ein Unterkind gesetzt ist. `sensitive` wird auf
+  den Sub-Baum vererbt.
+- **Vorher:** das Kind wurde still wie ein Blattfeld behandelt (Dekodieren: ein
+  Rohfeld; `set()` der Unterkinder scheiterte). Spezifikationen mit einem solchen Kind
+  dekodieren jetzt in Unterkinder — wer das Rohfeld erwartet hat, muss das Kind als
+  Skalar (`format: binary`) deklarieren.
+- **Fail-closed:** Header-Kinder `remaining`/`bitmap`/`nop` (auch verschachtelt) und
+  `nested`-Header-Kinder mit `tlv`/`bitmap`/`pack`; `pack: nibble` erlaubt weiter nur
+  `numeric`/`bcd`-Kinder. Verschachtelungstiefe > 200 ist ein Ladefehler (jetzt mit
+  Position als `SpecValidationError`).
+- **ABI:** unverändert.
+
 ## 0.10.0
 
 Minor-Release mit einem Feature und einem Aufräum-Breaking-Change:
