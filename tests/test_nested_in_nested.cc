@@ -264,11 +264,12 @@ TEST_CASE("nested in nested FR-15 - header child may be a container",
         "    - { format: lllchar, length: 999 }\n"
         "fields:\n"
         "  \"000\": { format: numeric, length: 4 }\n"
-        "  \"001\": { format: bitmap, length: 8 }\n";
+        "  \"001\": { format: bitmap, length: 8 }\n"
+        "  \"003\": { format: numeric, length: 6 }\n";
     const TempYaml y(yaml);
     auto parser = load(y);
     const Bytes w = cat({ asc("ABCD"), asc("003xyz"), asc("0200"),
-                          Bytes{ 0, 0, 0, 0, 0, 0, 0, 0 } });
+                          Bytes{ 0x20, 0, 0, 0, 0, 0, 0, 0 }, asc("000000") });
 
     auto msg = std::make_shared<Message>();
     msg->parser(parser);

@@ -1911,6 +1911,40 @@ namespace TNG_NAMESPACE::spec {
         return parseBcdPadValue(getStr(yaml, "bcd_pad"), "Root-Key", yaml["bcd_pad"].id(), smap);
     }
 
+    // FR-15 (0.11.0): Header-Kinder rekursiv pruefen. Skalar mit eigener Laenge
+    // oder ein positioneller nested-Container (ohne bitmap/tlv/pack) aus
+    // ebensolchen Kindern.
+    static void checkHeaderChildren(const SpecField& f, ryml::ConstNodeRef node,
+        const std::string& label, const SourceMap* smap)
+    {
+        std::size_t idx = 0;
+        for (ryml::ConstNodeRef c : node["children"].children()) {
+            const SpecField& child = f.children.at(idx);
+            const std::string cl = label + ": Kind " + std::to_string(idx);
+            // Ein Header-Kind muss seine Laenge selbst bestimmen: 'remaining'
+            // wuerde den Nachrichtenrest verschlingen, Bitmap/NOP haben im
+            // Header keine Bedeutung.
+            if (child.format == "REMAINING" || child.format == "BITMAP" ||
+                child.format == "NOP" || child.format == "UNUSED")
+                throw SpecValidationError(
+                    cl + " (format=" + child.format + "): nur Skalarfelder mit eigener "
+                    "Laenge oder positionelle nested-Container sind im Header erlaubt "
+                    "(kein remaining/bitmap/nop)", c.id(), smap);
+            if (child.type == SpecFieldType::NESTED) {
+                if (child.tlv || child.bitmap_bytes > 0 || !child.pack.empty() ||
+                    !hasKey(c, "children") || !c["children"].is_seq())
+                    throw SpecValidationError(
+                        cl + ": ein nested-Kind im Header muss ein positioneller "
+                        "Container ('children' als Liste) ohne tlv/bitmap/pack sein",
+                        c.id(), smap);
+                checkHeaderChildren(child, c, cl, smap);
+            }
+            else if (child.type != SpecFieldType::SCALAR)
+                throw SpecValidationError(cl + ": unzulaessiges Header-Kind", c.id(), smap);
+            ++idx;
+        }
+    }
+
     // FR-16 (0.10.0): Root-Key 'header:' als Feldbeschreibung (Map) statt Byte-
     // Zahl. Grammatik = ein nested-Container mit positionellen Skalar-Kindern
     // (Header-Länge = Summe der verbrauchten Kind-Bytes). Fail-closed mit
@@ -1937,20 +1971,7 @@ namespace TNG_NAMESPACE::spec {
                 node.id(), smap);
 
         SpecField f = parseSpecField(node, defaultEncoding, "header", smap);
-        std::size_t idx = 0;
-        for (ryml::ConstNodeRef c : node["children"].children()) {
-            const SpecField& child = f.children.at(idx);
-            // Ein Header-Kind muss seine Länge selbst bestimmen: 'remaining'
-            // würde den Nachrichtenrest verschlingen, Bitmap/NOP/Container
-            // haben im Header keine Bedeutung.
-            if (child.type != SpecFieldType::SCALAR || child.format == "REMAINING" ||
-                child.format == "BITMAP" || child.format == "NOP" || child.format == "UNUSED")
-                throw SpecValidationError(
-                    "header: Kind " + std::to_string(idx) + " (format=" + child.format +
-                    "): nur Skalarfelder mit eigener Länge sind im Header erlaubt "
-                    "(kein remaining/bitmap/nop/nested)", c.id(), smap);
-            ++idx;
-        }
+        checkHeaderChildren(f, node, "header", smap);
         return f;
     }
 
