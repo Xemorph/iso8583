@@ -2,6 +2,27 @@
 
 ## Unreleased (0.10.0)
 
+### `[+](Added)` FR-16: `header:` als Feldbeschreibung (Header variabler Länge)
+
+- **Neu:** Der Root-Key `header:` darf statt einer Byte-Zahl ein `type: nested`-
+  Container mit `children`-Liste sein (Skalarfelder, z. B. feste `char`-Felder und
+  `lllchar` mit EBCDIC-Präfix). Die Header-Länge ist die Summe der verbrauchten
+  Kind-Bytes – damit sind Header, deren Länge erst aus den Längenfeldern folgt
+  (Mastercard-Testsystem-Antworten), dekodier- und baubar. `header: N` bleibt
+  unverändert.
+- **API:** `Message::headerFields()` (Dekodieren: Kinder `0..n-1`; Bauen: Kinder per
+  `set()` füllen, Präfixe werden berechnet); `ISOSpec::hasHeaderFields()` /
+  `headerFields()` (Introspektion, `headerSize()` ist dort 0); `to_json()` trägt
+  `header_fields`.
+- **Fail-closed:** Präfix über das Pufferende, nichtnumerisches Präfix, nicht
+  gesetztes Kind beim Bauen und zusätzliches `header(bytes)` werfen positioniert;
+  der Loader lehnt `format`/`length`/`tlv`/`bitmap`/`pack` am Header sowie
+  `remaining`/`bitmap`/`nop`/`nested`-Kinder ab.
+- **ABI:** neue virtuelle Funktion `ISOParserPtrBase::headerParser()`, neues
+  Mitglied in `ISOMessage` und `ISOSpec` – Shared-Library-Consumer neu kompilieren.
+- **Nicht enthalten:** `lllbinary` mit EBCDIC-Präfix (Teil B des FR, offen bis der
+  Konsument die Daten-Art klärt).
+
 ### `[!](BREAKING)` Entfernt: deprecated Aliase; vendored `date.h`/`string-view-lite`/`libpopcnt`
 
 - **Entfernt:** `ISOOpaqueField`, `ISOBinaryField`, `ISOFastBinaryField`,

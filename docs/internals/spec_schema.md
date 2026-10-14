@@ -25,7 +25,7 @@ spec: "My Network"      # PFLICHT, String – Spec-Name
 encoding: ascii         # optional: ascii | bcd | ebcdic | binary
 strict: true            # optional, Default true (false = Legacy-Mapping)
 strict_length: false    # optional, Default false (Opt-in: Unterlängen-Prüfung, s. §9)
-header: 93              # optional, int – N-Byte-Netz-Header vor dem Body
+header: 93              # optional, int – N-Byte-Netz-Header vor dem Body (oder Map: Feldbeschreibung, s. unten)
 definitions:            # optional – wiederverwendbare Bausteine (-> !use)
   pan_field: { type: scalar, format: llchar, length: 19 }
 fields:                 # PFLICHT, nicht-leere Map
@@ -43,7 +43,7 @@ fields:                 # PFLICHT, nicht-leere Map
 | `strict` | bool | nein | Default `true`; `false` = Legacy-`'.'`/`'?'`-Mapping statt positioned Throw (s. §8) |
 | `strict_length` | bool | nein (Default `false`) | Opt-in (0.6.2): Root-Default für die Unterlängen-Prüfung bei fester Länge — Felder ohne eigenen `strict_length`-Key erben diesen Wert (s. §9) |
 | `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.7.1, FR-7): Root-Default für das BCD-Padding bei ungerader Ziffernzahl — gilt für alle Felder mit BCD-Nutzdaten ohne eigenen `bcd_pad`-Key (§3 „BCD-Padding"); andere Felder bleiben unberührt |
-| `header` | int | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`) |
+| `header` | int \| map | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`). Als **Map** (0.10.0, FR-16) eine Feldbeschreibung für Header variabler Länge (s. „Header als Feldbeschreibung“) |
 | `definitions` | map | nein | benannte Feld-Bausteine für `!use` |
 | `fields` | map | ja | **nicht-leere** Map `DE-Schlüssel → Feld-Deklaration` |
 
@@ -60,6 +60,37 @@ fields:                 # PFLICHT, nicht-leere Map
 - Include-Sandbox (Default): `!include_files`-Einträge, die außerhalb
   des Verzeichnisses der Top-Level-Spec auflösen (`../`, absolute/UNC-
   Pfade, Symlink-Escape), werden **abgelehnt** (fail-closed).
+
+**Header als Feldbeschreibung (0.10.0, FR-16):** `header:` darf statt einer
+Byte-Zahl ein `type: nested`-Container mit `children` als **Liste** sein. Die
+Kinder (nur Skalarfelder, gleiche Grammatik wie `fields:`-Kinder) werden vor dem
+MTI der Reihe nach gelesen; die Header-Länge ist die Summe der verbrauchten
+Bytes — damit sind längenpräfixierte Header (`lllchar` mit EBCDIC-Präfix usw.)
+dekodier- und baubar. `header: N` (Zahl) bleibt unverändert gültig.
+
+```yaml
+header:
+  type: nested
+  children:
+    - { format: char,    length: 60, description: "Feste Bytes" }
+    - { format: lllchar, length: 999, description: "Variabel 1" }   # LLL = nur Datenlänge
+```
+
+- **Dekodieren:** `Message::headerFields()` liefert die Kinder (Schlüssel `0..n-1`
+  in Wire-Reihenfolge); der MTI beginnt hinter dem letzten Kind. Ein Präfix über
+  das Pufferende hinaus, ein nichtnumerisches Text-Präfix oder ein zu kurzer
+  Puffer → positionierter `std::runtime_error` (`Header-Feld i '…' @ Offset N`).
+- **Bauen:** Kinder über `msg->headerFields()->set(i, …)` setzen; Präfixe
+  berechnet der Feld-Codec. **Alle** Kinder müssen gesetzt sein (leer = `""`),
+  sonst Fehler; zusätzlich `Message::header(bytes)` ist ein Fehler.
+- **Introspektion:** `ISOSpec::hasHeader()` ist `true`, `headerSize()` ist `0`
+  (Länge erst nach dem Dekodieren bekannt), `hasHeaderFields()`/`headerFields()`
+  liefern die `SpecFieldInfo`-Kinder (`key` = Position ab 0).
+- **Fail-closed beim Laden:** `children` fehlt / ist keine nicht-leere Liste;
+  `format`, `length`, `tlv`, `bitmap`, `pack`, `prefix_encoding` am Header selbst;
+  `type` ≠ `nested`; Kinder mit `remaining`/`bitmap`/`nop`/`nested`. Root-Defaults
+  `encoding`, `strict_length`, `bcd_pad` gelten auch hier. In Field-only-Dokumenten
+  bleibt `header:` verboten. Mehrere Header-Varianten = mehrere Specs.
 
 ## 2. Feld-Deklaration
 

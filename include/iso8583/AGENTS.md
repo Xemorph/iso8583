@@ -229,6 +229,8 @@ spec->encoding();  // z. B. "EBCDIC"
 spec->hasHeader();   // true, wenn der Key definiert ist
 spec->headerSize();  // z. B. 93 (0, wenn der Key fehlt); der Parser
                      // behandelt 0 wie "kein Header"
+spec->hasHeaderFields();  // true bei "header:" als Feldbeschreibung (0.10.0, FR-16)
+spec->headerFields();     // deren Kinder (SpecFieldInfo, key = Position ab 0)
 
 // Prüfen, ob ein DE definiert ist
 spec->has(2);      // true, wenn DE002 existiert
@@ -862,6 +864,27 @@ if (h && h->isRejected())
     handle_reject(h->getRejectCode());
 ```
 
+**Header variabler Länge als Feldbeschreibung (0.10.0, FR-16):** deklariert die
+Spec `header:` als Map (`type: nested` + `children`-Liste, z. B. feste `char`-Felder
+und `lllchar`-Felder), liefert `unparse()` die Header-Kinder und der MTI beginnt
+hinter dem letzten Kind; `header(bytes)` entfällt dann.
+
+```cpp
+// Dekodieren
+msg->unparse(msg, raw);
+auto h = msg->headerFields();                  // Kinder 0..n-1 in Wire-Reihenfolge
+auto v = h->get<OpaqueField>(2)->value();
+
+// Bauen: ALLE Kinder setzen (leer = ""), die LLL-Präfixe berechnet der Codec
+auto out = std::make_shared<iso8583::Message>("0200");
+out->parser(parser);
+out->headerFields()->set(TNG_KEY_TYPE(0), std::string("ABCD"));
+```
+
+Fehler (positioniert, `[ISO8583] Header-Feld i '…' @ Offset N`): Präfix über das
+Pufferende, nichtnumerisches Präfix, nicht gesetztes Kind beim Bauen, zusätzlich
+gesetztes `header(bytes)`. Normativ: `docs/internals/spec_schema.md` §1.
+
 Verfügbare Header-Typen: `iso8583::BaseHeader`, `iso8583::BASE1Header`
 (Visa), `iso8583::WLP_FOHeader` (Worldline).
 
@@ -894,6 +917,7 @@ gepackte Ergebnis und werfen fail-closed bei einem zu kurzen Wire-Header
 | Bitmap mit `length: 8`, obwohl Bit 1 gesetzt ist bzw. Felder > 64 vorkommen (0.8.0) | `length: 16` (Primär + Sekundär) deklarieren — strict wirft sonst positioniert (Decode **und** Bauen); `secondary: always` nur mit `length >= 16` und nur auf `format: bitmap` |
 | `bcd_pad` an Nicht-BCD-Feldern, `*binary`/`bertlv`-Containern oder constructed-Kindern (0.7.1) | Nur bei BCD-**Nutzdaten** gültig (`numeric`/`amount`/`*char`/`*num`/`remaining` mit `encoding: bcd`, TLV-Kinder) und nie am Längenpräfix — sonst `SpecValidationError` beim Laden (Fail-closed); ohne Key gilt `right_zero` ohne Decode-Validierung |
 | `prefix_encoding` an fixen Formaten, `*binary`/`bertlv`, TLV-Kindern oder als Root-Key (0.7.0) | Nur auf variablen `*char`/`*num`-Formaten (L-/LL-/LLL-/LLLL-Präfix) gültig; bei `*binary`/`bertlv` bestimmt `encoding:` bereits das Präfix-Codec, bei TLV-Kindern liegt die Länge im Length-Feld des Frames, ein Root-Level-Default existiert nicht — sonst `SpecValidationError` beim Laden (Fail-closed) |
+| Header mit längenpräfixierten Feldern als `header: N` beschreiben bzw. von Hand abtrennen (0.10.0) | `header:` als Feldbeschreibung deklarieren (`type: nested` + `children`-Liste); beim Bauen alle Header-Kinder über `msg->headerFields()->set(...)` setzen — fehlende Kinder und ein zusätzliches `header(bytes)` sind Fehler; `headerSize()` ist dort 0 |
 | Bitmap-Unterfelder (VISA DE62) als positionelle `children`-Liste mit `bitmap`-Kind (0.9.0) | Die Kinder werden starr nach Position gelesen (passt nur für genau eine Bitmap, sonst stille Fehlinterpretation). Richtig: `bitmap: { length: N }` + `children` als Map Bit-Nummer → Kind (Bit 1 = normales Kind) |
 | Nibble-Unterfelder (VISA DE60) als `length: 1`-Kinder ohne `pack` (0.9.0) | Jedes Kind belegt ganze Bytes (zwei 1-stellige Kinder = zwei Bytes). Richtig: `pack: nibble` am Container; Kinder nur `numeric`+`bcd`+feste `length` (oder `nop`), `bcd_pad` nur am Container |
 
