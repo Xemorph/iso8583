@@ -108,6 +108,10 @@ std::string hval(const std::shared_ptr<Message>& msg, int key) {
     return f->value();
 }
 
+bool setv(const std::shared_ptr<Message>& m, int key, const std::string& v) {
+    return m->set(static_cast<TNG_KEY_TYPE>(key), v);
+}
+
 } // namespace
 
 TEST_CASE("header fields FR-16 - variable header decodes into named fields, MTI starts after 17 bytes",
@@ -168,5 +172,94 @@ TEST_CASE("header fields FR-16 - LLL beyond the buffer and non-numeric LLL fail 
         auto msg = std::make_shared<Message>();
         msg->parser(parser);
         CHECK_THROWS_WITH(msg->unparse(msg, w), ContainsSubstring("Header-Feld 0"));
+    }
+}
+
+TEST_CASE("header fields FR-16 - build is byte-identical, LLL is computed",
+    "[header-fields][fr16]") {
+    const TempYaml y(specYaml());
+    auto parser = load(y);
+
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    auto h = msg->headerFields();
+    REQUIRE(h);
+    REQUIRE(setv(h, 0, "ABCD"));
+    REQUIRE(setv(h, 1, "EF"));
+    REQUIRE(setv(h, 2, "xyz"));
+    REQUIRE(setv(h, 3, "uv"));
+    REQUIRE(setv(msg, 3, "000000"));
+
+    CHECK(msg->parse(msg) == cat({ headerBytes(), body() }));
+}
+
+TEST_CASE("header fields FR-16 - empty block (000) is built and round-trips",
+    "[header-fields][fr16]") {
+    const TempYaml y(specYaml());
+    auto parser = load(y);
+
+    auto msg = std::make_shared<Message>("0200");
+    msg->parser(parser);
+    auto h = msg->headerFields();
+    REQUIRE(setv(h, 0, "ABCD"));
+    REQUIRE(setv(h, 1, "EF"));
+    REQUIRE(setv(h, 2, ""));
+    REQUIRE(setv(h, 3, "uv"));
+    REQUIRE(setv(msg, 3, "000000"));
+
+    const Bytes w = msg->parse(msg);
+    CHECK(w == cat({ ebc("ABCD"), ebc("EF"), ebc("000"), ebc("002"), ebc("uv"), body() }));
+
+    auto back = std::make_shared<Message>();
+    back->parser(parser);
+    REQUIRE(back->unparse(back, w) == w.size());
+    CHECK(hval(back, 2).empty());
+    CHECK(back->parse(back) == w);
+}
+
+TEST_CASE("header fields FR-16 - decode then re-encode is byte-identical",
+    "[header-fields][fr16]") {
+    const TempYaml y(specYaml());
+    auto parser = load(y);
+
+    const Bytes w = cat({ headerBytes(), body() });
+    auto msg = std::make_shared<Message>();
+    msg->parser(parser);
+    REQUIRE(msg->unparse(msg, w) == w.size());
+    CHECK(msg->parse(msg) == w);
+}
+
+TEST_CASE("header fields FR-16 - build fails closed on missing field and on raw header bytes",
+    "[header-fields][fr16]") {
+    const TempYaml y(specYaml());
+    auto parser = load(y);
+
+    SECTION("header field not set") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        auto h = msg->headerFields();
+        REQUIRE(setv(h, 0, "ABCD"));
+        CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("Header-Feld 1"));
+    }
+    SECTION("no header fields at all") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("Header-Feld 0"));
+    }
+    SECTION("header(bytes) together with header fields") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        msg->header(Bytes{ 1, 2, 3 });
+        CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("headerFields()"));
+    }
+    SECTION("value larger than the field maximum") {
+        auto msg = std::make_shared<Message>("0200");
+        msg->parser(parser);
+        auto h = msg->headerFields();
+        REQUIRE(setv(h, 0, "ABCDE"));   // char(4)
+        REQUIRE(setv(h, 1, "EF"));
+        REQUIRE(setv(h, 2, "xyz"));
+        REQUIRE(setv(h, 3, "uv"));
+        CHECK_THROWS_WITH(msg->parse(msg), ContainsSubstring("Header-Feld 0"));
     }
 }

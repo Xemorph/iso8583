@@ -86,7 +86,12 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 
     // ── 1. Header ────────────────────────────────────────────────────────────
     // Header-Bytes als Nullen reservieren; Anwender befüllt via ISOMessage::header()
-    if (hdr_sz_ > 0) {
+    if (hdr_parser_) {
+        // FR-16: Header als Feldbeschreibung - Bytes aus den Header-Feldern
+        // (ISOMessage::headerFields()); die LLL-Präfixe berechnen die Feld-Codecs.
+        parseHeaderFields(m, out);
+    }
+    else if (hdr_sz_ > 0) {
         auto hdr = m->header();
         if (hdr && hdr->size() >= hdr_sz_) {
             std::vector<uint8_t> hdr_bytes = hdr->pack();
@@ -198,6 +203,41 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
 }
 
 // --- FR-16 (0.10.0): Header als Feldbeschreibung ------------------------------
+// Bauen: serialisiert alle Header-Kinder in Reihenfolge. Fail-closed: ein
+// nicht gesetztes Kind (die Header-Länge wäre sonst still zu kurz) und ein
+// zusätzlich per header(bytes) gesetzter Roh-Header (zwei Quellen für
+// dieselben Bytes) sind Fehler. Leere Felder explizit mit "" setzen.
+void TNG_NAMESPACE::ISOBaseParser::parseHeaderFields(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
+    std::vector<uint8_t>& out) const
+{
+    if (m->header())
+        throw std::runtime_error(
+            "[ISO8583] Header: die Spec beschreibt den Header als Felder - "
+            "ISOMessage::header(bytes) darf nicht zusätzlich gesetzt sein "
+            "(Felder über ISOMessage::headerFields() setzen)");
+
+    const auto hm = m->headerFields();
+    for (std::size_t i = 0; i < hdr_parser_->l_.size(); ++i) {
+        const auto& ptr = hdr_parser_->l_[i];
+        auto de = hm ? hm->get<ISOComponentPtrBase>(static_cast<TNG_KEY_TYPE>(i)) : nullptr;
+        if (!de)
+            throw std::runtime_error(
+                "[ISO8583] Header-Feld " + std::to_string(i) + " '" +
+                std::string(ptr->description()) + "' ist nicht gesetzt "
+                "(alle Header-Felder müssen gesetzt sein; leere Felder mit \"\")");
+        std::vector<uint8_t> bytes;
+        try {
+            bytes = ptr->parse(de);
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                "[ISO8583] Header-Feld " + std::to_string(i) + " '" +
+                std::string(ptr->description()) + "': " + e.what());
+        }
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+}
+
 // Dekodiert die Header-Kinder sequenziell ab Offset 0 von b. Jedes Kind
 // bestimmt seine Länge selbst (fest oder per Längenpräfix); ein Präfix, das
 // über das Pufferende führt, oder ein nichtnumerisches Präfix wirft (strict)
