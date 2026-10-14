@@ -389,6 +389,9 @@ namespace TNG_NAMESPACE {
         ::TNG_NAMESPACE::ISOParserPtrBase::ISOParserPtrBaseSmartPtr p_ = nullptr;
         Direction           dir_ = Direction::UNKNOWN;
         ISOHeader::ISOHeaderSmartPtr hdr_;
+        /// @brief FR-16 (0.10.0): decoded/to-be-built header children when the
+        ///        spec declares `header:` as a field description.
+        std::shared_ptr<ISOMessage> hdr_fields_;
 
     public:
         using ISOMessageSmartPtr = std::shared_ptr<ISOMessage>;
@@ -423,8 +426,10 @@ namespace TNG_NAMESPACE {
             std::size_t  snap_wo = 0;
             std::size_t  snap_wl = 0;
             std::vector<ISO_MAP::mapped_type> snap_children;
+            std::shared_ptr<ISOMessage> snap_hdr;
             {
                 std::lock_guard<std::recursive_mutex> lock(d_lock_);
+                snap_hdr  = hdr_fields_;
                 snap_dir  = dir_;
                 snap_wo   = wire_offset_;
                 snap_wl   = wire_length_;
@@ -451,6 +456,9 @@ namespace TNG_NAMESPACE {
                 fields_json.push_back(child->to_json());
 
             j["fields"] = fields_json;
+            // FR-16: Header-Felder (nur wenn die Spec einen Feld-Header hat)
+            if (snap_hdr && snap_hdr->size() > 0)
+                j["header_fields"] = snap_hdr->to_json()["fields"];
             return j;
         }
 
@@ -694,6 +702,25 @@ namespace TNG_NAMESPACE {
 
         /// @brief Returns the typed header object (may be `nullptr`).
         ::TNG_NAMESPACE::ISOHeader::ISOHeaderSmartPtr header();
+
+        /// @brief Header children of a spec with `header:` as a field description
+        ///        (FR-16, 0.10.0).
+        ///
+        /// After @ref unparse the decoded header fields (keys `0..n-1` in wire
+        /// order).  Before building, the container to fill via `set()`:
+        ///
+        /// @code
+        ///   msg->headerFields()->set(0, "ABCD");
+        ///   msg->headerFields()->set(2, "xyz");   // lllchar: LLL is computed
+        /// @endcode
+        ///
+        /// Created on demand from the attached parser.
+        /// @return The header container, or `nullptr` if no parser is attached
+        ///         or its spec has no field-description header (`header: N`).
+        std::shared_ptr<ISOMessage> headerFields();
+
+        /// @brief Replaces the header container (used by the decoder).
+        void headerFields(std::shared_ptr<ISOMessage> h);
 
         // ── Direction ────────────────────────────────────────────────────────
 

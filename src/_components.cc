@@ -857,6 +857,7 @@ void TNG_NAMESPACE::ISOMessage::reset(void) {
     std::lock_guard<std::recursive_mutex> lock(d_lock_);
     // Clear whole RB-Tree
     d_.clear();
+    hdr_fields_.reset();
 }
 
 const std::size_t TNG_NAMESPACE::ISOMessage::size() const noexcept {
@@ -973,6 +974,23 @@ void TNG_NAMESPACE::ISOMessage::header(::TNG_NAMESPACE::ISOHeader::ISOHeaderSmar
 ::TNG_NAMESPACE::ISOHeader::ISOHeaderSmartPtr TNG_NAMESPACE::ISOMessage::header() {
     std::lock_guard<std::recursive_mutex> lock(d_lock_);
     return hdr_;
+}
+
+std::shared_ptr<TNG_NAMESPACE::ISOMessage> TNG_NAMESPACE::ISOMessage::headerFields() {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    if (!hdr_fields_) {
+        auto hp = p_ ? p_->headerParser() : nullptr;
+        if (!hp)
+            return nullptr;
+        hdr_fields_ = std::make_shared<ISOMessage>(TNG_KEY_TYPE{ 0 });
+        hdr_fields_->parser(hp);
+    }
+    return hdr_fields_;
+}
+
+void TNG_NAMESPACE::ISOMessage::headerFields(std::shared_ptr<ISOMessage> h) {
+    std::lock_guard<std::recursive_mutex> lock(d_lock_);
+    hdr_fields_ = std::move(h);
 }
 
 std::vector<uint8_t> TNG_NAMESPACE::ISOMessage::header() const {
