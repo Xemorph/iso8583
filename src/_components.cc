@@ -3,6 +3,9 @@
 #include <iso8583/ISOUtils.hh>
 // [stdc++]
 #include <charconv>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -1126,10 +1129,19 @@ bool TNG_NAMESPACE::ISOMessage::isRetransmission() {
 // ============================================================================
 
 static std::string getFormattedTimestamp() {
-    auto tp = std::chrono::system_clock::now();
-    auto dp = std::chrono::floor<std::chrono::days>(tp);
-    std::chrono::year_month_day ymd{ dp };
-    std::chrono::hh_mm_ss<std::chrono::microseconds> time{ std::chrono::floor<std::chrono::microseconds>(tp - dp) };
+    // Kalenderteil ueber gmtime_s/gmtime_r: std::chrono::year_month_day/hh_mm_ss
+    // fehlen in aelteren libstdc++-Versionen (Linux-CI), C++20-Kalender also nicht
+    // portabel genug.
+    const auto tp = std::chrono::system_clock::now();
+    const auto since = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch());
+    const auto whole = std::chrono::duration_cast<std::chrono::seconds>(since);
+    const std::time_t secs = static_cast<std::time_t>(whole.count());
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &secs);
+#else
+    gmtime_r(&secs, &tm);
+#endif
     // Subsekunden als 6-stellige Mikrosekunden (WLP-FO erwartet
     // "YYYY.MM.DD.HH.MM.SS.uuuuuu"): Das Roh-Zeitperiod des Clocks
     // (z.B. 100 ns auf Windows/MSVC) liefert eine variable Ziffernzahl,
@@ -1137,16 +1149,16 @@ static std::string getFormattedTimestamp() {
     // flaky einen "Timestamp format error" werfen wuerde (10 % pro Sekunde
     // auf MSVC). Durch die Konvertierung auf Mikrosekunden ist das Format
     // deterministisch 26 Zeichen lang auf allen Plattformen.
-    const auto us = time.subseconds();
+    const auto us = (since - whole).count();
     std::stringstream ss;
     ss << std::setfill('0')
-        << std::setw(4) << int(ymd.year()) << '.'
-        << std::setw(2) << unsigned(ymd.month()) << '.'
-        << std::setw(2) << unsigned(ymd.day()) << '.'
-        << std::setw(2) << time.hours().count() << '.'
-        << std::setw(2) << time.minutes().count() << '.'
-        << std::setw(2) << time.seconds().count() << '.'
-        << std::setw(6) << us.count();
+        << std::setw(4) << (tm.tm_year + 1900) << '.'
+        << std::setw(2) << (tm.tm_mon + 1) << '.'
+        << std::setw(2) << tm.tm_mday << '.'
+        << std::setw(2) << tm.tm_hour << '.'
+        << std::setw(2) << tm.tm_min << '.'
+        << std::setw(2) << tm.tm_sec << '.'
+        << std::setw(6) << us;
     return ss.str();
 }
 
