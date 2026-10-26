@@ -47,6 +47,7 @@ add_executable(libiso8583_tests
     test_bcd_pad.cc
     # (0.9.0, FR-12/FR-11) bitmap-gesteuerte nested-Container
     test_bitmap_container.cc
+    test_bitmap_from.cc
     # (0.9.0, FR-13) Nibble-Unterfelder: 'pack: nibble' an nested-Containern
     test_nibble_pack.cc
     # (0.10.0, FR-16) 'header:' als Feldbeschreibung (variable Header-Laenge)

@@ -164,6 +164,12 @@ namespace TNG_NAMESPACE::spec {
         // child_keys[i] = Bit-Nummer von children[i] (nur Bitmap-Container).
         std::size_t              bitmap_bytes = 0;
         std::vector<int>         child_keys;
+        // 'bitmap: { from: "4.1" }' (Opt-in 'extensions: [bitmap_from]'): die Bitmap
+        // steht nicht im Container, sondern in diesem frueheren Feld. Leer = aus.
+        // bitmap_from_id = YAML-Knoten fuer positionierte Fehler der Querpruefung.
+        std::string              bitmap_from;
+        std::vector<int>         bitmap_from_path;
+        ryml::id_type            bitmap_from_id = ryml::NONE;
         // FR-13 (0.9.0): 'pack: nibble' an einem nested-Container — die BCD-
         // Kinder bilden einen dichten Ziffern-Strom. "" = aus (Default).
         std::string              pack;
@@ -1069,11 +1075,25 @@ namespace TNG_NAMESPACE::spec {
                     "sein, z.B. 'bitmap: { length: 8 }'", bn.id(), smap);
             for (ryml::ConstNodeRef bc : bn.children()) {
                 const auto bk = toStdString(bc.key());
-                if (bk != "length")
+                if (bk != "length" && bk != "from")
                     throw SpecValidationError(
                         cmLabel + ": unbekannter Schlüssel '" + bk + "' in 'bitmap' "
-                        "(erlaubt: length; Bit 1 ist hier ein normales Kind, "
+                        "(erlaubt: length, from; Bit 1 ist hier ein normales Kind, "
                         "'secondary' gibt es im Container nicht)", bc.id(), smap);
+            }
+            if (hasKey(bn, "from")) {
+                f.bitmap_from = getStr(bn, "from");
+                f.bitmap_from_id = bn["from"].id();
+                std::string tok;
+                for (const char c : f.bitmap_from + ".") {
+                    if (c != '.') { tok += c; continue; }
+                    if (tok.empty() || tok.size() > 9 || !std::all_of(tok.begin(), tok.end(), ::isdigit))
+                        throw SpecValidationError(
+                            cmLabel + ": ungültiger Pfad 'bitmap.from: " + f.bitmap_from +
+                            "' (erwartet Punkt-Pfad aus Zahlen, z.B. \"4.1\")", f.bitmap_from_id, smap);
+                    f.bitmap_from_path.push_back(std::stoi(tok));
+                    tok.clear();
+                }
             }
             const int bl = getInt(bn, "length", 0);
             if (bl < 1 || bl > 16)
@@ -1707,6 +1727,9 @@ namespace TNG_NAMESPACE::spec {
         // deklarierte Bits sind UNUSED-Platzhalter (wie Top-Level).
         if (f.bitmap_bytes > 0) {
             sub->bitmapContainer(f.bitmap_bytes);
+            if (!f.bitmap_from_path.empty())
+                sub->bitmapFrom(std::vector<TNG_KEY_TYPE>(
+                    f.bitmap_from_path.begin(), f.bitmap_from_path.end()));
             std::size_t nextSlot = 0;
             for (std::size_t i = 0; i < f.children.size(); ++i) {
                 const auto slot = static_cast<std::size_t>(f.child_keys[i]);
@@ -1853,6 +1876,7 @@ namespace TNG_NAMESPACE::spec {
         info.tlv_is_ber = f.tlv.has_value() && f.tlv->ber;
         // FR-12/FR-13 (0.9.0): Container-Modi (Bitmap-Größe / Nibble-Packing).
         info.container_bitmap_bytes = static_cast<int>(f.bitmap_bytes);
+        info.container_bitmap_from = f.bitmap_from;
         info.pack = f.pack;
 
         TNG_KEY_TYPE childKey = 0;
@@ -1976,7 +2000,131 @@ namespace TNG_NAMESPACE::spec {
         return f;
     }
 
+    // Wurzelschluessel 'extensions: [..]': herstellerspezifische Erweiterungen, die
+    // eine Spec ausdruecklich zuschalten muss. Unbekannte Eintraege sind ein
+    // Ladefehler (fail-closed). Rueckgabe: ist 'bitmap_from' zugeschaltet?
+    static bool readExtensions(ryml::ConstNodeRef yaml, const SourceMap* smap) {
+        if (!hasKey(yaml, "extensions"))
+            return false;
+        const ryml::ConstNodeRef ex = yaml["extensions"];
+        if (!ex.is_seq())
+            throw SpecValidationError(
+                "'extensions' muss eine Liste sein, z.B. 'extensions: [bitmap_from]'", ex.id(), smap);
+        bool bitmapFrom = false;
+        for (ryml::ConstNodeRef e : ex.children()) {
+            const auto name = toStdString(e.val());
+            if (name != "bitmap_from")
+                throw SpecValidationError(
+                    "unbekannte Erweiterung '" + name + "' in 'extensions' (bekannt: bitmap_from)",
+                    e.id(), smap);
+            bitmapFrom = true;
+        }
+        return bitmapFrom;
+    }
+
+    struct BitmapFromLinkSpec {
+        std::vector<int> container;
+        std::vector<int> source;
+        std::size_t      bytes = 0;
+    };
+
+    // Kind mit Schluessel `key` (Position bzw. Bit-Nummer) eines Nicht-TLV-Containers.
+    static const SpecField* childByKey(const SpecField& p, int key) {
+        if (p.type != SpecFieldType::NESTED || p.tlv)
+            return nullptr;
+        if (!p.child_keys.empty()) {
+            for (std::size_t i = 0; i < p.children.size(); ++i)
+                if (p.child_keys[i] == key)
+                    return &p.children[i];
+            return nullptr;
+        }
+        return (key >= 0 && static_cast<std::size_t>(key) < p.children.size())
+            ? &p.children[static_cast<std::size_t>(key)] : nullptr;
+    }
+
+    static void collectBitmapFrom(const SpecField& f, std::vector<int>& path,
+        std::vector<std::pair<std::vector<int>, const SpecField*>>& out)
+    {
+        if (!f.bitmap_from.empty())
+            out.emplace_back(path, &f);
+        if (f.type != SpecFieldType::NESTED || f.tlv)
+            return;
+        for (std::size_t i = 0; i < f.children.size(); ++i) {
+            path.push_back(f.child_keys.empty() ? static_cast<int>(i) : f.child_keys[i]);
+            collectBitmapFrom(f.children[i], path, out);
+            path.pop_back();
+        }
+    }
+
+    // Querpruefung aller 'bitmap.from' (nach dem Parsen der ganzen Spec, die Quelle
+    // kann in einem spaeter geparsten Feld stehen). Message-Specs adressieren ab dem
+    // DE-Schluessel, Field-only-Specs relativ zum Container des `field:`-Blocks.
+    static std::vector<BitmapFromLinkSpec> resolveBitmapFrom(const std::map<int, SpecField>& fields,
+        bool fieldOnly, bool enabled, const SourceMap* smap)
+    {
+        std::vector<std::pair<std::vector<int>, const SpecField*>> found;
+        std::vector<int> path;
+        for (const auto& [key, f] : fields) {
+            if (!fieldOnly)
+                path = { key };
+            collectBitmapFrom(f, path, found);
+        }
+
+        const auto lookup = [&](const std::vector<int>& p) -> const SpecField* {
+            const SpecField* cur = nullptr;
+            for (std::size_t i = 0; i < p.size(); ++i) {
+                if (i == 0 && !fieldOnly) {
+                    const auto it = fields.find(p[0]);
+                    cur = it == fields.end() ? nullptr : &it->second;
+                }
+                else
+                    cur = (i == 0) ? childByKey(fields.at(0), p[0]) : childByKey(*cur, p[i]);
+                if (!cur)
+                    return nullptr;
+            }
+            return cur;
+        };
+
+        std::vector<BitmapFromLinkSpec> links;
+        std::set<std::vector<int>> usedSources;
+        for (const auto& [cpath, cf] : found) {
+            const std::string label = "Feld '" + cf->description + "': 'bitmap.from: " + cf->bitmap_from + "'";
+            if (!enabled)
+                throw SpecValidationError(
+                    label + " ist keine ISO-8583-Funktion, in der Spec "
+                    "'extensions: [bitmap_from]' setzen", cf->bitmap_from_id, smap);
+            const auto& spath = cf->bitmap_from_path;
+            const SpecField* src = lookup(spath);
+            if (!src)
+                throw SpecValidationError(
+                    label + ": das Quellfeld existiert nicht", cf->bitmap_from_id, smap);
+            // streng vor dem Container im Strom: erster abweichender Schluessel kleiner
+            // (Praefix = Vorfahre/Nachfahre/Selbstbezug waere nicht vorher dekodiert)
+            std::size_t i = 0;
+            while (i < spath.size() && i < cpath.size() && spath[i] == cpath[i])
+                ++i;
+            if (i == spath.size() || i == cpath.size() || spath[i] > cpath[i])
+                throw SpecValidationError(
+                    label + ": das Quellfeld muss im Strom vor dem Container stehen "
+                    "(kein Selbstbezug, kein Feld im Container)", cf->bitmap_from_id, smap);
+            if (src->type != SpecFieldType::SCALAR || src->format != "BINARY" ||
+                src->length != cf->bitmap_bytes)
+                throw SpecValidationError(
+                    label + ": das Quellfeld muss 'format: binary' mit fester 'length: " +
+                    std::to_string(cf->bitmap_bytes) + "' (= bitmap.length) sein",
+                    cf->bitmap_from_id, smap);
+            if (!usedSources.insert(spath).second)
+                throw SpecValidationError(
+                    label + ": das Quellfeld wird schon von einem anderen Container verwendet",
+                    cf->bitmap_from_id, smap);
+            links.push_back({ cpath, spath, cf->bitmap_bytes });
+        }
+        return links;
+    }
+
     struct LoadedSpec {
+        // 'bitmap.from'-Container (Container-Pfad -> Quellpfad), nur mit der Erweiterung.
+        std::vector<BitmapFromLinkSpec> bitmapFromLinks;
         std::string              desc;
         std::string              defaultEncoding;
         std::size_t              hdr_sz = 0;
@@ -2014,6 +2162,7 @@ namespace TNG_NAMESPACE::spec {
         result.defaultEncoding = toUpper(getStr(yaml, "encoding", ""));
         const bool rootStrictLength = getBool(yaml, "strict_length", false);
         const auto rootBcdPad = readRootBcdPad(yaml, &pr.source_map);
+        const bool bitmapFromOn = readExtensions(yaml, &pr.source_map);
 
         // 'header:' ist entweder eine Byte-Zahl (fest) oder eine Feldbeschreibung.
         if (result.headerKey && yaml["header"].is_map()) {
@@ -2037,6 +2186,8 @@ namespace TNG_NAMESPACE::spec {
             if (rootBcdPad)
                 applyBcdPadDefault(result.fields[deNum], *rootBcdPad);
         }
+        result.bitmapFromLinks = resolveBitmapFrom(
+            result.fields, /*fieldOnly=*/false, bitmapFromOn, &pr.source_map);
         // Content-Snapshot (Dateimenge + Hash): SourceMap::finalise() lief
         // unbedingt (unabhaengig von trackSourceMap) im Preprocessor.
         result.sourceFiles = std::move(pr.sourceFiles);
@@ -2066,6 +2217,8 @@ namespace TNG_NAMESPACE::spec {
             applyStrictLengthDefault(result.fields[0], true);
         if (const auto rootBcdPad = readRootBcdPad(yaml, &pr.source_map))
             applyBcdPadDefault(result.fields[0], *rootBcdPad);
+        result.bitmapFromLinks = resolveBitmapFrom(result.fields, /*fieldOnly=*/true,
+            readExtensions(yaml, &pr.source_map), &pr.source_map);
         result.sourceFiles = std::move(pr.sourceFiles);
         result.contentHash = pr.source_map.hash();
         return result;
@@ -2083,6 +2236,10 @@ namespace TNG_NAMESPACE::spec {
                 ? buildFieldParser(loaded.fields.at(i))
                 : std::make_shared<IF_NOP>());
         }
+        for (const auto& l : loaded.bitmapFromLinks)
+            parser->bitmapFromLink(
+                std::vector<TNG_KEY_TYPE>(l.container.begin(), l.container.end()),
+                std::vector<TNG_KEY_TYPE>(l.source.begin(), l.source.end()), l.bytes);
         // FR-16: Header als Feldbeschreibung -> Container-Sub-Parser (vor strict(),
         // damit der Modus auch dorthin propagiert wird).
         if (loaded.headerField)
@@ -2355,6 +2512,11 @@ namespace TNG_NAMESPACE::spec {
         b.loaded = loadFieldAndParse(path, opts);
         const auto& f = b.loaded.fields.at(0);
         b.parser = buildFieldBlockParser(f, b.loaded.defaultEncoding);
+        if (const auto root = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOBaseParser>(b.parser))
+            for (const auto& l : b.loaded.bitmapFromLinks)
+                root->bitmapFromLink(
+                    std::vector<TNG_KEY_TYPE>(l.container.begin(), l.container.end()),
+                    std::vector<TNG_KEY_TYPE>(l.source.begin(), l.source.end()), l.bytes);
         b.mtime  = tryGetMTime(std::filesystem::absolute(path).string());
         if (wantSpec) {
             std::vector<SpecFieldInfo> infos;

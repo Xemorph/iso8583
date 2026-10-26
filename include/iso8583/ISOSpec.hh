@@ -238,6 +238,16 @@ namespace TNG_NAMESPACE {
             /// @note ABI: adding this member changes the `SpecFieldInfo`
             ///       layout — shared-library consumers must be rebuilt (0.9.0).
             std::string pack;
+
+            /// @brief Source field of a `bitmap: { from }` container (extension `bitmap_from`).
+            ///
+            /// Dot path (e.g. `"4.1"`) of the earlier `binary` field whose value is the
+            /// bitmap of this `nested` container; the bitmap is then **not** part of the
+            /// container payload.  `""` for all other fields (default).
+            ///
+            /// @note ABI: adding this member changes the `SpecFieldInfo`
+            ///       layout — shared-library consumers must be rebuilt.
+            std::string container_bitmap_from;
         };
 
         // ── ISOSpec ───────────────────────────────────────────────────────────

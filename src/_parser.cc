@@ -48,7 +48,95 @@ namespace {
         return bmp;
     }
 
+    // ── bitmap: { from } (Opt-in `extensions: [bitmap_from]`) ───────────────────
+    // Ein Container sieht nur seine eigenen Bytes; die Bitmap steckt in einem
+    // frueheren Feld der Nachricht. Der aeusserste unparse()-Aufruf merkt sich
+    // deshalb seine Wurzel-Nachricht (thread_local, RAII - reentrant, die
+    // Parser selbst bleiben unveraenderlich und teilbar).
+    thread_local ::TNG_NAMESPACE::ISOMessage* g_decodeRoot = nullptr;
+
+    struct DecodeRootScope {
+        const bool owner;
+        explicit DecodeRootScope(::TNG_NAMESPACE::ISOMessage* m) : owner(g_decodeRoot == nullptr) {
+            if (owner) g_decodeRoot = m;
+        }
+        ~DecodeRootScope() { if (owner) g_decodeRoot = nullptr; }
+        DecodeRootScope(const DecodeRootScope&) = delete;
+        DecodeRootScope& operator=(const DecodeRootScope&) = delete;
+    };
+
+    std::string pathString(const std::vector<TNG_KEY_TYPE>& path) {
+        std::string s;
+        for (const auto k : path)
+            s += (s.empty() ? "" : ".") + std::to_string(k);
+        return s;
+    }
+
+    // Komponente unter dem Dot-Pfad ab `root`, nullptr wenn ein Segment fehlt.
+    std::shared_ptr<::TNG_NAMESPACE::ISOComponentPtrBase> findComponent(
+        ::TNG_NAMESPACE::ISOMessage* root, const std::vector<TNG_KEY_TYPE>& path)
+    {
+        std::shared_ptr<::TNG_NAMESPACE::ISOComponentPtrBase> comp;
+        ::TNG_NAMESPACE::ISOMessage* cur = root;
+        for (std::size_t i = 0; i < path.size() && cur; ++i) {
+            comp = cur->get<::TNG_NAMESPACE::ISOComponentPtrBase>(path[i]);
+            if (!comp)
+                return nullptr;
+            cur = (i + 1 < path.size())
+                ? dynamic_cast<::TNG_NAMESPACE::ISOMessage*>(comp.get()) : nullptr;
+            if (i + 1 < path.size() && !cur)
+                return nullptr;
+        }
+        return comp;
+    }
+
+    std::string toHex(const std::vector<uint8_t>& bytes) {
+        static const char* digits = "0123456789ABCDEF";
+        std::string s;
+        for (const auto b : bytes) {
+            s += digits[b >> 4];
+            s += digits[b & 0x0Fu];
+        }
+        return s;
+    }
+
 } // namespace
+
+// ─── ISOBaseParser::applyBitmapFrom ───────────────────────────────────────────
+// Vorlauf des Bauens: die Bitmap jedes from-Containers aus seinen gesetzten
+// Kindern berechnen und in das Quellfeld schreiben, BEVOR in Strom-Reihenfolge
+// serialisiert wird (die Quelle steht im Strom vor dem Container). Ein bereits
+// gesetztes, abweichendes Quellfeld ist ein Fehler (gleicher Wert = dekodierte
+// Nachricht erneut serialisiert, bleibt erlaubt).
+void TNG_NAMESPACE::ISOBaseParser::applyBitmapFrom(
+    const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const
+{
+    for (const auto& link : bitmap_from_links_) {
+        std::vector<uint8_t> bits(link.bytes, 0x00);
+        if (auto cm = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(
+                findComponent(m.get(), link.container)))
+            for (const auto k : cm->keys())
+                if (k >= 1 && static_cast<std::size_t>(k) <= link.bytes * 8)
+                    bits[static_cast<std::size_t>(k - 1) >> 3] |=
+                        static_cast<uint8_t>(0x80u >> ((k - 1) & 7));
+
+        if (auto src = std::dynamic_pointer_cast<::TNG_NAMESPACE::BinaryField>(
+                findComponent(m.get(), link.source))) {
+            if (src->value() == bits)
+                continue;
+            const std::string msg = "Bitmap-Container " + pathString(link.container) +
+                ": das Quellfeld " + pathString(link.source) + " traegt die berechnete "
+                "Bitmap und darf nicht gesetzt werden (gesetzt " + toHex(src->value()) +
+                ", berechnet " + toHex(bits) + ")";
+            if (strict_)
+                throw std::runtime_error("[ISO8583] " + msg);
+            TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: wird ueberschrieben)", msg);
+        }
+        if (!m->set(pathString(link.source), toHex(bits)))
+            throw std::runtime_error("[ISO8583] Bitmap-Container " + pathString(link.container) +
+                ": Quellfeld " + pathString(link.source) + " konnte nicht gesetzt werden");
+    }
+}
 
 // ─── ISOBaseParser::parse ─────────────────────────────────────────────────────
 // Serialisiert eine ISOMessage in einen Wire-Buffer.
@@ -74,6 +162,9 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parse(
     if (!m) {
         throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
     }
+
+    if (!bitmap_from_links_.empty())
+        applyBitmapFrom(m);
 
     // FR-12/FR-13 (0.9.0): Container-Sondermodi (eigene Encode-Pfade, kein
     // MTI/Header/Top-Level-Bitmap).
@@ -298,7 +389,7 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
     const std::vector<uint8_t>& b,
     std::size_t base_offset)
 {
-    if (b.empty()) {
+    if (b.empty() && !(container_ && bitmapFrom())) {
         // [ISO8583] P2: ein leeres Frame kann keine gültige ISO-8583-
         // Nachricht sein. strict: verwerfen; nicht-strikt: Legacy-Warnung.
         if (strict_)
@@ -320,6 +411,9 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         // [ISO8583] B4: struktureller Fehler -> Fail-closed.
         throw std::runtime_error("[ISO8583] Parser: Komponente ist kein ISOMessage");
     }
+
+    // Nur der aeusserste Aufruf legt den Wurzel-Kontext fuer bitmap.from an.
+    const DecodeRootScope rootScope(m.get());
 
     // FR-12/FR-13 (0.9.0): Container-Sondermodi (eigene Decode-Pfade).
     if (container_ && bitmap_container_ > 0)
@@ -468,6 +562,36 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         (const std::shared_ptr<const ::TNG_NAMESPACE::ISOFieldParserPtrBase>& ptr) -> void
     {
         if (consumed == b.size()) {
+            // Ein bitmap.from-Container gilt am Pufferende als leer: seine Bitmap
+            // steht im Quellfeld, ein reiner Marker-Bit ohne Daten ist gueltig, ein
+            // Bit mit erwarteten Daten wirft den Fehler des Kind-Parsers.
+            const auto sub = ptr->subParser();
+            const auto subBase = dynamic_cast<const ISOBaseParser*>(sub.get());
+            if (subBase && subBase->bitmapFrom() && (bmp.size() == 0 || bmp[i]) &&
+                ptr->type() != ::TNG_NAMESPACE::ISOFieldParserType::UNUSED) {
+                auto de = ptr->create_component(i);
+                de->description(ptr->description());
+                de->set_sensitive(ptr->sensitive());
+                de->wire_offset(base_offset + consumed);
+                try {
+                    sub->unparse(de, std::vector<uint8_t>{});
+                } catch (const std::exception& e) {
+                    char de_key[16];
+                    std::snprintf(de_key, sizeof(de_key), "DE%03d", static_cast<int>(i));
+                    throw std::runtime_error(
+                        std::string("[ISO8583] ") + de_key + " '" +
+                        std::string(ptr->description()) + "' @ Offset " +
+                        std::to_string(base_offset + consumed) + ": " + e.what());
+                }
+                de->wire_length(0);
+                if (auto cm = std::dynamic_pointer_cast<::TNG_NAMESPACE::ISOMessage>(de))
+                    cm->parser(sub);
+                if (!m->set(de))
+                    throw std::runtime_error("[ISO8583] DE" + std::to_string(i) +
+                        ": ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+                ++i;
+                return;
+            }
             TNG_LOG_INFO("[ISOBaseParser] All bytes consumed after {} bytes", consumed);
             return;
         }
@@ -516,6 +640,24 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparse(
         ++i;
     });
 
+    // bitmap.from: endet der Puffer vor dem Container (die Schleife oben bricht dann
+    // ab), blieben gesetzte Bits der Quelle unbemerkt ohne Daten.
+    for (const auto& link : bitmap_from_links_) {
+        if (findComponent(m.get(), link.container))
+            continue;
+        const auto src = std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(
+            findComponent(m.get(), link.source));
+        if (!src || std::all_of(src->value().begin(), src->value().end(),
+                [](uint8_t v) { return v == 0; }))
+            continue;
+        const std::string msg = "Bitmap-Container " + pathString(link.container) +
+            ": das Quellfeld " + pathString(link.source) + " hat gesetzte Bits (" +
+            toHex(src->value()) + "), die Daten des Containers fehlen am Pufferende";
+        if (strict_)
+            throw std::runtime_error("[ISO8583] " + msg);
+        TNG_LOG_WARN("[ISOBaseParser] {}", msg);
+    }
+
     if (consumed != b.size()) {
         // [ISO8583] P2: unkonvertierte Rest-Bytes. strict: verwerfen;
         // nicht-strikt: Legacy-Logmeldung (Datenverlust bleibt möglich).
@@ -543,7 +685,22 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparseBitmapContainer(
     std::size_t base_offset)
 {
     const std::size_t n_bytes = bitmap_container_;
-    if (b.size() < n_bytes) {
+    const bool from = bitmapFrom();
+    std::vector<uint8_t> source; // Bitmap-Bytes des Quellfelds (nur from-Modus)
+    if (from) {
+        const auto bf = g_decodeRoot
+            ? std::dynamic_pointer_cast< ::TNG_NAMESPACE::BinaryField >(
+                findComponent(g_decodeRoot, bitmap_from_))
+            : nullptr;
+        if (!bf || bf->value().size() != n_bytes)
+            throw std::runtime_error("[ISO8583] Bitmap-Container @ Offset " +
+                std::to_string(base_offset) + ": Quellfeld " + pathString(bitmap_from_) +
+                (bf ? " hat " + std::to_string(bf->value().size()) + " statt " +
+                    std::to_string(n_bytes) + " Byte"
+                    : " ist nicht dekodiert (es muss im Strom vor dem Container stehen)"));
+        source = bf->value();
+    }
+    else if (b.size() < n_bytes) {
         const std::string msg = "Bitmap-Container @ Offset " + std::to_string(base_offset) +
             ": Bitmap am Pufferende abgeschnitten: benoetigt " + std::to_string(n_bytes) +
             " Byte, vorhanden " + std::to_string(b.size()) + " Byte";
@@ -552,21 +709,25 @@ std::size_t TNG_NAMESPACE::ISOBaseParser::unparseBitmapContainer(
         TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Container bleibt leer)", msg);
         return 0u;
     }
+    const std::vector<uint8_t>& bits = from ? source : b;
 
     dynamic_bitset<> bmp(n_bytes * 8 + 1); // Index 0 ungenutzt (wie ueberall)
     for (std::size_t i = 0; i < n_bytes * 8; ++i)
-        if (b[i >> 3] & (0x80u >> (i & 7u)))
+        if (bits[i >> 3] & (0x80u >> (i & 7u)))
             bmp.set(i + 1);
 
-    auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
-    bitmap->description("Bitmap");
-    bitmap->wire_offset(base_offset);
-    bitmap->wire_length(n_bytes);
-    bitmap->value(bmp);
-    if (!m->set(bitmap))
-        throw std::runtime_error("[ISO8583] Bitmap-Container: Bitmap ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+    // Im from-Modus erscheint die Bitmap nur als Quellfeld, nicht noch einmal hier.
+    if (!from) {
+        auto bitmap = std::make_shared< ::TNG_NAMESPACE::Bitmap >(::TNG_NAMESPACE::Message::BITMAP_KEY);
+        bitmap->description("Bitmap");
+        bitmap->wire_offset(base_offset);
+        bitmap->wire_length(n_bytes);
+        bitmap->value(bmp);
+        if (!m->set(bitmap))
+            throw std::runtime_error("[ISO8583] Bitmap-Container: Bitmap ISOMessage::set fehlgeschlagen (Speicherfehler?)");
+    }
 
-    std::size_t consumed = n_bytes;
+    std::size_t consumed = from ? 0u : n_bytes;
     for (std::size_t bit = 1; bit <= n_bytes * 8; ++bit) {
         if (!bmp[bit])
             continue;
@@ -641,7 +802,8 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parseBitmapContainer(
         TNG_LOG_WARN("[ISOBaseParser] {} (nicht-strikt: Kind wird ausgelassen)", msg);
     }
 
-    std::vector<uint8_t> out(n_bytes, 0x00);
+    // from-Modus: die Bitmap steht im Quellfeld (applyBitmapFrom), hier nur die Kinder.
+    std::vector<uint8_t> out(bitmapFrom() ? 0u : n_bytes, 0x00);
     const std::size_t last = std::min(l_.size(), n_bytes * 8 + 1);
     for (std::size_t slot = 1; slot < last; ++slot) {
         const auto& ptr = l_[slot];
@@ -654,7 +816,8 @@ std::vector<uint8_t> TNG_NAMESPACE::ISOBaseParser::parseBitmapContainer(
         if (!comp)
             continue;
         const auto bytes = ptr->parse(comp);
-        out[(slot - 1) >> 3] |= static_cast<uint8_t>(0x80u >> ((slot - 1) & 7u));
+        if (!bitmapFrom())
+            out[(slot - 1) >> 3] |= static_cast<uint8_t>(0x80u >> ((slot - 1) & 7u));
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
     TNG_LOG_INFO("[ISOBaseParser::parseBitmapContainer] Fertig: {} bytes", out.size());

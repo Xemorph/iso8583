@@ -71,6 +71,20 @@ namespace TNG_NAMESPACE {
         mutable ::TNG_NAMESPACE::codec::BcdPad pack_pad_ = ::TNG_NAMESPACE::codec::BcdPad::RIGHT_ZERO;
         mutable bool pack_pad_explicit_ = false;
 
+        // Bitmap-Container mit Bitmap aus einem frueheren Feld (Opt-in
+        // `extensions: [bitmap_from]`): Pfad der Quelle ab der Wurzel-Nachricht.
+        // Leer = Bitmap steht im eigenen Payload (Standard). Nur mit bitmap_container_.
+        mutable std::vector<TNG_KEY_TYPE> bitmap_from_;
+        // Nur am Wurzel-Parser: alle from-Container der Spec (Container-Pfad ->
+        // Quellpfad), damit parse() die Bitmaps VOR dem Serialisieren setzen kann.
+        struct BitmapFromLink {
+            std::vector<TNG_KEY_TYPE> container;
+            std::vector<TNG_KEY_TYPE> source;
+            std::size_t               bytes = 0;
+        };
+        mutable std::vector<BitmapFromLink> bitmap_from_links_;
+        void applyBitmapFrom(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const;
+
         // Spezial-Pfade der Container-Modi (src/_parser.cc)
         std::vector<uint8_t> parseBitmapContainer(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m) const;
         std::size_t unparseBitmapContainer(const std::shared_ptr<::TNG_NAMESPACE::ISOMessage>& m,
@@ -115,6 +129,15 @@ namespace TNG_NAMESPACE {
         // 0 = aus). Setzt zugleich den Container-Modus voraus (Loader).
         void bitmapContainer(std::size_t bytes) const noexcept { bitmap_container_ = bytes; }
         std::size_t bitmapContainer() const noexcept { return bitmap_container_; }
+
+        // Bitmap aus einem frueheren Feld (nur Bitmap-Container) bzw. die Links am Wurzel-Parser.
+        void bitmapFrom(std::vector<TNG_KEY_TYPE> source) const { bitmap_from_ = std::move(source); }
+        bool bitmapFrom() const noexcept { return !bitmap_from_.empty(); }
+        void bitmapFromLink(std::vector<TNG_KEY_TYPE> container, std::vector<TNG_KEY_TYPE> source,
+            std::size_t bytes) const
+        {
+            bitmap_from_links_.push_back({ std::move(container), std::move(source), bytes });
+        }
 
         // [ISO8583] FR-13 (0.9.0): Nibble-Packing-Modus. `digits[slot]` = Ziffern
         // je Kind-Slot (0 = nop-Platzhalter); `pad`/`padExplicit` = BCD-Padding.
@@ -593,7 +616,10 @@ namespace TNG_NAMESPACE {
                 std::size_t consumed_outer = n_->unparse(scratch, b, o);
                 const std::vector<uint8_t>& payload = scratch->value();
 
-                if (c->is_composite() && !payload.empty()) {
+                // Ein from-Container hat seine Bitmap im Quellfeld: auch ein leerer
+                // Payload ist dort dekodierbar (gesetzte Bits ohne Daten -> Fehler).
+                if (c->is_composite() && (!payload.empty() ||
+                    [&] { auto bp = dynamic_cast<const ISOBaseParser*>(c_.get()); return bp && bp->bitmapFrom(); }())) {
                     // BUG-FIX: parsed_length<pe_, l_>() ist für ISONestedFieldParser
                     // immer 0 (pe_=NONE, l_=FIX), weil pe_/l_ die Template-Parameter
                     // des äußeren ISOFieldParser<T,...> sind – nicht die des inneren n_.
