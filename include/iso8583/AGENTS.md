@@ -290,6 +290,7 @@ for (const auto& f : spec->fields())
 | `bcd_pad` | `std::string` | Effektives BCD-Padding bei ungerader Ziffernzahl: `"right_zero"` (Default), `"right_f"`, `"left_zero"` bei Feldern mit BCD-**Nutzdaten** (`numeric`/`amount`/`*char`/`*num`/`remaining`, auch TLV-Kinder), sonst `""` (0.7.1, FR-7) |
 | `secondary_bitmap` | `std::string` | Sekundär-Bitmap-Modus eines Bitmap-Felds: `"always"` (YAML `secondary: always`) oder `"auto"` (Default), bei Nicht-Bitmap-Feldern `""` (0.8.0, FR-9a) |
 | `container_bitmap_bytes` | `int` | Bitmap-Größe in Byte eines **bitmap-gesteuerten** `nested`-Containers (YAML `bitmap: { length: N }`, 1..16); `children[i].key` ist dort die **Bit-Nummer**. `0` bei allen anderen Feldern (0.9.0, FR-12) |
+| `container_bitmap_from` | `std::string` | Punkt-Pfad des früheren `binary`-Quellfelds eines `bitmap: { from }`-Containers (Erweiterung `bitmap_from`, 0.12.0), sonst `""` — die Bitmap steht dann im Quellfeld statt im Container |
 | `pack` | `std::string` | `"nibble"` bei einem `nested`-Container mit `pack: nibble` (dichter BCD-Ziffern-Strom, mehrere Kinder pro Byte), sonst `""` (0.9.0, FR-13) |
 | `prefix_encoding` | `std::string` | Effektives Längenpräfix-Encoding eines variablen Felds: `"ASCII"`, `"EBCDIC"`, `"BCD"`, `"BINARY"` bzw. `""` (encoding-neutrale Formate). Gleicht `encoding`, wenn der YAML-Key `prefix_encoding:` fehlt (Default), sonst der deklarierte Wert (0.7.0, FR-6) |
 
@@ -646,6 +647,7 @@ fields:
   beim Laden: `bitmap` ohne Map-`children`, mit `tlv`/`pack`, Bit außerhalb
   `1..8*N`, doppelte/nicht numerische Bits, `length` ∉ 1..16. Introspektion:
   `SpecFieldInfo::container_bitmap_bytes`. Normativ: `docs/internals/spec_schema.md` §6.
+- **`bitmap: { from: "4.1", length: N }` (0.12.0, Erweiterung):** die Bitmap des Containers ist der Wert eines früheren `format: binary`-Felds (feste `length` = N, Pfad ab der Wurzel; Field-only: relativ zum `field:`-Container), nicht der Container-Anfang. **Nur mit `extensions: [bitmap_from]`** am Wurzelschlüssel, sonst `SpecValidationError`. Dekodieren: Kinder wie beim Bitmap-Container, die Bitmap erscheint nur als Quellfeld. Bauen: das Quellfeld nie setzen — es wird aus den gesetzten Kindern berechnet (ein abweichender Wert wirft strict). Introspektion: `SpecFieldInfo::container_bitmap_from`. Normativ: `docs/internals/spec_schema.md` §6.
 - **`pack: nibble` (0.9.0, FR-13):** an einem `nested`-Container (Liste aus
   `numeric`+`bcd`-Kindern fester Länge, `nop` als Schlüssel-Platzhalter) bilden die
   Kinder einen **dichten Ziffern-Strom** (VISA-DE60: mehrere 1-stellige Unterfelder

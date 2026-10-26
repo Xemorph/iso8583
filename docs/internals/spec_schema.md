@@ -44,6 +44,7 @@ fields:                 # PFLICHT, nicht-leere Map
 | `strict_length` | bool | nein (Default `false`) | Opt-in (0.6.2): Root-Default für die Unterlängen-Prüfung bei fester Länge — Felder ohne eigenen `strict_length`-Key erben diesen Wert (s. §9) |
 | `bcd_pad` | `right_zero` \| `right_f` \| `left_zero` | nein | (0.7.1, FR-7): Root-Default für das BCD-Padding bei ungerader Ziffernzahl — gilt für alle Felder mit BCD-Nutzdaten ohne eigenen `bcd_pad`-Key (§3 „BCD-Padding"); andere Felder bleiben unberührt |
 | `header` | int \| map | nein | N-Byte-Netz-Header vor dem Nachrichtenkörper; `0`/fehlt = kein Header (`ISOSpec::hasHeader()`/`headerSize()`). Als **Map** (0.10.0, FR-16) eine Feldbeschreibung für Header variabler Länge (s. „Header als Feldbeschreibung“) |
+| `extensions` | Liste | nein | herstellerspezifische Erweiterungen, die die Spec ausdrücklich zuschaltt (fail-closed: unbekannte Einträge sind ein Ladefehler). Bekannt: `bitmap_from` (s. §6 „Bitmap aus einem früheren Feld“) |
 | `definitions` | map | nein | benannte Feld-Bausteine für `!use` |
 | `fields` | map | ja | **nicht-leere** Map `DE-Schlüssel → Feld-Deklaration` |
 
@@ -529,6 +530,49 @@ Bit gesetzt ist) werden mit einem `bitmap:`-Block und `children` als **Map**
   (`"1"` und `"01"`); Kind-Format `bitmap`/`nop`/`unused`.
 - **Introspektion:** `SpecFieldInfo::container_bitmap_bytes` (`0` = kein
   Bitmap-Container), `children[i].key` = Bit-Nummer (aufsteigend sortiert).
+
+**Bitmap aus einem früheren Feld (`bitmap: { from }`, Erweiterung `bitmap_from`):**
+
+Eine **herstellerspezifische** Erweiterung, keine ISO-8583-Funktion: die Bitmap steht nicht
+im Container, sondern im Wert eines Felds, das im Strom **davor** liegt (APB: INFO-2 am Ende
+eines Längen-Containers steuert, welche Daten dahinter folgen). Nur mit
+`extensions: [bitmap_from]` am Wurzelschlüssel, sonst Ladefehler.
+
+```yaml
+extensions: [bitmap_from]
+fields:
+  "004": { type: nested, format: lbinary, encoding: binary, length: 255,
+           children: [ { format: binary, length: 2 },    # 4.0 Kopf
+                       { format: binary, length: 2 } ] } # 4.1 INFO-2 = Bitmap
+  "005":
+    type: nested
+    format: remaining
+    encoding: binary
+    length: 255
+    bitmap: { from: "4.1", length: 2 }
+    children:
+      "1": { format: llbinary, encoding: binary, length: 255 }
+```
+
+- **Pfad:** Punkt-Pfad ab der Wurzel-Nachricht (`"4.1"` = Kind 1 von DE4, Positionen bzw.
+  Bit-Nummern wie bei `get`/`set`). In Field-only-Specs gilt der Pfad **relativ zum Container
+  des `field:`-Blocks** (`"1"` = zweites Kind).
+- **Decode:** der Container liest **keine** Bitmap-Bytes; die Bitmap ist der Wert des Quellfelds.
+  Die Kinder und alle Fehlerfälle (gesetztes Bit ohne Kind, abgeschnittenes Kind, Rest-Bytes)
+  wie beim normalen Bitmap-Container. Die Bitmap erscheint nur als Quellfeld, nicht noch einmal
+  unter `-1` im Container. Am Pufferende gilt der Container als leer: Bits für Kinder ohne Daten
+  (Marker) sind gültig, Bits für Kinder mit Daten ein Fehler.
+- **Build:** das Quellfeld wird nie gesetzt, sondern vor dem Serialisieren aus den gesetzten Kindern
+  berechnet (auch ohne Kinder: Nullen). Ein gesetztes, **abweichendes** Quellfeld ist strict ein
+  Fehler; derselbe Wert (dekodierte Nachricht erneut serialisiert) ist erlaubt. Die Quelle hat feste
+  Länge, die Container-Länge ändert sich dadurch nicht. Eine einzelne Sub-Nachricht allein zu
+  serialisieren (`parse` auf einem DE) kann die externe Quelle nicht berechnen.
+- **Fail-closed beim Laden (positioniert):** `from` ohne `extensions: [bitmap_from]` („keine
+  ISO-8583-Funktion“); unbekannter `extensions`-Eintrag; ungültiger Pfad; Quellfeld existiert nicht;
+  Quelle steht nicht strikt vor dem Container (Selbstbezug, Vorfahre, Feld im Container); Quelle nicht
+  `format: binary` mit fester `length` = `bitmap.length`; zwei Container mit derselben Quelle.
+  `from` nur am Bitmap-Container (nicht mit `tlv`/`pack`).
+- **Introspektion:** `SpecFieldInfo::container_bitmap_from` (leer = Bitmap im Container).
 
 **Nibble-Packing (`pack: nibble`, 0.9.0, FR-13):**
 

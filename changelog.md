@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.0
+
+Minor-Release: Bitmap-Container mit Bitmap aus einem früheren Feld, additiv und Opt-in.
+
+### `[+](Added)` `bitmap: { from }` und `extensions: [bitmap_from]`
+
+- **Neu:** `bitmap: { from: "4.1", length: 2 }` an einem Bitmap-Container liest die Bitmap aus dem
+  Wert eines früher dekodierten `binary`-Felds statt aus dem eigenen Anfang (APB-INFO-2). Gilt für
+  `fields:` und `field:`. Beim Bauen wird das Quellfeld aus den gesetzten Kindern berechnet.
+- **Opt-in:** nur mit `extensions: [bitmap_from]` am Wurzelschlüssel; ohne den Schalter und bei
+  unbekannten Einträgen ein positionierter Ladefehler. Bestehende Specs ändern sich nicht.
+- **ABI:** `SpecFieldInfo` bekommt `container_bitmap_from` (Layout-Änderung: Shared-Library-Consumer
+  neu übersetzen).
+
 ## 0.11.0
 
 Minor-Release: Container in Container (FR-14, FR-15), rein additiv.

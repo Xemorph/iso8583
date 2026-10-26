@@ -127,6 +127,7 @@ Child inheritance: encoding-neutral fields pass the **global** encoding to child
 | ryml error callbacks (`ryml::set_callbacks`) | first spec load | **Overwrites the host app's own ryml callbacks** if it uses rapidyaml independently — usually harmless (exceptions instead of `abort()` are the right choice), but known to cause surprises in exotic setups. |
 | Spec cache (per absolute path) | `...Cached` loader variants | In-memory, lives for the process; `invalidateCache(path)` / `clearCache()`. |
 | Logger + log level (`iso8583::log`) | always (default level WARN) | Global; replace via `setLogger()`. |
+| `thread_local` decode root (`src/_parser.cc`, `bitmap.from`) | during every `unparse()` | Per call and thread, set by the outermost call and cleared on exit (RAII); parsers stay immutable and shareable. |
 | DE key type (`TNG_KEY_TYPE` / `ISO8583_BERTLV`) | compile time (ABI) | Library and all consumers must match — see §4. |
 
 ---

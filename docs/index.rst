@@ -45,6 +45,7 @@ Eine C++20-Bibliothek zum Parsen und Erzeugen von ISO-8583-Finanznachrichten.
    plans/fr8-fr10-visa-gaps-plan
    plans/fr11-fr13-subfield-containers-plan
    plans/nested-in-nested-fr14-fr15-plan
+   plans/bitmap-from-plan
 
 .. toctree::
    :maxdepth: 1
